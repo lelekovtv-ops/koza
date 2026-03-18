@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react"
 import { Upload, X } from "lucide-react"
 import { useAutosave } from "@/hooks/useAutosave"
+import ScreenplayBlockEditor from "@/components/editor/ScreenplayBlockEditor"
 import { useScriptStore } from "@/store/script"
 
 type EditorType = "new" | "upload" | null
@@ -37,9 +38,15 @@ export default function ScriptWriterOverlay({
   } as const
   const OVERLAY_BG = OVERLAY_BG_VARIANTS.A
 
+  // Standard US Letter screenplay page (Final Draft pixel-perfect)
   const PAGE_WIDTH = 816
   const PAGE_HEIGHT = 1056
-  const PAGE_TOP = 80
+  const PAGE_TOP = 60
+  const PAGE_ZOOM = 1.3
+
+  // Scaled dimensions for layout calculations
+  const SCALED_PAGE_WIDTH = Math.round(PAGE_WIDTH * PAGE_ZOOM)
+  const SCALED_PAGE_HEIGHT = Math.round(PAGE_HEIGHT * PAGE_ZOOM)
 
   const [titleCommitted, setTitleCommitted] = useState(false)
   const [showStartHint, setShowStartHint] = useState(false)
@@ -62,17 +69,21 @@ export default function ScriptWriterOverlay({
   const openCompleteTimerRef = useRef<number | null>(null)
   const closeTimerRef = useRef<number | null>(null)
 
-  const scenario = useScriptStore((state) => state.scenario)
+  const blocks = useScriptStore((state) => state.blocks)
+  const setBlocks = useScriptStore((state) => state.setBlocks)
   const title = useScriptStore((state) => state.title)
   const author = useScriptStore((state) => state.author)
   const draft = useScriptStore((state) => state.draft)
   const date = useScriptStore((state) => state.date)
-  const setScenario = useScriptStore((state) => state.setScenario)
   const setTitle = useScriptStore((state) => state.setTitle)
   const setAuthor = useScriptStore((state) => state.setAuthor)
   const setDraft = useScriptStore((state) => state.setDraft)
   const setDate = useScriptStore((state) => state.setDate)
   const { status, visible } = useAutosave(active && phase === "open" && type === "new")
+
+  const handleBlocksChange = (nextBlocks: typeof blocks) => {
+    setBlocks(nextBlocks)
+  }
 
   const getRegisteredAuthorName = () => {
     if (typeof window === "undefined") return "Александр Лелеков"
@@ -132,7 +143,7 @@ export default function ScriptWriterOverlay({
     setShowStartHint(false)
     setShowSecondPage(true)
     setSecondPageVisible(true)
-  }, [active, type, title, scenario])
+  }, [active, type, title])
 
   const isCyrillicTitle = /[\u0400-\u04FF]/.test(title)
   const writtenByLabel = isCyrillicTitle ? "Автор" : "Written by"
@@ -162,10 +173,10 @@ export default function ScriptWriterOverlay({
 
   const finalRect = useMemo(
     () => ({
-      x: viewport.width / 2 - PAGE_WIDTH / 2,
+      x: viewport.width / 2 - SCALED_PAGE_WIDTH / 2,
       y: PAGE_TOP,
-      width: PAGE_WIDTH,
-      height: PAGE_HEIGHT,
+      width: SCALED_PAGE_WIDTH,
+      height: SCALED_PAGE_HEIGHT,
     }),
     [viewport.width]
   )
@@ -289,15 +300,21 @@ export default function ScriptWriterOverlay({
           <X size={18} />
         </button>
 
-        <div className="relative z-[2] flex flex-col items-center gap-10 px-6 pb-[300px] pt-[80px]">
+        <div className="relative z-[2] flex flex-col items-center gap-10 px-6 pb-[300px]" style={{ paddingTop: PAGE_TOP }}>
           {phase === "open" && (
             <div
               ref={openSheetRef}
               className="relative rounded-[3px] border border-[#E5E0DB] bg-white shadow-[0_8px_60px_rgba(0,0,0,0.4)]"
-              style={{ width: PAGE_WIDTH, minHeight: PAGE_HEIGHT }}
+              style={{
+                width: PAGE_WIDTH,
+                minHeight: PAGE_HEIGHT,
+                transform: `scale(${PAGE_ZOOM})`,
+                transformOrigin: "top center",
+                marginBottom: Math.round(PAGE_HEIGHT * (PAGE_ZOOM - 1)) + 10,
+              }}
             >
               {type === "new" && (
-                <div className="relative h-[1056px] w-full">
+                <div className="relative w-full" style={{ height: PAGE_HEIGHT }}>
                   <div className="absolute left-1/2 top-[40%] w-[78%] -translate-x-1/2 -translate-y-1/2 text-center">
                     <input
                       ref={titleInputRef}
@@ -353,18 +370,6 @@ export default function ScriptWriterOverlay({
               )}
 
               {type === "upload" && (
-                <textarea
-                  ref={textareaRef}
-                  value={scenario}
-                  onChange={(event) => setScenario(event.target.value)}
-                  className="h-full min-h-[1056px] w-full resize-none bg-transparent pb-[72px] pl-[96px] pr-[72px] pt-[72px] text-[#1a1a1a] outline-none placeholder:text-[#C4B9AC]"
-                  style={{ fontFamily: '"PT Serif", "Times New Roman", serif', fontSize: 18, lineHeight: 1.7, color: "#1a1a1a" }}
-                  placeholder=""
-                  aria-label="Script editor"
-                />
-              )}
-
-              {type === "upload" && (
                 <button
                   type="button"
                   className="absolute inset-0 m-auto flex h-[160px] w-[78%] flex-col items-center justify-center gap-3 rounded-lg border border-dashed border-[#D8CEC1] bg-[#FCFAF7] text-[#8A8075]"
@@ -380,16 +385,18 @@ export default function ScriptWriterOverlay({
             <div
               ref={secondPageRef}
               className="relative rounded-[3px] border border-[#E5E0DB] bg-white shadow-[0_8px_60px_rgba(0,0,0,0.4)] transition-opacity duration-300"
-              style={{ width: PAGE_WIDTH, minHeight: PAGE_HEIGHT, opacity: secondPageVisible ? 1 : 0 }}
+              style={{
+                width: PAGE_WIDTH,
+                minHeight: PAGE_HEIGHT,
+                opacity: secondPageVisible ? 1 : 0,
+                transform: `scale(${PAGE_ZOOM})`,
+                transformOrigin: "top center",
+                marginBottom: Math.round(PAGE_HEIGHT * (PAGE_ZOOM - 1)) + 10,
+              }}
             >
-              <textarea
-                ref={textareaRef}
-                value={scenario}
-                onChange={(event) => setScenario(event.target.value)}
-                className="h-full min-h-[1056px] w-full resize-none bg-transparent pb-[72px] pl-[96px] pr-[72px] pt-[72px] text-[#1a1a1a] outline-none placeholder:text-[#C4B9AC]"
-                style={{ fontFamily: '"PT Serif", "Times New Roman", serif', fontSize: 18, lineHeight: 1.7, color: "#1a1a1a" }}
-                placeholder=""
-                aria-label="Screenplay page"
+              <ScreenplayBlockEditor
+                blocks={blocks}
+                onChange={handleBlocksChange}
               />
             </div>
           )}

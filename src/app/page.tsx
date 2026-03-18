@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import { Plus, FolderOpen, ArrowLeft } from "lucide-react";
 import { useProjectsStore } from '@/store/projects'
 import { useScriptStore } from '@/store/script'
+import { KozaLogo } from "@/components/ui/KozaLogo";
 
 const Canvas = dynamic(() => import('@/components/board/Canvas'), { ssr: false })
 
@@ -41,10 +42,7 @@ export default function Home() {
 
   return (
     <div className="flex min-h-screen flex-col items-center justify-center">
-      <h1 className="text-6xl font-bold tracking-tight text-[#2D2A26]">
-        KOZA
-      </h1>
-      <p className="mt-2 text-lg text-[#8A8279]">AI Production Studio</p>
+      <KozaLogo size="lg" variant="default" showTagline className="text-[#2D2A26]" />
 
       <div className="mt-12 flex gap-6">
         <button

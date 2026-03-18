@@ -20,6 +20,7 @@ import LibraryButton from './LibraryButton'
 import LibraryPanel from './LibraryPanel'
 import ScriptDocNode from './nodes/ScriptDocNode'
 import ScriptWriterOverlay from '@/components/editor/ScriptWriterOverlay'
+import { KozaLogo } from "@/components/ui/KozaLogo";
 import { useProjectsStore } from '@/store/projects'
 import { useScriptStore } from '@/store/script'
 
@@ -104,51 +105,56 @@ export default function Canvas({ onBack }: CanvasProps) {
 
   return (
     <div className="relative h-screen w-screen" style={{ backgroundColor: '#FAF6F1' }}>
-      <ReactFlow
-        nodes={viewNodes}
-        edges={edgesState}
-        onNodesChange={onNodesChange}
-        onEdgesChange={onEdgesChange}
-        nodeTypes={nodeTypes}
-        onInit={handleInit}
-        fitView
-        minZoom={0.2}
-        maxZoom={2}
-        zoomOnScroll
-        zoomOnPinch
-        panOnScroll
-        panOnDrag={[1]}
-        style={{ backgroundColor: '#FAF6F1' }}
-        proOptions={{ hideAttribution: true }}
-      >
-        <Background
-          variant={BackgroundVariant.Dots}
-          gap={20}
-          size={1.5}
-          color="rgba(141, 126, 109, 0.45)"
-        />
-        <MiniMap
-          pannable
-          zoomable
-          style={{
-            width: 150,
-            height: 100,
-            backgroundColor: 'rgba(255, 255, 255, 0.72)',
-            border: '1px solid rgba(196, 185, 172, 0.85)',
-            borderRadius: '10px',
-            backdropFilter: 'blur(4px)',
-          }}
-          maskColor="rgba(245, 240, 235, 0.32)"
-          nodeColor="#D8CEC1"
-        />
-      </ReactFlow>
-      <button
-        onClick={onBack}
-        className="absolute top-4 left-4 z-50 flex items-center gap-2 rounded-lg bg-white/80 px-3 py-2 text-sm font-medium text-[#2D2A26] shadow-sm backdrop-blur transition-all hover:bg-white hover:shadow-md"
-      >
-        <ArrowLeft className="h-4 w-4" />
-        Back
-      </button>
+      <div className="h-full w-full" style={{ pointerEvents: editorMode.active ? 'none' : 'auto' }}>
+        <ReactFlow
+          nodes={viewNodes}
+          edges={edgesState}
+          onNodesChange={onNodesChange}
+          onEdgesChange={onEdgesChange}
+          nodeTypes={nodeTypes}
+          onInit={handleInit}
+          fitView
+          minZoom={0.2}
+          maxZoom={2}
+          zoomOnScroll
+          zoomOnPinch
+          panOnScroll
+          panOnDrag={[1]}
+          style={{ backgroundColor: '#FAF6F1' }}
+          proOptions={{ hideAttribution: true }}
+        >
+          <Background
+            variant={BackgroundVariant.Dots}
+            gap={20}
+            size={1.5}
+            color="rgba(141, 126, 109, 0.45)"
+          />
+          <MiniMap
+            pannable
+            zoomable
+            style={{
+              width: 150,
+              height: 100,
+              backgroundColor: 'rgba(255, 255, 255, 0.72)',
+              border: '1px solid rgba(196, 185, 172, 0.85)',
+              borderRadius: '10px',
+              backdropFilter: 'blur(4px)',
+            }}
+            maskColor="rgba(245, 240, 235, 0.32)"
+            nodeColor="#D8CEC1"
+          />
+        </ReactFlow>
+      </div>
+      <div className="absolute top-4 left-4 z-50 flex flex-col gap-2">
+        <KozaLogo size="md" variant="default" className="text-[#2D2A26]" />
+        <button
+          onClick={onBack}
+          className="flex items-center gap-2 rounded-lg bg-white/80 px-3 py-2 text-sm font-medium text-[#2D2A26] shadow-sm backdrop-blur transition-all hover:bg-white hover:shadow-md"
+        >
+          <ArrowLeft className="h-4 w-4" />
+          Back
+        </button>
+      </div>
       {!editorMode.active && <LibraryButton />}
       <LibraryPanel projectId={activeProjectId} hidden={editorMode.active} />
       <BoardAssistant />

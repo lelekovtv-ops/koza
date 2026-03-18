@@ -1,5 +1,5 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono, PT_Mono, PT_Serif } from "next/font/google";
+import { Geist, Geist_Mono, IBM_Plex_Mono, PT_Mono, PT_Serif } from "next/font/google";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -24,6 +24,12 @@ const ptSerif = PT_Serif({
   variable: "--font-serif",
 });
 
+const ibmPlexMono = IBM_Plex_Mono({
+  weight: ["400", "500", "700"],
+  subsets: ["latin", "cyrillic"],
+  variable: "--font-screenplay-mono",
+});
+
 export const metadata: Metadata = {
   title: "KOZA — AI Production Studio",
   description: "AI Production Studio",
@@ -37,7 +43,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body
-        className={`${geistSans.variable} ${geistMono.variable} ${ptMono.variable} ${ptSerif.variable} antialiased`}
+        className={`${geistSans.variable} ${geistMono.variable} ${ptMono.variable} ${ptSerif.variable} ${ibmPlexMono.variable} antialiased`}
       >
         {children}
       </body>
