@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { ArrowLeft } from 'lucide-react'
 import {
   Background,
@@ -13,6 +13,7 @@ import {
   type ReactFlowInstance,
   type Edge,
   type Node,
+  type OnSelectionChangeFunc,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import BoardAssistant from './BoardAssistant'
@@ -23,6 +24,7 @@ import ScriptWriterOverlay from '@/components/editor/ScriptWriterOverlay'
 import { KozaLogo } from "@/components/ui/KozaLogo";
 import { useProjectsStore } from '@/store/projects'
 import { useScriptStore } from '@/store/script'
+import { useTimelineStore } from '@/store/timeline'
 
 type NodeScreenRect = {
   x: number
@@ -51,6 +53,7 @@ interface CanvasProps {
 
 export default function Canvas({ onBack }: CanvasProps) {
   const reactFlowRef = useRef<ReactFlowInstance<Node, Edge> | null>(null)
+  const syncFromTimelineRef = useRef(false)
   const activeProjectId = useProjectsStore((state) => state.activeProjectId)
   const scriptTitle = useScriptStore((state) => state.title)
   const scriptAuthor = useScriptStore((state) => state.author)
@@ -84,6 +87,70 @@ export default function Canvas({ onBack }: CanvasProps) {
     setEditorMode({ active: false, nodeId: null, type: null, initialRect: null })
   }, [])
 
+  // Timeline → Board: when selectedShotId changes, find matching node and fitView
+  useEffect(() => {
+    let prev = useTimelineStore.getState().selectedShotId
+    return useTimelineStore.subscribe((state) => {
+      const selectedShotId = state.selectedShotId
+      if (selectedShotId === prev) return
+      prev = selectedShotId
+      if (!selectedShotId || !reactFlowRef.current) return
+      const rf = reactFlowRef.current
+      const node = rf.getNode(selectedShotId)
+      if (!node) return
+      syncFromTimelineRef.current = true
+      setNodesState((nds) =>
+        nds.map((n) => ({ ...n, selected: n.id === selectedShotId }))
+      )
+      rf.fitView({ nodes: [{ id: selectedShotId }], duration: 500, padding: 0.4 })
+      window.setTimeout(() => { syncFromTimelineRef.current = false }, 600)
+    })
+  }, [setNodesState])
+
+  // Timeline → Board: when activateNodeId is set, open editor for that node
+  useEffect(() => {
+    let prev = useTimelineStore.getState().activateNodeId
+    return useTimelineStore.subscribe((state) => {
+      const activateNodeId = state.activateNodeId
+      if (activateNodeId === prev) return
+      prev = activateNodeId
+      if (!activateNodeId || !reactFlowRef.current) return
+      const rf = reactFlowRef.current
+      const node = rf.getNode(activateNodeId)
+      useTimelineStore.getState().activateNode(null)
+      if (!node) return
+      rf.fitView({ nodes: [{ id: activateNodeId }], duration: 500, padding: 0.3 })
+      if (node.type === 'scriptDoc') {
+        const domNode = document.querySelector(`[data-id="${CSS.escape(activateNodeId)}"]`)
+        if (domNode) {
+          const rect = domNode.getBoundingClientRect()
+          window.setTimeout(() => {
+            enterEditor(activateNodeId, 'new', {
+              x: rect.x,
+              y: rect.y,
+              width: rect.width,
+              height: rect.height,
+            })
+          }, 520)
+        }
+      }
+    })
+  }, [enterEditor])
+
+  // Board → Timeline: when a node is selected on the board, sync to timeline
+  const handleSelectionChange: OnSelectionChangeFunc = useCallback(
+    ({ nodes: selectedNodes }) => {
+      if (syncFromTimelineRef.current) return
+      const selected = selectedNodes[0]
+      if (!selected) return
+      const timelineState = useTimelineStore.getState()
+      if (timelineState.shots.some((s) => s.id === selected.id)) {
+        timelineState.scrollToShot(selected.id)
+      }
+    },
+    [],
+  )
+
   const viewNodes = useMemo(
     () =>
       nodesState.map((node) => {
@@ -113,6 +180,7 @@ export default function Canvas({ onBack }: CanvasProps) {
           onEdgesChange={onEdgesChange}
           nodeTypes={nodeTypes}
           onInit={handleInit}
+          onSelectionChange={handleSelectionChange}
           fitView
           minZoom={0.2}
           maxZoom={2}

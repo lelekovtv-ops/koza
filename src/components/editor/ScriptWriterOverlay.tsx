@@ -24,6 +24,7 @@ import {
   undoSnapshot,
 } from "@/components/editor/screenplay/screenplayUndo"
 import { useScriptStore } from "@/store/script"
+import { useSceneSync } from "@/hooks/useSceneSync"
 
 type EditorType = "new" | "upload" | null
 type OverlayPhase = "hidden" | "opening" | "open" | "closing"
@@ -67,6 +68,9 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
   const PAGE_HEIGHT = SCREENPLAY_PAGE_HEIGHT_PX
   const PAGE_TOP = 60
   const PAGE_ZOOM = SCREENPLAY_OVERLAY_PAGE_ZOOM
+
+  // Sync scene headings → timeline shots
+  useSceneSync()
 
   // Scaled dimensions for layout calculations
   const SCALED_PAGE_WIDTH = Math.round(PAGE_WIDTH * PAGE_ZOOM)

@@ -1,9 +1,12 @@
 "use client"
 
 import Image from "next/image"
-import { MoreHorizontal, Plus } from "lucide-react"
-import { Fragment, useEffect, useMemo, useState } from "react"
+import { Clapperboard, Loader2, MoreHorizontal, Plus, SendHorizonal } from "lucide-react"
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react"
 import { createStoryboardFrame, useStoryboardStore } from "@/store/storyboard"
+import { useTimelineStore } from "@/store/timeline"
+import { useScriptStore } from "@/store/script"
+import { breakdownScene } from "@/lib/jenkins"
 
 interface StoryboardPanelProps {
   isOpen: boolean
@@ -49,6 +52,55 @@ export function StoryboardPanel({
   const [draggedFrameId, setDraggedFrameId] = useState<string | null>(null)
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null)
   const cardScale = 90
+  const timelineShots = useTimelineStore((state) => state.shots)
+  const addShot = useTimelineStore((state) => state.addShot)
+  const scenario = useScriptStore((state) => state.scenario)
+  const [jenkinsLoading, setJenkinsLoading] = useState(false)
+
+  const parseDuration = useCallback((raw: string) => {
+    const match = raw.match(/([\d.]+)\s*s/)
+    return match ? Math.round(parseFloat(match[1]) * 1000) : 3000
+  }, [])
+
+  const addFrameToTimeline = useCallback(
+    (frame: { id: string }, index: number) => {
+      if (timelineShots.some((s) => s.id === frame.id)) return
+      const meta = getStoryboardCardMeta(index)
+      addShot({
+        id: frame.id,
+        duration: parseDuration(meta.duration),
+        type: "image",
+        label: `${meta.shot} — ${meta.caption}`,
+        notes: meta.motion,
+      })
+    },
+    [timelineShots, addShot, parseDuration],
+  )
+
+  const sendAllToTimeline = useCallback(() => {
+    frames.forEach((frame, index) => addFrameToTimeline(frame, index))
+  }, [frames, addFrameToTimeline])
+
+  const handleJenkinsBreakdown = useCallback(async () => {
+    const text = scenario.trim()
+    if (!text || jenkinsLoading) return
+    setJenkinsLoading(true)
+    try {
+      const { shots: jenkinsShots } = await breakdownScene(text)
+      for (const shot of jenkinsShots) {
+        addShot({
+          duration: shot.duration,
+          type: shot.type,
+          label: shot.label,
+          notes: shot.notes,
+        })
+      }
+    } catch (error) {
+      console.error("Jenkins breakdown error:", error)
+    } finally {
+      setJenkinsLoading(false)
+    }
+  }, [scenario, jenkinsLoading, addShot])
 
   const nextFrame = useMemo(() => createStoryboardFrame(frames.length, `preview-${frames.length}`), [frames.length])
 
@@ -121,6 +173,25 @@ export function StoryboardPanel({
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={handleJenkinsBreakdown}
+              disabled={jenkinsLoading || !scenario.trim()}
+              className="flex items-center gap-1.5 rounded-md border border-amber-500/30 bg-amber-500/8 px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-[#E5E0DB] transition-colors hover:bg-amber-500/16 disabled:opacity-40 disabled:cursor-not-allowed"
+              aria-label="Jenkins shot breakdown"
+            >
+              {jenkinsLoading ? <Loader2 size={12} className="animate-spin" /> : <Clapperboard size={12} />}
+              {jenkinsLoading ? "Breaking down…" : "Jenkins Breakdown"}
+            </button>
+            <button
+              type="button"
+              onClick={sendAllToTimeline}
+              className="flex items-center gap-1.5 rounded-md border border-white/12 px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-[#E5E0DB] transition-colors hover:bg-white/6"
+              aria-label="Send all shots to timeline"
+            >
+              <SendHorizonal size={12} />
+              Send all to Timeline
+            </button>
             <button
               type="button"
               className="flex h-8 w-8 items-center justify-center rounded-md text-[#BDAF9F] transition-colors hover:bg-white/6 hover:text-white"
@@ -213,13 +284,29 @@ export function StoryboardPanel({
                         </p>
                         <p className="mt-1 truncate text-[10px] text-[#7F8590]">{getStoryboardCardMeta(index).caption}</p>
                       </div>
-                      <button
-                        type="button"
-                        className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md text-[#7F8590] transition-colors hover:bg-white/5 hover:text-white"
-                        aria-label={`More actions for shot ${index + 1}`}
-                      >
-                        <MoreHorizontal size={14} />
-                      </button>
+                      <div className="flex shrink-0 items-center gap-1">
+                        <button
+                          type="button"
+                          onClick={() => addFrameToTimeline(frame, index)}
+                          className={`flex h-6 items-center gap-1 rounded-md px-1.5 text-[9px] uppercase tracking-[0.12em] transition-colors ${
+                            timelineShots.some((s) => s.id === frame.id)
+                              ? "text-[#5A5F6A] cursor-default"
+                              : "text-[#7F8590] hover:bg-white/5 hover:text-white"
+                          }`}
+                          disabled={timelineShots.some((s) => s.id === frame.id)}
+                          aria-label={`Add shot ${index + 1} to timeline`}
+                        >
+                          <SendHorizonal size={10} />
+                          {timelineShots.some((s) => s.id === frame.id) ? "Added" : "Timeline"}
+                        </button>
+                        <button
+                          type="button"
+                          className="flex h-6 w-6 items-center justify-center rounded-md text-[#7F8590] transition-colors hover:bg-white/5 hover:text-white"
+                          aria-label={`More actions for shot ${index + 1}`}
+                        >
+                          <MoreHorizontal size={14} />
+                        </button>
+                      </div>
                     </div>
                   </div>
                 </div>
