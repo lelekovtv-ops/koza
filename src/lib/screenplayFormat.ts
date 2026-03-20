@@ -71,59 +71,8 @@ export function makeBlock(type: BlockType, text = ""): Block {
 }
 
 // ─────────────────────────────────────────────────────────────
-// SMART ENTER — what block comes next
+// BLOCK CYCLE
 // ─────────────────────────────────────────────────────────────
-
-/**
- * Given the current block and its text state, return the next block type.
- * This is the central routing logic — deterministic, no guessing.
- *
- * Special cases:
- *  - Empty dialogue + Enter → exit dialogue block → action
- *  - Filled dialogue + Enter → next character (default) or action (flow config)
- *  - Tab on empty action → character
- *  - Tab on empty character → action (toggle)
- */
-export function getNextBlockType(
-  current: Block,
-  flow: FlowConfig = DEFAULT_FLOW
-): BlockType {
-  switch (current.type) {
-    case "scene_heading":   return flow.afterSceneHeading
-    case "action":          return flow.afterAction
-    case "character":       return flow.afterCharacter
-    case "parenthetical":   return flow.afterParenthetical
-    case "dialogue":
-      // Empty dialogue line = exit block → action
-      if (!current.text.trim()) return "action"
-      return flow.afterDialogue
-    case "transition":      return flow.afterTransition
-    case "shot":            return flow.afterShot
-    default:                return "action"
-  }
-}
-
-// ─────────────────────────────────────────────────────────────
-// TAB BEHAVIOUR — Arc Studio style
-// ─────────────────────────────────────────────────────────────
-
-/**
- * Tab key logic (Arc Studio model):
- *  - Empty action   → character
- *  - Empty character → action  (toggle)
- *  - Filled character → dialogue
- *  - Everything else → cycle through element list
- */
-export function getTabBlockType(current: Block): BlockType {
-  const empty = !current.text.trim()
-
-  if (current.type === "action" && empty) return "character"
-  if (current.type === "character" && empty) return "action"
-  if (current.type === "character" && !empty) return "dialogue"
-
-  // Generic cycle for power users
-  return cycleBlockType(current.type, false)
-}
 
 const CYCLE_ORDER: BlockType[] = [
   "action",
@@ -326,26 +275,7 @@ export function reformatBlockAsType(text: string, targetType: BlockType): string
 }
 
 // ─────────────────────────────────────────────────────────────
-// SCENE HEADING AUTOCOMPLETE
-// ─────────────────────────────────────────────────────────────
-
-const TIME_OF_DAY_OPTIONS = ["DAY", "NIGHT", "MORNING", "EVENING", "AFTERNOON", "DUSK", "DAWN", "CONTINUOUS", "LATER", "MOMENTS LATER"]
-
-/**
- * Given a partial scene heading, suggest completions.
- * Triggers after the user types " - " (dash with spaces).
- */
-export function getSceneHeadingCompletions(text: string): string[] {
-  const upper = text.toUpperCase()
-  const hasDash = upper.includes(" - ")
-  if (!hasDash) return []
-
-  const afterDash = upper.split(" - ").pop() ?? ""
-  return TIME_OF_DAY_OPTIONS.filter((t) => t.startsWith(afterDash) && t !== afterDash)
-}
-
-// ─────────────────────────────────────────────────────────────
-// CHARACTER AUTOCOMPLETE
+// CHARACTER NAME EXTRACTION
 // ─────────────────────────────────────────────────────────────
 
 /**
@@ -362,15 +292,6 @@ export function extractCharacterNames(blocks: Block[]): string[] {
     }
   }
   return Array.from(names).sort()
-}
-
-/**
- * Given partial character name input, return matching known names.
- */
-export function getCharacterCompletions(partial: string, blocks: Block[]): string[] {
-  const all = extractCharacterNames(blocks)
-  const up = partial.toUpperCase()
-  return all.filter((name) => name.startsWith(up) && name !== up)
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -449,72 +370,6 @@ export function exportBlocksToText(blocks: Block[]): string {
 }
 
 // ─────────────────────────────────────────────────────────────
-// DISPLAY HELPERS
-// ─────────────────────────────────────────────────────────────
-
-export function getBlockLabel(type: BlockType): string {
-  switch (type) {
-    case "scene_heading":  return "Scene Heading"
-    case "action":         return "Action"
-    case "character":      return "Character"
-    case "parenthetical":  return "Parenthetical"
-    case "dialogue":       return "Dialogue"
-    case "transition":     return "Transition"
-    case "shot":           return "Shot"
-    default:               return "Action"
-  }
-}
-
-/** Keyboard shortcut label for each block type (Arc Studio Cmd+1..7 style) */
-export function getBlockShortcut(type: BlockType): string {
-  switch (type) {
-    case "scene_heading":  return "⌘1"
-    case "action":         return "⌘2"
-    case "character":      return "⌘3"
-    case "parenthetical":  return "⌘4"
-    case "dialogue":       return "⌘5"
-    case "shot":           return "⌘6"
-    case "transition":     return "⌘7"
-    default:               return ""
-  }
-}
-
-/** Map Cmd+1..7 key number to block type */
-export function blockTypeFromShortcutKey(key: string): BlockType | null {
-  const map: Record<string, BlockType> = {
-    "1": "scene_heading",
-    "2": "action",
-    "3": "character",
-    "4": "parenthetical",
-    "5": "dialogue",
-    "6": "shot",
-    "7": "transition",
-  }
-  return map[key] ?? null
-}
-
-// ─────────────────────────────────────────────────────────────
-// STATISTICS
-// ─────────────────────────────────────────────────────────────
-
-export interface ScreenplayStats {
-  scenes: number
-  pages: number       // approx: 1 page ≈ 55 lines of Courier 12pt
-  characters: number  // unique character names
-  words: number
-}
-
-export function getScreenplayStats(blocks: Block[]): ScreenplayStats {
-  const scenes     = blocks.filter((b) => b.type === "scene_heading").length
-  const totalLines = blocks.length + blocks.filter((b) => b.type === "scene_heading").length // blank lines after headings
-  const pages      = Math.max(1, Math.ceil(totalLines / 55))
-  const charNames  = extractCharacterNames(blocks)
-  const words      = blocks.reduce((sum, b) => sum + b.text.split(/\s+/).filter(Boolean).length, 0)
-
-  return { scenes, pages, characters: charNames.length, words }
-}
-
-// ─────────────────────────────────────────────────────────────
 // BLOCK LIST OPERATIONS
 // ─────────────────────────────────────────────────────────────
 
@@ -545,14 +400,4 @@ export function changeBlockType(blocks: Block[], id: string, newType: BlockType)
 /** Remove a block by id */
 export function removeBlock(blocks: Block[], id: string): Block[] {
   return blocks.filter((b) => b.id !== id)
-}
-
-/** Merge block with the previous one (Backspace on empty block) */
-export function mergeWithPrev(blocks: Block[], id: string): Block[] {
-  const idx = blocks.findIndex((b) => b.id === id)
-  if (idx <= 0) return blocks
-  const prev = blocks[idx - 1]
-  const curr = blocks[idx]
-  const merged: Block = { ...prev, text: prev.text + curr.text }
-  return [...blocks.slice(0, idx - 1), merged, ...blocks.slice(idx + 1)]
 }

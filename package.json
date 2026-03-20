@@ -1,5 +1,5 @@
 {
-  "name": "ai-aggregator-v2",
+  "name": "koza",
   "version": "0.1.0",
   "private": true,
   "scripts": {
@@ -18,6 +18,9 @@
     "next": "16.1.7",
     "react": "19.2.3",
     "react-dom": "19.2.3",
+    "slate": "^0.123.0",
+    "slate-history": "^0.113.1",
+    "slate-react": "^0.123.0",
     "zustand": "^5.0.12"
   },
   "devDependencies": {

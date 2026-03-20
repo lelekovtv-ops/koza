@@ -31,8 +31,8 @@ const ibmPlexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "KOZA — AI Production Studio",
-  description: "AI Production Studio",
+  title: "KOZA — Unasked. Built",
+  description: "Unasked. Built",
 };
 
 export default function RootLayout({

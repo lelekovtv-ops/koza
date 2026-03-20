@@ -1,4 +1,5 @@
 @import "tailwindcss";
+@import "../components/editor/screenplay/screenplayAiEffects.css";
 
 html,
 body {

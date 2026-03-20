@@ -1,6 +1,6 @@
 #!/bin/bash
 set -e
-PROJECT="/Users/macbookbpm/Desktop/ai-aggregator-v2"
+PROJECT="/Users/macbookbpm/Desktop/KOZA"
 echo "Writing screenplayFormat.ts..."
 cat > "$PROJECT/src/lib/screenplayFormat.ts" << 'ENDOFFILE'
 /**

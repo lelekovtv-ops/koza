@@ -20,7 +20,7 @@ export function KozaLogo({
   const { width, height } = SIZES[size];
 
   return (
-    <div className={`flex flex-col items-start gap-1 ${className}`}>
+    <div className={`flex flex-col items-center gap-2 ${className}`} style={{ width }}>
       <svg
         width={width}
         height={height}
@@ -73,10 +73,17 @@ export function KozaLogo({
 
       {showTagline && (
         <span
-          style={{ fontFamily: "'Courier New', monospace" }}
-          className="text-[9px] tracking-widest uppercase text-muted-foreground"
+          style={{
+            width: "100%",
+            fontFamily: "'Courier New', monospace",
+            letterSpacing: "0.12em",
+            lineHeight: 1.08,
+            textAlign: "center",
+            whiteSpace: "nowrap",
+          }}
+          className="text-[12px] text-neutral-500 dark:text-neutral-500 select-none"
         >
-          AI Production Studio
+          Unasked. Built.
         </span>
       )}
     </div>
