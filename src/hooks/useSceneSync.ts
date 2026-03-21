@@ -1,26 +1,30 @@
 import { useEffect, useRef } from "react"
 import { useScriptStore } from "@/store/script"
 import { useTimelineStore } from "@/store/timeline"
+import { useScenesStore } from "@/store/scenes"
 import { parseScenesToShots } from "@/lib/sceneParser"
 
 /**
- * Syncs scene_heading blocks from the script store to the timeline.
- * - Adds new scenes that appear in the script
- * - Removes shots whose scene IDs no longer exist
- * - Preserves duration / thumbnails / notes of existing shots
+ * Syncs scene_heading blocks from the script store to:
+ * 1. Scenes store (parsed scene list)
+ * 2. Timeline (shot stubs for each scene heading)
  */
 export function useSceneSync() {
   const blocks = useScriptStore((s) => s.blocks)
+  const updateScenes = useScenesStore((s) => s.updateScenes)
   const prevIdsRef = useRef<Set<string>>(new Set())
 
   useEffect(() => {
+    // Sync scenes store
+    updateScenes(blocks)
+
+    // Sync timeline shots
     const parsed = parseScenesToShots(blocks)
     const parsedIds = new Set(parsed.map((s) => s.id))
 
     const { shots, addShot, removeShot } = useTimelineStore.getState()
     const existingIds = new Set(shots.map((s) => s.id))
 
-    // Add new scenes
     for (const scene of parsed) {
       if (!existingIds.has(scene.id)) {
         addShot({
@@ -34,7 +38,6 @@ export function useSceneSync() {
       }
     }
 
-    // Remove shots that were previously synced but whose scenes are now gone
     for (const id of prevIdsRef.current) {
       if (!parsedIds.has(id) && existingIds.has(id)) {
         removeShot(id)
@@ -42,5 +45,5 @@ export function useSceneSync() {
     }
 
     prevIdsRef.current = parsedIds
-  }, [blocks])
+  }, [blocks, updateScenes])
 }

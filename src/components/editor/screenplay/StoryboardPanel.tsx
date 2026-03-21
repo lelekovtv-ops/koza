@@ -2,12 +2,139 @@
 
 import Image from "next/image"
 import { useRouter } from "next/navigation"
-import { Clapperboard, Film, Loader2, MoreHorizontal, Plus } from "lucide-react"
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react"
+import { Clapperboard, Film, Grid, List, Loader2, MoreHorizontal, Plus, RefreshCw, Wand2 } from "lucide-react"
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTimelineStore, createTimelineShot } from "@/store/timeline"
+import type { TimelineShot } from "@/store/timeline"
 import { timelineShotToStoryboardView, createShotFromStoryboardDefaults } from "@/lib/storyboardBridge"
 import { useScriptStore } from "@/store/script"
+import { useScenesStore } from "@/store/scenes"
 import { breakdownScene } from "@/lib/jenkins"
+import { saveBlob } from "@/lib/fileStorage"
+
+const SHOT_SIZE_OPTIONS = ["WIDE", "MEDIUM", "CLOSE", "EXTREME CLOSE", "OVER SHOULDER", "POV", "INSERT", "AERIAL", "TWO SHOT"] as const
+const CAMERA_MOTION_OPTIONS = ["Static", "Pan Left", "Pan Right", "Pan Up", "Tilt Down", "Push In", "Pull Out", "Track Left", "Track Right", "Track Around", "Dolly In", "Crane Up", "Crane Down", "Drone In", "Handheld", "Steadicam"] as const
+
+type ViewMode = "scenes" | "board" | "list"
+
+// ── Inline Editable Components ──────────────────────────────────
+
+function InlineSelect({ value, options, onChange }: { value: string; options: readonly string[]; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false)
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="cursor-pointer rounded bg-transparent px-0.5 text-left hover:bg-white/5 transition-colors">
+        {value || options[0]}
+      </button>
+    )
+  }
+  return (
+    <select
+      autoFocus
+      value={value}
+      onChange={(e) => { onChange(e.target.value); setOpen(false) }}
+      onBlur={() => setOpen(false)}
+      className="rounded border border-white/10 bg-white/5 px-1 py-0.5 text-[10px] uppercase text-[#ECE5D8] outline-none"
+    >
+      {options.map((opt) => <option key={opt} value={opt} className="bg-[#1a1d24] text-white">{opt}</option>)}
+    </select>
+  )
+}
+
+function InlineDuration({ value, onChange }: { value: string; onChange: (ms: number) => void }) {
+  const [editing, setEditing] = useState(false)
+  const numericVal = parseFloat(value) || 0
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => { if (editing) inputRef.current?.focus() }, [editing])
+
+  if (!editing) {
+    return (
+      <button type="button" onClick={() => setEditing(true)} className="cursor-pointer rounded bg-transparent px-0.5 hover:bg-white/5 transition-colors">
+        {value}
+      </button>
+    )
+  }
+  return (
+    <input
+      ref={inputRef}
+      type="number"
+      step="0.1"
+      min="0.5"
+      max="30"
+      defaultValue={numericVal.toFixed(1)}
+      onBlur={(e) => { onChange(parseFloat(e.target.value) * 1000); setEditing(false) }}
+      onKeyDown={(e) => { if (e.key === "Enter") { onChange(parseFloat((e.target as HTMLInputElement).value) * 1000); setEditing(false) } }}
+      className="w-12 rounded border border-white/10 bg-white/5 px-1 py-0.5 text-[10px] text-[#B9AEA0] outline-none"
+    />
+  )
+}
+
+function InlineText({ value, onChange, placeholder, multiline }: { value: string; onChange: (v: string) => void; placeholder?: string; multiline?: boolean }) {
+  const [editing, setEditing] = useState(false)
+  const ref = useRef<HTMLTextAreaElement | HTMLInputElement>(null)
+
+  useEffect(() => { if (editing) ref.current?.focus() }, [editing])
+
+  if (!editing) {
+    return (
+      <button type="button" onClick={() => setEditing(true)} className="w-full cursor-pointer truncate rounded bg-transparent px-0.5 text-left hover:bg-white/5 transition-colors">
+        {value || <span className="text-white/20">{placeholder}</span>}
+      </button>
+    )
+  }
+  if (multiline) {
+    return (
+      <textarea
+        ref={ref as React.RefObject<HTMLTextAreaElement>}
+        rows={2}
+        defaultValue={value}
+        placeholder={placeholder}
+        onBlur={(e) => { onChange(e.target.value); setEditing(false) }}
+        className="w-full resize-none rounded border border-white/10 bg-white/5 px-1 py-0.5 text-[10px] text-[#B9AEA0] outline-none placeholder:text-white/20"
+      />
+    )
+  }
+  return (
+    <input
+      ref={ref as React.RefObject<HTMLInputElement>}
+      type="text"
+      defaultValue={value}
+      placeholder={placeholder}
+      onBlur={(e) => { onChange(e.target.value); setEditing(false) }}
+      onKeyDown={(e) => { if (e.key === "Enter") { onChange((e.target as HTMLInputElement).value); setEditing(false) } }}
+      className="w-full rounded border border-white/10 bg-white/5 px-1 py-0.5 text-[10px] text-[#B9AEA0] outline-none placeholder:text-white/20"
+    />
+  )
+}
+
+// ── AI Image Generation ─────────────────────────────────────────
+
+async function generateShotImage(shot: TimelineShot): Promise<string> {
+  const rawPrompt = `Cinematic storyboard frame. ${shot.shotSize} shot. ${shot.caption}. ${shot.cameraMotion} camera. Film noir style, high contrast, dramatic lighting.`
+
+  // Enhance prompt via Claude
+  const promptRes = await fetch("/api/ambient-prompt", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ description: rawPrompt }),
+  })
+  const enhancedPrompt = promptRes.ok ? (await promptRes.json()).prompt : rawPrompt
+
+  // Generate image
+  const imageRes = await fetch("/api/ambient-image", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ prompt: enhancedPrompt }),
+  })
+
+  if (!imageRes.ok) throw new Error(`Image generation failed: ${imageRes.status}`)
+
+  const blob = await imageRes.blob()
+  const blobKey = `shot-thumb-${shot.id}`
+  await saveBlob(blobKey, blob)
+  return URL.createObjectURL(blob)
+}
 
 interface StoryboardPanelProps {
   isOpen: boolean
@@ -30,10 +157,16 @@ export function StoryboardPanel({
   const resolvedPanelWidth = isExpanded ? "100vw" : `${panelWidth}px`
   const shots = useTimelineStore((state) => state.shots)
   const addShot = useTimelineStore((state) => state.addShot)
+  const updateShot = useTimelineStore((state) => state.updateShot)
   const reorderShot = useTimelineStore((state) => state.reorderShot)
   const [recentInsertedFrameId, setRecentInsertedFrameId] = useState<string | null>(null)
   const [draggedFrameId, setDraggedFrameId] = useState<string | null>(null)
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null)
+  const [viewMode, setViewMode] = useState<ViewMode>("board")
+  const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set())
+  const scenes = useScenesStore((s) => s.scenes)
+  const selectedSceneId = useScenesStore((s) => s.selectedSceneId)
+  const selectScene = useScenesStore((s) => s.selectScene)
   const cardScale = 90
   const frames = useMemo(() => shots.map((shot, index) => timelineShotToStoryboardView(shot, index)), [shots])
   const scenario = useScriptStore((state) => state.scenario)
@@ -59,6 +192,20 @@ export function StoryboardPanel({
       setJenkinsLoading(false)
     }
   }, [scenario, jenkinsLoading, addShot])
+
+  const handleGenerateImage = useCallback(async (shotId: string) => {
+    const shot = shots.find((s) => s.id === shotId)
+    if (!shot || generatingIds.has(shotId)) return
+    setGeneratingIds((prev) => new Set(prev).add(shotId))
+    try {
+      const imageUrl = await generateShotImage(shot)
+      updateShot(shotId, { thumbnailUrl: imageUrl })
+    } catch (error) {
+      console.error("Image generation error:", error)
+    } finally {
+      setGeneratingIds((prev) => { const next = new Set(prev); next.delete(shotId); return next })
+    }
+  }, [shots, generatingIds, updateShot])
 
   const nextFrame = useMemo(() => {
     return timelineShotToStoryboardView(
@@ -184,10 +331,90 @@ export function StoryboardPanel({
           <div className="flex items-center gap-2 text-[#9FA4AE]">
             <span className="rounded-md border border-white/8 bg-white/3 px-2 py-1 text-[10px] uppercase tracking-[0.16em]">Shots</span>
             <span className="rounded-md border border-white/8 bg-white/2 px-2 py-1 text-[10px] uppercase tracking-[0.16em]">Frames {frames.length}</span>
+            <span className="mx-1 h-3 w-px bg-white/8" />
+            <button
+              type="button"
+              onClick={() => setViewMode("scenes")}
+              className={`flex items-center gap-1 rounded-md px-2 py-1 text-[10px] uppercase tracking-[0.14em] transition-colors ${viewMode === "scenes" ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
+            >
+              <Clapperboard size={10} />
+              Scenes
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("board")}
+              className={`flex items-center gap-1 rounded-md px-2 py-1 text-[10px] uppercase tracking-[0.14em] transition-colors ${viewMode === "board" ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
+            >
+              <Grid size={10} />
+              Board
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("list")}
+              className={`flex items-center gap-1 rounded-md px-2 py-1 text-[10px] uppercase tracking-[0.14em] transition-colors ${viewMode === "list" ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
+            >
+              <List size={10} />
+              Shot List
+            </button>
           </div>
         </div>
 
         <div className="flex-1 overflow-y-auto px-4 py-4" style={{ overscrollBehaviorY: "contain" }}>
+          {viewMode === "scenes" ? (
+          <div className="flex flex-col gap-1.5">
+            {scenes.length === 0 ? (
+              <div className="flex flex-col items-center justify-center py-16 text-center">
+                <Clapperboard size={28} className="mb-3 text-white/15" />
+                <p className="text-[12px] text-[#7F8590]">No scenes yet</p>
+                <p className="mt-1 text-[10px] text-white/25">Add a scene heading (INT./EXT.) to your script</p>
+              </div>
+            ) : (
+              scenes.map((scene) => {
+                const isSelected = selectedSceneId === scene.id
+                const relatedShots = shots.filter((s) => s.sceneId && scene.blockIds.some((bid) => s.sceneId === `scene-${bid}` || s.label === scene.title))
+                return (
+                  <button
+                    key={scene.id}
+                    type="button"
+                    onClick={() => selectScene(isSelected ? null : scene.id)}
+                    className={`flex items-stretch gap-3 rounded-lg px-3 py-2 text-left transition-colors ${
+                      isSelected
+                        ? "bg-white/5 border-l-2"
+                        : "hover:bg-white/3 border-l-2 border-transparent"
+                    }`}
+                    style={isSelected ? { borderLeftColor: scene.color } : undefined}
+                  >
+                    <div
+                      className="w-1 shrink-0 rounded-full"
+                      style={{ backgroundColor: scene.color }}
+                    />
+                    <div className="min-w-0 flex-1">
+                      <p className="text-[10px] uppercase tracking-[0.18em] text-[#8D919B]">
+                        Scene {scene.index}
+                      </p>
+                      <p className="mt-0.5 truncate text-[13px] font-medium text-[#E7E3DC]">
+                        {scene.title}
+                      </p>
+                      <div className="mt-1 flex items-center gap-3 text-[10px] text-[#7F8590]">
+                        <span>{scene.blockIds.length} blocks</span>
+                        <span>{relatedShots.length} shots</span>
+                      </div>
+                    </div>
+                    <div className="flex shrink-0 items-center">
+                      <span
+                        className="flex h-6 items-center gap-1 rounded-md px-1.5 text-[9px] uppercase tracking-[0.12em] text-[#7F8590] transition-colors hover:bg-white/5 hover:text-white"
+                        aria-label={`Breakdown scene ${scene.index}`}
+                      >
+                        <Clapperboard size={10} />
+                        Breakdown
+                      </span>
+                    </div>
+                  </button>
+                )
+              })
+            )}
+          </div>
+          ) : viewMode === "board" ? (
           <div
             className="grid min-h-full"
             style={{
@@ -199,7 +426,10 @@ export function StoryboardPanel({
               transition: "gap 240ms ease, grid-template-columns 240ms ease",
             }}
           >
-            {frames.map((frame, index) => (
+            {frames.map((frame, index) => {
+              const shot = shots[index]
+              const isGenerating = shot ? generatingIds.has(shot.id) : false
+              return (
               <Fragment key={frame.id}>
                 <div
                   className={`group relative overflow-hidden rounded-[14px] border border-white/6 bg-[#111317] p-2 shadow-[0_20px_45px_rgba(0,0,0,0.28)] transition-all duration-200 ${recentInsertedFrameId === frame.id ? "storyboard-card-enter" : ""} ${dropTargetIndex === index || dropTargetIndex === index + 1 ? "border-[#D8C4A5]/40 shadow-[0_0_0_1px_rgba(216,196,165,0.18),0_20px_45px_rgba(0,0,0,0.34)]" : "hover:-translate-y-px hover:border-white/10 hover:bg-[#14171C]"}`}
@@ -221,9 +451,10 @@ export function StoryboardPanel({
                   }}
                 >
                   <div className="relative flex h-full flex-col text-[#E5E0DB]">
+                    {/* Image area with hover overlay */}
                     <div className="relative overflow-hidden rounded-[10px] border border-white/8 bg-[#0E1014] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]" style={{ aspectRatio: "16 / 8.7" }}>
                       <Image
-                        src={frame.svg}
+                        src={shot?.thumbnailUrl || frame.svg}
                         alt={`${frame.meta.shot} frame preview`}
                         width={320}
                         height={320}
@@ -235,18 +466,75 @@ export function StoryboardPanel({
                       <div className="absolute left-2 top-2 rounded-md border border-white/10 bg-black/30 px-1.5 py-1 text-[9px] uppercase tracking-[0.18em] text-[#EAE2D7] backdrop-blur-sm">
                         Shot {String(index + 1).padStart(2, "0")}
                       </div>
+
+                      {/* AI generation overlay */}
+                      {isGenerating ? (
+                        <div className="absolute inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                          <Loader2 size={28} className="animate-spin text-white/70" />
+                        </div>
+                      ) : (
+                        <div className="absolute inset-0 flex items-center justify-center gap-2 bg-black/40 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
+                          <button
+                            type="button"
+                            onClick={() => shot && handleGenerateImage(shot.id)}
+                            className="flex items-center gap-1.5 rounded-lg border border-white/15 bg-black/50 px-3 py-1.5 text-[10px] uppercase tracking-[0.14em] text-white/90 backdrop-blur-sm transition-colors hover:bg-white/10"
+                          >
+                            <Wand2 size={14} />
+                            Generate
+                          </button>
+                          {shot?.thumbnailUrl && (
+                            <button
+                              type="button"
+                              onClick={() => shot && handleGenerateImage(shot.id)}
+                              className="flex items-center gap-1 rounded-lg border border-white/15 bg-black/50 px-2 py-1.5 text-white/70 backdrop-blur-sm transition-colors hover:bg-white/10 hover:text-white/90"
+                            >
+                              <RefreshCw size={13} />
+                            </button>
+                          )}
+                        </div>
+                      )}
                     </div>
 
+                    {/* Editable metadata */}
                     <div className="mt-2 flex items-start justify-between gap-3 px-0.5 pb-0.5 pt-0.5 text-[#D7CDC1]">
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-[11px] uppercase tracking-[0.08em] text-[#ECE5D8]">
-                          {frame.meta.shot}
+                        <div className="flex items-center text-[11px] uppercase tracking-[0.08em] text-[#ECE5D8]">
+                          <InlineSelect
+                            value={frame.meta.shot}
+                            options={SHOT_SIZE_OPTIONS}
+                            onChange={(v) => shot && updateShot(shot.id, { shotSize: v })}
+                          />
                           <span className="mx-1.5 text-white/20">-</span>
-                          <span className="normal-case tracking-normal text-[#B9AEA0]">{frame.meta.motion}</span>
+                          <span className="normal-case tracking-normal text-[#B9AEA0]">
+                            <InlineSelect
+                              value={frame.meta.motion}
+                              options={CAMERA_MOTION_OPTIONS}
+                              onChange={(v) => shot && updateShot(shot.id, { cameraMotion: v })}
+                            />
+                          </span>
                           <span className="mx-1.5 text-white/20">-</span>
-                          <span className="normal-case tracking-normal text-[#B9AEA0]">{frame.meta.duration}</span>
-                        </p>
-                        <p className="mt-1 truncate text-[10px] text-[#7F8590]">{frame.meta.caption}</p>
+                          <span className="normal-case tracking-normal text-[#B9AEA0]">
+                            <InlineDuration
+                              value={frame.meta.duration}
+                              onChange={(ms) => shot && updateShot(shot.id, { duration: ms })}
+                            />
+                          </span>
+                        </div>
+                        <div className="mt-1 text-[10px] text-[#7F8590]">
+                          <InlineText
+                            value={frame.meta.caption}
+                            onChange={(v) => shot && updateShot(shot.id, { caption: v, label: `${frame.meta.shot} — ${v}` })}
+                            placeholder="Shot caption..."
+                          />
+                        </div>
+                        <div className="mt-1 text-[10px] text-[#5F636B]">
+                          <InlineText
+                            value={shot?.notes || ""}
+                            onChange={(v) => shot && updateShot(shot.id, { notes: v })}
+                            placeholder="Director's notes..."
+                            multiline
+                          />
+                        </div>
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
                         <button
@@ -270,7 +558,8 @@ export function StoryboardPanel({
                   </div>
                 </div>
               </Fragment>
-            ))}
+              )
+            })}
 
             <button
               type="button"
@@ -302,6 +591,68 @@ export function StoryboardPanel({
               </div>
             </button>
           </div>
+          ) : (
+          /* Shot List (table) view */
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-[11px] text-[#D7CDC1]">
+              <thead>
+                <tr className="border-b border-white/8 text-[9px] uppercase tracking-[0.18em] text-[#7F8590]">
+                  <th className="px-2 py-2 font-medium">#</th>
+                  <th className="px-2 py-2 font-medium">Shot Size</th>
+                  <th className="px-2 py-2 font-medium">Caption</th>
+                  <th className="px-2 py-2 font-medium">Motion</th>
+                  <th className="px-2 py-2 font-medium">Duration</th>
+                  <th className="px-2 py-2 font-medium">Notes</th>
+                </tr>
+              </thead>
+              <tbody>
+                {frames.map((frame, index) => {
+                  const shot = shots[index]
+                  return (
+                    <tr key={frame.id} className="border-b border-white/5 transition-colors hover:bg-white/3">
+                      <td className="px-2 py-1.5 text-[#7F8590]">{String(index + 1).padStart(2, "0")}</td>
+                      <td className="px-2 py-1.5 uppercase">
+                        <InlineSelect
+                          value={frame.meta.shot}
+                          options={SHOT_SIZE_OPTIONS}
+                          onChange={(v) => shot && updateShot(shot.id, { shotSize: v })}
+                        />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <InlineText
+                          value={frame.meta.caption}
+                          onChange={(v) => shot && updateShot(shot.id, { caption: v, label: `${frame.meta.shot} — ${v}` })}
+                          placeholder="Caption..."
+                        />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <InlineSelect
+                          value={frame.meta.motion}
+                          options={CAMERA_MOTION_OPTIONS}
+                          onChange={(v) => shot && updateShot(shot.id, { cameraMotion: v })}
+                        />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <InlineDuration
+                          value={frame.meta.duration}
+                          onChange={(ms) => shot && updateShot(shot.id, { duration: ms })}
+                        />
+                      </td>
+                      <td className="px-2 py-1.5">
+                        <InlineText
+                          value={shot?.notes || ""}
+                          onChange={(v) => shot && updateShot(shot.id, { notes: v })}
+                          placeholder="Notes..."
+                          multiline
+                        />
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+          )}
         </div>
 
         <style jsx>{`
