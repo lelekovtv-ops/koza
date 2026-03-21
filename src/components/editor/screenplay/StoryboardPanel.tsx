@@ -1,10 +1,11 @@
 "use client"
 
 import Image from "next/image"
-import { Clapperboard, Loader2, MoreHorizontal, Plus, SendHorizonal } from "lucide-react"
+import { useRouter } from "next/navigation"
+import { Clapperboard, Film, Loader2, MoreHorizontal, Plus } from "lucide-react"
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react"
-import { createStoryboardFrame, useStoryboardStore } from "@/store/storyboard"
-import { useTimelineStore } from "@/store/timeline"
+import { useTimelineStore, createTimelineShot } from "@/store/timeline"
+import { timelineShotToStoryboardView, createShotFromStoryboardDefaults } from "@/lib/storyboardBridge"
 import { useScriptStore } from "@/store/script"
 import { breakdownScene } from "@/lib/jenkins"
 
@@ -17,25 +18,6 @@ interface StoryboardPanelProps {
   onToggleExpanded: () => void
 }
 
-const STORYBOARD_CARD_META = [
-  { shot: "WIDE", motion: "Static", duration: "4.2s", caption: "Establishing valley frame" },
-  { shot: "OVER SHOULDER", motion: "Pan Right", duration: "4.8s", caption: "Backpack silhouette reveal" },
-  { shot: "CLOSE", motion: "Slight In", duration: "3.5s", caption: "Sunlit profile detail" },
-  { shot: "WIDE", motion: "Push In", duration: "3.8s", caption: "Hero facing sunrise" },
-  { shot: "WIDE", motion: "Static", duration: "4.2s", caption: "Rest beat on cliff" },
-  { shot: "CLOSE", motion: "Slight In", duration: "3.5s", caption: "Tension in expression" },
-  { shot: "WIDE", motion: "Push In", duration: "3.8s", caption: "Return to landscape" },
-  { shot: "CLOSE", motion: "Track Around", duration: "3.2s", caption: "Orbit around subject" },
-  { shot: "CLOSE", motion: "Static", duration: "3.4s", caption: "Downbeat introspection" },
-  { shot: "WIDE", motion: "Drone In", duration: "5.5s", caption: "Aerial descent into valley" },
-  { shot: "CLOSE", motion: "Track Around", duration: "3.2s", caption: "Shoulder line contour" },
-  { shot: "MEDIUM", motion: "Pan Up", duration: "4.1s", caption: "Pack and horizon reveal" },
-]
-
-function getStoryboardCardMeta(index: number) {
-  return STORYBOARD_CARD_META[index % STORYBOARD_CARD_META.length]
-}
-
 export function StoryboardPanel({
   isOpen,
   isExpanded,
@@ -44,42 +26,18 @@ export function StoryboardPanel({
   onClose,
   onToggleExpanded,
 }: StoryboardPanelProps) {
+  const router = useRouter()
   const resolvedPanelWidth = isExpanded ? "100vw" : `${panelWidth}px`
-  const frames = useStoryboardStore((state) => state.frames)
-  const insertFrameAt = useStoryboardStore((state) => state.insertFrameAt)
-  const moveFrameToIndex = useStoryboardStore((state) => state.moveFrameToIndex)
+  const shots = useTimelineStore((state) => state.shots)
+  const addShot = useTimelineStore((state) => state.addShot)
+  const reorderShot = useTimelineStore((state) => state.reorderShot)
   const [recentInsertedFrameId, setRecentInsertedFrameId] = useState<string | null>(null)
   const [draggedFrameId, setDraggedFrameId] = useState<string | null>(null)
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null)
   const cardScale = 90
-  const timelineShots = useTimelineStore((state) => state.shots)
-  const addShot = useTimelineStore((state) => state.addShot)
+  const frames = useMemo(() => shots.map((shot, index) => timelineShotToStoryboardView(shot, index)), [shots])
   const scenario = useScriptStore((state) => state.scenario)
   const [jenkinsLoading, setJenkinsLoading] = useState(false)
-
-  const parseDuration = useCallback((raw: string) => {
-    const match = raw.match(/([\d.]+)\s*s/)
-    return match ? Math.round(parseFloat(match[1]) * 1000) : 3000
-  }, [])
-
-  const addFrameToTimeline = useCallback(
-    (frame: { id: string }, index: number) => {
-      if (timelineShots.some((s) => s.id === frame.id)) return
-      const meta = getStoryboardCardMeta(index)
-      addShot({
-        id: frame.id,
-        duration: parseDuration(meta.duration),
-        type: "image",
-        label: `${meta.shot} — ${meta.caption}`,
-        notes: meta.motion,
-      })
-    },
-    [timelineShots, addShot, parseDuration],
-  )
-
-  const sendAllToTimeline = useCallback(() => {
-    frames.forEach((frame, index) => addFrameToTimeline(frame, index))
-  }, [frames, addFrameToTimeline])
 
   const handleJenkinsBreakdown = useCallback(async () => {
     const text = scenario.trim()
@@ -102,7 +60,12 @@ export function StoryboardPanel({
     }
   }, [scenario, jenkinsLoading, addShot])
 
-  const nextFrame = useMemo(() => createStoryboardFrame(frames.length, `preview-${frames.length}`), [frames.length])
+  const nextFrame = useMemo(() => {
+    return timelineShotToStoryboardView(
+      createTimelineShot(createShotFromStoryboardDefaults(shots.length)),
+      shots.length,
+    )
+  }, [shots.length])
 
   useEffect(() => {
     if (!recentInsertedFrameId) return
@@ -115,7 +78,8 @@ export function StoryboardPanel({
   }, [recentInsertedFrameId])
 
   const handleInsertFrameAt = (index: number) => {
-    const insertedFrameId = insertFrameAt(index)
+    const defaults = createShotFromStoryboardDefaults(shots.length)
+    const insertedFrameId = addShot({ ...defaults, order: index })
     setRecentInsertedFrameId(insertedFrameId)
     setDropTargetIndex(null)
   }
@@ -131,7 +95,7 @@ export function StoryboardPanel({
 
   const handleDropAtIndex = (index: number) => {
     if (!draggedFrameId) return
-    moveFrameToIndex(draggedFrameId, index)
+    reorderShot(draggedFrameId, index)
     setDraggedFrameId(null)
     setDropTargetIndex(null)
   }
@@ -185,12 +149,12 @@ export function StoryboardPanel({
             </button>
             <button
               type="button"
-              onClick={sendAllToTimeline}
+              onClick={() => router.push("/timeline")}
               className="flex items-center gap-1.5 rounded-md border border-white/12 px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-[#E5E0DB] transition-colors hover:bg-white/6"
-              aria-label="Send all shots to timeline"
+              aria-label="Open timeline page"
             >
-              <SendHorizonal size={12} />
-              Send all to Timeline
+              <Film size={12} />
+              Timeline
             </button>
             <button
               type="button"
@@ -260,7 +224,7 @@ export function StoryboardPanel({
                     <div className="relative overflow-hidden rounded-[10px] border border-white/8 bg-[#0E1014] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]" style={{ aspectRatio: "16 / 8.7" }}>
                       <Image
                         src={frame.svg}
-                        alt={`${getStoryboardCardMeta(index).shot} frame preview`}
+                        alt={`${frame.meta.shot} frame preview`}
                         width={320}
                         height={320}
                         unoptimized
@@ -276,28 +240,23 @@ export function StoryboardPanel({
                     <div className="mt-2 flex items-start justify-between gap-3 px-0.5 pb-0.5 pt-0.5 text-[#D7CDC1]">
                       <div className="min-w-0 flex-1">
                         <p className="truncate text-[11px] uppercase tracking-[0.08em] text-[#ECE5D8]">
-                          {getStoryboardCardMeta(index).shot}
+                          {frame.meta.shot}
                           <span className="mx-1.5 text-white/20">-</span>
-                          <span className="normal-case tracking-normal text-[#B9AEA0]">{getStoryboardCardMeta(index).motion}</span>
+                          <span className="normal-case tracking-normal text-[#B9AEA0]">{frame.meta.motion}</span>
                           <span className="mx-1.5 text-white/20">-</span>
-                          <span className="normal-case tracking-normal text-[#B9AEA0]">{getStoryboardCardMeta(index).duration}</span>
+                          <span className="normal-case tracking-normal text-[#B9AEA0]">{frame.meta.duration}</span>
                         </p>
-                        <p className="mt-1 truncate text-[10px] text-[#7F8590]">{getStoryboardCardMeta(index).caption}</p>
+                        <p className="mt-1 truncate text-[10px] text-[#7F8590]">{frame.meta.caption}</p>
                       </div>
                       <div className="flex shrink-0 items-center gap-1">
                         <button
                           type="button"
-                          onClick={() => addFrameToTimeline(frame, index)}
-                          className={`flex h-6 items-center gap-1 rounded-md px-1.5 text-[9px] uppercase tracking-[0.12em] transition-colors ${
-                            timelineShots.some((s) => s.id === frame.id)
-                              ? "text-[#5A5F6A] cursor-default"
-                              : "text-[#7F8590] hover:bg-white/5 hover:text-white"
-                          }`}
-                          disabled={timelineShots.some((s) => s.id === frame.id)}
-                          aria-label={`Add shot ${index + 1} to timeline`}
+                          onClick={() => router.push("/timeline")}
+                          className="flex h-6 items-center gap-1 rounded-md px-1.5 text-[9px] uppercase tracking-[0.12em] transition-colors text-[#7F8590] hover:bg-white/5 hover:text-white"
+                          aria-label={`Go to timeline for shot ${index + 1}`}
                         >
-                          <SendHorizonal size={10} />
-                          {timelineShots.some((s) => s.id === frame.id) ? "Added" : "Timeline"}
+                          <Film size={10} />
+                          Timeline
                         </button>
                         <button
                           type="button"

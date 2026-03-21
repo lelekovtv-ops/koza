@@ -1,6 +1,7 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
+import { useSearchParams } from "next/navigation"
 import { Maximize2, Minimize2, Upload } from "lucide-react"
 import { useAutosave } from "@/hooks/useAutosave"
 import SlateScreenplayEditor from "@/components/editor/SlateScreenplayEditor"
@@ -87,6 +88,13 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
   const [floatingFromRect, setFloatingFromRect] = useState<NodeScreenRect | null>(null)
   const [isStoryboardPanelOpen, setIsStoryboardPanelOpen] = useState(false)
   const [isStoryboardPanelExpanded, setIsStoryboardPanelExpanded] = useState(false)
+
+  const searchParams = useSearchParams()
+  useEffect(() => {
+    if (searchParams.get("storyboard") === "open") {
+      setIsStoryboardPanelOpen(true)
+    }
+  }, [searchParams])
 
   const titleInputRef = useRef<HTMLInputElement>(null)
   const uploadInputRef = useRef<HTMLInputElement>(null)

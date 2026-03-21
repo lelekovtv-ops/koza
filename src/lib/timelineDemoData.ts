@@ -48,6 +48,10 @@ export function generateDemoShots(count: number): Omit<TimelineShot, "id">[] {
       sceneId: sceneId(),
       label: `Shot ${sceneNum}${suffix}`,
       notes: NOTES[randomInt(0, NOTES.length - 1)],
+      shotSize: "",
+      cameraMotion: "",
+      caption: "",
+      svg: "",
     })
 
     shotInScene++

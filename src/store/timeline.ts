@@ -13,6 +13,10 @@ export interface TimelineShot {
   sceneId: string | null
   label: string
   notes: string
+  shotSize: string
+  cameraMotion: string
+  caption: string
+  svg: string
 }
 
 export interface AudioClip {
@@ -123,6 +127,10 @@ export const createTimelineShot = (partial: Partial<TimelineShot> = {}): Timelin
   sceneId: partial.sceneId ?? null,
   label: partial.label?.trim() || "Untitled Shot",
   notes: partial.notes ?? "",
+  shotSize: partial.shotSize ?? "",
+  cameraMotion: partial.cameraMotion ?? "",
+  caption: partial.caption ?? "",
+  svg: partial.svg ?? "",
 })
 
 export const createAudioClip = (partial: Partial<AudioClip> = {}): AudioClip => ({

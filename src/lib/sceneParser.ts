@@ -43,6 +43,10 @@ export function parseScenesToShots(blocks: Block[]): TimelineShot[] {
       sceneId: id,
       label,
       notes: "",
+      shotSize: "",
+      cameraMotion: "",
+      caption: "",
+      svg: "",
     })
   }
 
