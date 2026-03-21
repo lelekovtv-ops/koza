@@ -5,6 +5,7 @@ import dynamic from 'next/dynamic'
 import { Plus, FolderOpen, ArrowLeft } from "lucide-react";
 import { useProjectsStore } from '@/store/projects'
 import { useScriptStore } from '@/store/script'
+import { useTimelineStore } from '@/store/timeline'
 import { KozaLogo } from "@/components/ui/KozaLogo";
 
 const Canvas = dynamic(() => import('@/components/board/Canvas'), { ssr: false })
@@ -12,27 +13,32 @@ const Canvas = dynamic(() => import('@/components/board/Canvas'), { ssr: false }
 export default function Home() {
   const { projects, activeProjectId, createProject, openProject, closeProject } = useProjectsStore()
   const setActiveScriptProject = useScriptStore((state) => state.setActiveProject)
+  const setActiveTimelineProject = useTimelineStore((state) => state.setActiveProject)
   const [view, setView] = useState<'start' | 'board'>(activeProjectId ? 'board' : 'start')
 
   useEffect(() => {
     setActiveScriptProject(activeProjectId)
-  }, [activeProjectId, setActiveScriptProject])
+    setActiveTimelineProject(activeProjectId)
+  }, [activeProjectId, setActiveScriptProject, setActiveTimelineProject])
 
   const handleNewProject = () => {
     const id = createProject(`Project ${projects.length + 1}`)
     setActiveScriptProject(id)
+    setActiveTimelineProject(id)
     setView('board')
   }
 
   const handleOpenProject = (id: string) => {
     openProject(id)
     setActiveScriptProject(id)
+    setActiveTimelineProject(id)
     setView('board')
   }
 
   const handleBackToStart = () => {
     closeProject()
     setActiveScriptProject(null)
+    setActiveTimelineProject(null)
     setView('start')
   }
 
@@ -72,7 +78,7 @@ export default function Home() {
       </div>
 
       {projects.length > 0 && (
-        <div className="mt-6 w-full max-w-[420px] rounded-xl border border-[#E5E0DB] bg-white/70 p-3">
+        <div className="mt-6 w-full max-w-105 rounded-xl border border-[#E5E0DB] bg-white/70 p-3">
           <p className="px-2 pb-2 text-xs uppercase tracking-[0.14em] text-[#8A8279]">Recent Projects</p>
           <div className="space-y-1">
             {projects.slice(0, 5).map((project) => (

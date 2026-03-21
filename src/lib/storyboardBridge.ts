@@ -95,7 +95,7 @@ export function timelineShotToStoryboardView(shot: TimelineShot, index: number):
     id: shot.id,
     title: `Frame ${index + 1}`,
     note: shot.notes || shot.caption || "",
-    svg: shot.svg || generatePlaceholderSvg(index),
+    svg: shot.svg || "",
     meta: {
       shot: shot.shotSize || "WIDE",
       motion: shot.cameraMotion || "Static",

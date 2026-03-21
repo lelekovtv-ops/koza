@@ -92,10 +92,6 @@ function renumberFrames(items: StoryboardFrame[]) {
   }))
 }
 
-function createDefaultFrames(): StoryboardFrame[] {
-  return []
-}
-
 interface StoryboardState {
   frames: StoryboardFrame[]
   cardScale: number
@@ -108,7 +104,7 @@ interface StoryboardState {
 export const useStoryboardStore = create<StoryboardState>()(
   persist(
     (set) => ({
-      frames: createDefaultFrames(),
+      frames: [],
       cardScale: 90,
       insertFrameAt: (index) => {
         const insertedFrame = createStoryboardFrame(index)
@@ -140,18 +136,10 @@ export const useStoryboardStore = create<StoryboardState>()(
         const normalized = Math.min(104, Math.max(72, value))
         set({ cardScale: normalized })
       },
-      resetStoryboard: () => set({ frames: createDefaultFrames(), cardScale: 90 }),
+      resetStoryboard: () => set({ frames: [], cardScale: 90 }),
     }),
     {
-      name: "koza-storyboard",
-      version: 2,
-      migrate: (persisted: unknown, version: number) => {
-        if (version < 2) {
-          const state = persisted as Record<string, unknown>
-          if (state) state.frames = []
-        }
-        return persisted
-      },
+      name: "koza-storyboard-v2",
     }
   )
 )

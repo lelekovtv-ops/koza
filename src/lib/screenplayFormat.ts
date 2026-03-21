@@ -135,9 +135,10 @@ export function detectBlockType(
   const stripped = trimmed.replace(/\s*\((V\.?O\.?|O\.?S\.?|O\.?C\.?|CONT'?D)\)\s*$/i, "")
   const isAllCaps =
     stripped === stripped.toUpperCase() &&
+    stripped !== stripped.toLocaleLowerCase() &&
     stripped.length > 1 &&
     stripped.length < 52 &&
-    /[A-Z]/.test(stripped) &&
+    /\p{Lu}/u.test(stripped) &&
     !RE_SCENE_HEADING.test(stripped) &&
     !RE_TRANSITION.test(trimmed)
 

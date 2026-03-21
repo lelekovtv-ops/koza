@@ -16,6 +16,11 @@ export interface TimelineShot {
   shotSize: string
   cameraMotion: string
   caption: string
+  directorNote: string
+  cameraNote: string
+  videoPrompt: string
+  imagePrompt: string
+  visualDescription: string
   svg: string
   blockRange: [string, string] | null
   locked: boolean
@@ -34,7 +39,14 @@ export interface AudioClip {
   fadeOut: number
 }
 
+type ProjectTimeline = {
+  shots: TimelineShot[]
+  audioClips: AudioClip[]
+}
+
 interface TimelineState {
+  activeProjectId: string | null
+  projectTimelines: Record<string, ProjectTimeline>
   shots: TimelineShot[]
   audioClips: AudioClip[]
   currentTime: number
@@ -65,6 +77,7 @@ interface TimelineState {
   scrollToShot: (id: string) => void
   activateNodeId: string | null
   activateNode: (id: string | null) => void
+  setActiveProject: (projectId: string | null) => void
   clearTimeline: () => void
 }
 
@@ -97,6 +110,15 @@ const normalizeShots = (shots: TimelineShot[]) =>
       duration: clampDuration(shot.duration),
       label: shot.label.trim() || `Shot ${index + 1}`,
       notes: shot.notes ?? "",
+      caption: shot.caption ?? "",
+      directorNote: shot.directorNote ?? "",
+      cameraNote: shot.cameraNote ?? "",
+      videoPrompt: shot.videoPrompt ?? "",
+      imagePrompt: shot.imagePrompt ?? "",
+      visualDescription: shot.visualDescription ?? "",
+      shotSize: shot.shotSize ?? "",
+      cameraMotion: shot.cameraMotion ?? "",
+      sourceText: shot.sourceText ?? "",
     }))
 
 const normalizeAudioClips = (clips: AudioClip[]) =>
@@ -118,6 +140,30 @@ const getClampedCurrentTime = (shots: TimelineShot[], time: number) => {
   return clamp(time, 0, totalDuration)
 }
 
+const createEmptyProjectTimeline = (): ProjectTimeline => ({
+  shots: [],
+  audioClips: [],
+})
+
+function updateCurrentProjectTimeline(
+  state: TimelineState,
+  patch: Partial<ProjectTimeline>
+): Pick<TimelineState, "projectTimelines"> {
+  if (!state.activeProjectId) {
+    return { projectTimelines: state.projectTimelines }
+  }
+
+  return {
+    projectTimelines: {
+      ...state.projectTimelines,
+      [state.activeProjectId]: {
+        shots: patch.shots ?? state.shots,
+        audioClips: patch.audioClips ?? state.audioClips,
+      },
+    },
+  }
+}
+
 export const createTimelineShot = (partial: Partial<TimelineShot> = {}): TimelineShot => ({
   id: partial.id || createId(),
   order: partial.order ?? 0,
@@ -133,6 +179,11 @@ export const createTimelineShot = (partial: Partial<TimelineShot> = {}): Timelin
   shotSize: partial.shotSize ?? "",
   cameraMotion: partial.cameraMotion ?? "",
   caption: partial.caption ?? "",
+  directorNote: partial.directorNote ?? "",
+  cameraNote: partial.cameraNote ?? "",
+  videoPrompt: partial.videoPrompt ?? "",
+  imagePrompt: partial.imagePrompt ?? "",
+  visualDescription: partial.visualDescription ?? "",
   svg: partial.svg ?? "",
   blockRange: partial.blockRange ?? null,
   locked: partial.locked ?? false,
@@ -179,6 +230,8 @@ export const getShotIndexAtTime = (shots: TimelineShot[], time: number) => {
 }
 
 const initialState = {
+  activeProjectId: null as string | null,
+  projectTimelines: {} as Record<string, ProjectTimeline>,
   shots: [] as TimelineShot[],
   audioClips: [] as AudioClip[],
   currentTime: 0,
@@ -206,6 +259,9 @@ export const useTimelineStore = create<TimelineState>()(
         set((state) => ({
           shots: normalizeShots([...state.shots, shot]),
           selectedShotId: shot.id,
+          ...updateCurrentProjectTimeline(state, {
+            shots: normalizeShots([...state.shots, shot]),
+          }),
         }))
 
         return shot.id
@@ -217,31 +273,40 @@ export const useTimelineStore = create<TimelineState>()(
             shots,
             currentTime: getClampedCurrentTime(shots, state.currentTime),
             selectedShotId: state.selectedShotId === id ? null : state.selectedShotId,
+            ...updateCurrentProjectTimeline(state, { shots }),
           }
         })
       },
       updateShot: (id, patch) => {
-        set((state) => ({
-          shots: normalizeShots(
+        set((state) => {
+          const shots = normalizeShots(
             state.shots.map((shot) => (shot.id === id ? createTimelineShot({ ...shot, ...patch, id: shot.id }) : shot))
-          ),
-        }))
+          )
+
+          return {
+            shots,
+            ...updateCurrentProjectTimeline(state, { shots }),
+          }
+        })
       },
       reorderShot: (id, toIndex) => {
         set((state) => {
-          const shots = normalizeShots(state.shots)
-          const fromIndex = shots.findIndex((shot) => shot.id === id)
+          const currentShots = normalizeShots(state.shots)
+          const fromIndex = currentShots.findIndex((shot) => shot.id === id)
           if (fromIndex === -1) return state
 
-          const nextIndex = clamp(toIndex, 0, Math.max(0, shots.length - 1))
+          const nextIndex = clamp(toIndex, 0, Math.max(0, currentShots.length - 1))
           if (fromIndex === nextIndex) return state
 
-          const reordered = [...shots]
+          const reordered = [...currentShots]
           const [movedShot] = reordered.splice(fromIndex, 1)
           reordered.splice(nextIndex, 0, movedShot)
 
+          const shots = normalizeShots(reordered)
+
           return {
-            shots: normalizeShots(reordered),
+            shots,
+            ...updateCurrentProjectTimeline(state, { shots }),
           }
         })
       },
@@ -252,38 +317,56 @@ export const useTimelineStore = create<TimelineState>()(
             shots: normalized,
             currentTime: getClampedCurrentTime(normalized, state.currentTime),
             selectedShotId: normalized.some((shot) => shot.id === state.selectedShotId) ? state.selectedShotId : null,
+            ...updateCurrentProjectTimeline(state, { shots: normalized }),
           }
         })
       },
       addAudioClip: (partial = {}) => {
         const clip = createAudioClip(partial)
 
+        const audioClips = normalizeAudioClips([...get().audioClips, clip])
+
         set((state) => ({
-          audioClips: normalizeAudioClips([...state.audioClips, clip]),
+          audioClips,
           selectedClipId: clip.id,
+          ...updateCurrentProjectTimeline(state, { audioClips }),
         }))
 
         return clip.id
       },
       removeAudioClip: (id) => {
-        set((state) => ({
-          audioClips: state.audioClips.filter((clip) => clip.id !== id),
-          selectedClipId: state.selectedClipId === id ? null : state.selectedClipId,
-        }))
+        set((state) => {
+          const audioClips = state.audioClips.filter((clip) => clip.id !== id)
+          return {
+            audioClips,
+            selectedClipId: state.selectedClipId === id ? null : state.selectedClipId,
+            ...updateCurrentProjectTimeline(state, { audioClips }),
+          }
+        })
       },
       updateAudioClip: (id, patch) => {
-        set((state) => ({
-          audioClips: normalizeAudioClips(
+        set((state) => {
+          const audioClips = normalizeAudioClips(
             state.audioClips.map((clip) => (clip.id === id ? createAudioClip({ ...clip, ...patch, id: clip.id }) : clip))
-          ),
-        }))
+          )
+
+          return {
+            audioClips,
+            ...updateCurrentProjectTimeline(state, { audioClips }),
+          }
+        })
       },
       moveAudioClip: (id, startTime) => {
-        set((state) => ({
-          audioClips: normalizeAudioClips(
+        set((state) => {
+          const audioClips = normalizeAudioClips(
             state.audioClips.map((clip) => (clip.id === id ? { ...clip, startTime: Math.max(0, startTime) } : clip))
-          ),
-        }))
+          )
+
+          return {
+            audioClips,
+            ...updateCurrentProjectTimeline(state, { audioClips }),
+          }
+        })
       },
       play: () => set({ isPlaying: true }),
       pause: () => set({ isPlaying: false }),
@@ -304,27 +387,73 @@ export const useTimelineStore = create<TimelineState>()(
         }
       },
       activateNode: (id) => set({ activateNodeId: id }),
-      clearTimeline: () => set({ ...initialState }),
+      setActiveProject: (projectId) => {
+        set((state) => {
+          const projectTimelines = state.activeProjectId
+            ? {
+                ...state.projectTimelines,
+                [state.activeProjectId]: {
+                  shots: state.shots,
+                  audioClips: state.audioClips,
+                },
+              }
+            : state.projectTimelines
+
+          if (!projectId) {
+            return {
+              activeProjectId: null,
+              projectTimelines,
+              shots: [],
+              audioClips: [],
+              currentTime: 0,
+              isPlaying: false,
+              selectedShotId: null,
+              selectedClipId: null,
+              scrollLeft: 0,
+            }
+          }
+
+          const projectData = projectTimelines[projectId] || createEmptyProjectTimeline()
+
+          return {
+            activeProjectId: projectId,
+            projectTimelines: projectTimelines[projectId]
+              ? projectTimelines
+              : {
+                  ...projectTimelines,
+                  [projectId]: projectData,
+                },
+            shots: normalizeShots(projectData.shots),
+            audioClips: normalizeAudioClips(projectData.audioClips),
+            currentTime: 0,
+            isPlaying: false,
+            selectedShotId: null,
+            selectedClipId: null,
+            scrollLeft: 0,
+          }
+        })
+      },
+      clearTimeline: () =>
+        set((state) => ({
+          ...initialState,
+          activeProjectId: state.activeProjectId,
+          projectTimelines: state.activeProjectId
+            ? {
+                ...state.projectTimelines,
+                [state.activeProjectId]: createEmptyProjectTimeline(),
+              }
+            : state.projectTimelines,
+        })),
     }),
     {
-      name: "koza-timeline",
-      version: 2,
-      migrate: (persisted: unknown, version: number) => {
-        if (version < 2) {
-          const state = persisted as Record<string, unknown>
-          if (state?.shots && Array.isArray(state.shots)) {
-            state.shots = (state.shots as Array<Record<string, unknown>>).filter(
-              (s) => s.locked === true || s.blockRange !== null || s.thumbnailBlobKey !== null
-            )
-          }
-        }
-        return persisted
-      },
+      name: "koza-timeline-v2",
       partialize: (state) => ({
         shots: state.shots,
         audioClips: state.audioClips,
         zoom: state.zoom,
         playbackRate: state.playbackRate,
+        activeProjectId: state.activeProjectId,
+        projectTimelines: state.projectTimelines,
       }),
       onRehydrateStorage: () => (state) => {
         if (!state) return

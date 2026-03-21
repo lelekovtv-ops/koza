@@ -1,7 +1,8 @@
 'use client'
 
+import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft } from 'lucide-react'
+import { ArrowLeft, BookOpen } from 'lucide-react'
 import {
   Background,
   BackgroundVariant,
@@ -52,6 +53,7 @@ interface CanvasProps {
 }
 
 export default function Canvas({ onBack }: CanvasProps) {
+  const router = useRouter()
   const reactFlowRef = useRef<ReactFlowInstance<Node, Edge> | null>(null)
   const syncFromTimelineRef = useRef(false)
   const activeProjectId = useProjectsStore((state) => state.activeProjectId)
@@ -60,7 +62,7 @@ export default function Canvas({ onBack }: CanvasProps) {
   const scriptDate = useScriptStore((state) => state.date)
   const scriptDraft = useScriptStore((state) => state.draft)
   const [nodesState, setNodesState, onNodesChange] = useNodesState(nodes)
-  const [edgesState, setEdgesState, onEdgesChange] = useEdgesState(edges)
+  const [edgesState, , onEdgesChange] = useEdgesState(edges)
   const [editorMode, setEditorMode] = useState<{
     active: boolean
     nodeId: string | null
@@ -215,6 +217,13 @@ export default function Canvas({ onBack }: CanvasProps) {
       </div>
       <div className="absolute top-4 left-4 z-50 flex flex-col gap-2">
         <KozaLogo size="md" variant="default" className="text-[#2D2A26]" />
+        <button
+          onClick={() => router.push('/bible')}
+          className="flex items-center gap-2 rounded-lg bg-white/80 px-3 py-2 text-sm font-medium text-[#2D2A26] shadow-sm backdrop-blur transition-all hover:bg-white hover:shadow-md"
+        >
+          <BookOpen className="h-4 w-4" />
+          Bible
+        </button>
         <button
           onClick={onBack}
           className="flex items-center gap-2 rounded-lg bg-white/80 px-3 py-2 text-sm font-medium text-[#2D2A26] shadow-sm backdrop-blur transition-all hover:bg-white hover:shadow-md"

@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, IBM_Plex_Mono, PT_Mono, PT_Serif } from "next/font/google";
+import { StorageCleanup } from "@/components/app/StorageCleanup";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -45,6 +46,7 @@ export default function RootLayout({
       <body
         className={`${geistSans.variable} ${geistMono.variable} ${ptMono.variable} ${ptSerif.variable} ${ibmPlexMono.variable} antialiased`}
       >
+        <StorageCleanup />
         {children}
       </body>
     </html>

@@ -2,9 +2,9 @@
 
 import Image from "next/image"
 import { useRouter } from "next/navigation"
-import { Clapperboard, Film, Grid, List, Loader2, MoreHorizontal, Plus, RefreshCw, Wand2 } from "lucide-react"
+import { BookOpen, Camera, Clapperboard, Film, Grid, Image as ImageIcon, List, Loader2, MoreHorizontal, Plus, RefreshCw, Wand2 } from "lucide-react"
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { useTimelineStore, createTimelineShot } from "@/store/timeline"
+import { useTimelineStore } from "@/store/timeline"
 import type { TimelineShot } from "@/store/timeline"
 import { timelineShotToStoryboardView, createShotFromStoryboardDefaults } from "@/lib/storyboardBridge"
 import { useScriptStore } from "@/store/script"
@@ -12,13 +12,24 @@ import { useScenesStore } from "@/store/scenes"
 import { useNavigationStore } from "@/store/navigation"
 import { breakdownScene } from "@/lib/jenkins"
 import { saveBlob } from "@/lib/fileStorage"
+import { buildImagePrompt, buildVideoPrompt, getReferencedBibleEntries } from "@/lib/promptBuilder"
+import { useBibleStore } from "@/store/bible"
+import { useBoardStore } from "@/store/board"
 import { useLibraryStore } from "@/store/library"
 import { useProjectsStore } from "@/store/projects"
 
 const SHOT_SIZE_OPTIONS = ["WIDE", "MEDIUM", "CLOSE", "EXTREME CLOSE", "OVER SHOULDER", "POV", "INSERT", "AERIAL", "TWO SHOT"] as const
 const CAMERA_MOTION_OPTIONS = ["Static", "Pan Left", "Pan Right", "Pan Up", "Tilt Down", "Push In", "Pull Out", "Track Left", "Track Right", "Track Around", "Dolly In", "Crane Up", "Crane Down", "Drone In", "Handheld", "Steadicam"] as const
 
-type ViewMode = "scenes" | "board" | "list"
+type ViewMode = "scenes" | "board" | "list" | "inspector"
+type EditableShotField = "caption" | "directorNote" | "cameraNote" | "imagePrompt" | "videoPrompt"
+
+const IMAGE_GEN_MODELS = [
+  { id: "gpt-image", label: "GPT Image", price: "$0.04" },
+  { id: "nano-banana", label: "NB1", price: "$0.039" },
+  { id: "nano-banana-2", label: "NB2", price: "$0.045" },
+  { id: "nano-banana-pro", label: "NB Pro", price: "$0.13" },
+] as const
 
 // ── Inline Editable Components ──────────────────────────────────
 
@@ -113,31 +124,63 @@ function InlineText({ value, onChange, placeholder, multiline }: { value: string
 
 // ── AI Image Generation ─────────────────────────────────────────
 
-async function generateShotImage(shot: TimelineShot): Promise<{ objectUrl: string; fileId: string; blob: Blob }> {
-  const rawPrompt = `Cinematic storyboard frame. ${shot.shotSize} shot. ${shot.caption}. ${shot.cameraMotion} camera. Film noir style, high contrast, dramatic lighting.`
+async function generateShotImage(
+  shot: TimelineShot,
+  allShots: TimelineShot[],
+): Promise<string> {
+  const { characters, locations } = useBibleStore.getState()
+  const selectedModel = useBoardStore.getState().selectedImageGenModel || "nano-banana-2"
+  const start = Date.now()
+  const prompt = buildImagePrompt(shot, allShots, characters, locations)
 
-  // Enhance prompt via Claude
-  const promptRes = await fetch("/api/ambient-prompt", {
+  let apiUrl: string
+  let body: Record<string, string>
+
+  if (selectedModel === "gpt-image") {
+    apiUrl = "/api/gpt-image"
+    body = { prompt }
+  } else {
+    apiUrl = "/api/nano-banana"
+    body = { prompt, model: selectedModel }
+  }
+
+  const response = await fetch(apiUrl, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ description: rawPrompt }),
-  })
-  const enhancedPrompt = promptRes.ok ? (await promptRes.json()).prompt : rawPrompt
-
-  // Generate image
-  const imageRes = await fetch("/api/ambient-image", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ prompt: enhancedPrompt }),
+    body: JSON.stringify(body),
   })
 
-  if (!imageRes.ok) throw new Error(`Image generation failed: ${imageRes.status}`)
+  if (!response.ok) {
+    const err = await response.json().catch(() => ({}))
+    throw new Error(err.error || `Generation failed: ${response.status}`)
+  }
 
-  const blob = await imageRes.blob()
-  const fileId = `shot-gen-${shot.id}-${Date.now()}`
-  await saveBlob(fileId, blob)
+  const blob = await response.blob()
+  const blobKey = `shot-thumb-${shot.id}`
+  await saveBlob(blobKey, blob)
+
+  const projectId = useProjectsStore.getState().activeProjectId || "global"
   const objectUrl = URL.createObjectURL(blob)
-  return { objectUrl, fileId, blob }
+
+  useLibraryStore.getState().addFile({
+    id: blobKey,
+    name: `${shot.label || "Shot"} — generated.png`,
+    type: "image",
+    mimeType: "image/png",
+    size: blob.size,
+    url: objectUrl,
+    thumbnailUrl: objectUrl,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+    tags: ["generated", "storyboard"],
+    projectId,
+    folder: "/storyboard",
+    origin: "generated",
+  })
+
+  console.log(`[KOZA] Image generated in ${Date.now() - start}ms via ${selectedModel}`)
+
+  return objectUrl
 }
 
 interface StoryboardPanelProps {
@@ -167,6 +210,9 @@ export function StoryboardPanel({
   const [draggedFrameId, setDraggedFrameId] = useState<string | null>(null)
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null)
   const [viewMode, setViewMode] = useState<ViewMode>("board")
+  const [expandedShotId, setExpandedShotId] = useState<string | null>(null)
+  const [editingShotField, setEditingShotField] = useState<{ shotId: string; field: EditableShotField } | null>(null)
+  const [editingShotDraft, setEditingShotDraft] = useState("")
   const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set())
   const scenes = useScenesStore((s) => s.scenes)
   const selectedSceneId = useScenesStore((s) => s.selectedSceneId)
@@ -174,11 +220,37 @@ export function StoryboardPanel({
   const requestScrollToBlock = useNavigationStore((s) => s.requestScrollToBlock)
   const requestHighlightBlock = useNavigationStore((s) => s.requestHighlightBlock)
   const scriptBlocks = useScriptStore((state) => state.blocks)
+  const selectedImageGenModel = useBoardStore((state) => state.selectedImageGenModel)
+  const setSelectedImageGenModel = useBoardStore((state) => state.setSelectedImageGenModel)
+  const characters = useBibleStore((state) => state.characters)
+  const locations = useBibleStore((state) => state.locations)
   const cardScale = 90
   const frames = useMemo(() => shots.map((shot, index) => timelineShotToStoryboardView(shot, index)), [shots])
   const scenario = useScriptStore((state) => state.scenario)
   const [jenkinsLoading, setJenkinsLoading] = useState(false)
   const [breakdownLoadingSceneId, setBreakdownLoadingSceneId] = useState<string | null>(null)
+  const inspectorShots = useMemo(
+    () => (selectedSceneId ? shots.filter((shot) => shot.sceneId === selectedSceneId) : shots),
+    [shots, selectedSceneId]
+  )
+
+  const startEditingShotField = useCallback((shot: TimelineShot, field: EditableShotField, value: string) => {
+    setEditingShotField({ shotId: shot.id, field })
+    setEditingShotDraft(value)
+  }, [])
+
+  const commitEditingShotField = useCallback((shotId: string) => {
+    setEditingShotField((current) => {
+      if (!current || current.shotId !== shotId) return current
+
+      updateShot(shotId, {
+        [current.field]: editingShotDraft,
+      } as Partial<TimelineShot>)
+
+      return null
+    })
+    setEditingShotDraft("")
+  }, [editingShotDraft, updateShot])
 
   const handleJenkinsBreakdown = useCallback(async () => {
     const text = scenario.trim()
@@ -188,10 +260,18 @@ export function StoryboardPanel({
       const { shots: jenkinsShots } = await breakdownScene(text)
       for (const shot of jenkinsShots) {
         addShot({
-          duration: shot.duration,
-          type: shot.type,
           label: shot.label,
+          shotSize: shot.shotSize ?? "",
+          cameraMotion: shot.cameraMotion ?? "",
+          duration: shot.duration,
+          caption: shot.caption ?? "",
+          directorNote: shot.directorNote ?? "",
+          cameraNote: shot.cameraNote ?? "",
+          imagePrompt: shot.imagePrompt ?? "",
+          videoPrompt: shot.videoPrompt ?? "",
+          visualDescription: shot.visualDescription ?? "",
           notes: shot.notes,
+          type: shot.type,
         })
       }
     } catch (error) {
@@ -210,21 +290,40 @@ export function StoryboardPanel({
         .filter(Boolean)
         .join("\n")
       if (!sceneText.trim()) return
+      const bible = {
+        characters: characters.map((character) => ({
+          name: character.name,
+          description: character.description,
+          appearancePrompt: character.appearancePrompt,
+        })),
+        locations: locations.map((location) => ({
+          name: location.name,
+          description: location.description,
+          appearancePrompt: location.appearancePrompt,
+          intExt: location.intExt,
+        })),
+      }
       const { shots: jenkinsShots } = await breakdownScene(sceneText, {
         sceneId: scene.id,
         blockIds: scene.blockIds,
+        bible,
       })
       const firstBlockId = scene.blockIds[0] ?? ""
       const lastBlockId = scene.blockIds[scene.blockIds.length - 1] ?? ""
       for (const shot of jenkinsShots) {
         addShot({
-          duration: shot.duration,
-          type: shot.type,
           label: shot.label,
-          notes: shot.notes,
           shotSize: shot.shotSize ?? "",
           cameraMotion: shot.cameraMotion ?? "",
+          duration: shot.duration,
           caption: shot.caption ?? "",
+          directorNote: shot.directorNote ?? "",
+          cameraNote: shot.cameraNote ?? "",
+          imagePrompt: shot.imagePrompt ?? "",
+          videoPrompt: shot.videoPrompt ?? "",
+          visualDescription: shot.visualDescription ?? "",
+          notes: shot.notes,
+          type: shot.type,
           sceneId: scene.id,
           blockRange: firstBlockId && lastBlockId ? [firstBlockId, lastBlockId] : null,
           locked: true,
@@ -236,7 +335,7 @@ export function StoryboardPanel({
     } finally {
       setBreakdownLoadingSceneId(null)
     }
-  }, [breakdownLoadingSceneId, scriptBlocks, addShot])
+  }, [breakdownLoadingSceneId, scriptBlocks, characters, locations, addShot])
 
   const handleSceneClick = useCallback((scene: { id: string; headingBlockId: string }) => {
     selectScene(selectedSceneId === scene.id ? null : scene.id)
@@ -251,30 +350,11 @@ export function StoryboardPanel({
     if (!shot || generatingIds.has(shotId)) return
     setGeneratingIds((prev) => new Set(prev).add(shotId))
     try {
-      const { objectUrl, fileId, blob } = await generateShotImage(shot)
+      const objectUrl = await generateShotImage(shot, shots)
 
-      // Save to Library store
-      const projectId = useProjectsStore.getState().activeProjectId || "global"
-      useLibraryStore.getState().addFile({
-        id: fileId,
-        name: `${shot.label || "Shot"} — generated.png`,
-        type: "image",
-        mimeType: "image/png",
-        size: blob.size,
-        url: objectUrl,
-        thumbnailUrl: objectUrl,
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-        tags: ["generated", "storyboard", shot.sceneId || ""],
-        projectId,
-        folder: "/storyboard",
-        origin: "generated",
-      })
-
-      // Update shot with blob key for persistence
       updateShot(shotId, {
         thumbnailUrl: objectUrl,
-        thumbnailBlobKey: fileId,
+        thumbnailBlobKey: `shot-thumb-${shot.id}`,
       })
     } catch (error) {
       console.error("Image generation error:", error)
@@ -283,12 +363,7 @@ export function StoryboardPanel({
     }
   }, [shots, generatingIds, updateShot])
 
-  const nextFrame = useMemo(() => {
-    return timelineShotToStoryboardView(
-      createTimelineShot(createShotFromStoryboardDefaults(shots.length)),
-      shots.length,
-    )
-  }, [shots.length])
+  const nextFrameLabel = `shot ${frames.length + 1}`
 
   useEffect(() => {
     if (!recentInsertedFrameId) return
@@ -372,6 +447,15 @@ export function StoryboardPanel({
             </button>
             <button
               type="button"
+              onClick={() => router.push("/bible")}
+              className="flex items-center gap-1.5 rounded-md border border-white/12 px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-[#E5E0DB] transition-colors hover:bg-white/6"
+              aria-label="Open bible page"
+            >
+              <BookOpen size={12} />
+              Bible
+            </button>
+            <button
+              type="button"
               onClick={() => router.push("/timeline")}
               className="flex items-center gap-1.5 rounded-md border border-white/12 px-3 py-1.5 text-[10px] uppercase tracking-[0.18em] text-[#E5E0DB] transition-colors hover:bg-white/6"
               aria-label="Open timeline page"
@@ -379,6 +463,24 @@ export function StoryboardPanel({
               <Film size={12} />
               Timeline
             </button>
+            <div className="flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-1">
+              <span className="px-1 text-[8px] uppercase tracking-wider text-white/30">Model:</span>
+              {IMAGE_GEN_MODELS.map((model) => (
+                <button
+                  key={model.id}
+                  type="button"
+                  onClick={() => setSelectedImageGenModel(model.id)}
+                  title={`${model.label} ${model.price}`}
+                  className={`rounded px-2 py-1 text-[9px] transition-colors ${
+                    selectedImageGenModel === model.id
+                      ? "bg-[#D4A853]/20 text-[#D4A853]"
+                      : "text-white/40 hover:text-white/60"
+                  }`}
+                >
+                  {model.label}
+                </button>
+              ))}
+            </div>
             <button
               type="button"
               className="flex h-8 w-8 items-center justify-center rounded-md text-[#BDAF9F] transition-colors hover:bg-white/6 hover:text-white"
@@ -431,6 +533,14 @@ export function StoryboardPanel({
             >
               <List size={10} />
               Shot List
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("inspector")}
+              className={`flex items-center gap-1 rounded-md px-2 py-1 text-[10px] uppercase tracking-[0.14em] transition-colors ${viewMode === "inspector" ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
+            >
+              <BookOpen size={10} />
+              Inspector
             </button>
           </div>
         </div>
@@ -496,7 +606,12 @@ export function StoryboardPanel({
               })
             )}
           </div>
-          ) : viewMode === "board" ? (
+          ) : viewMode === "board" ? shots.length === 0 ? (
+          <div className="flex min-h-full flex-col items-center justify-center py-16 text-center">
+            <Grid size={28} className="mb-3 text-white/15" />
+            <p className="text-[12px] text-[#7F8590]">No shots yet. Use Scenes tab to breakdown your screenplay.</p>
+          </div>
+          ) : (
           <div
             className="grid min-h-full"
             style={{
@@ -511,6 +626,7 @@ export function StoryboardPanel({
             {frames.map((frame, index) => {
               const shot = shots[index]
               const isGenerating = shot ? generatingIds.has(shot.id) : false
+              const previewSrc = shot?.thumbnailUrl || frame.svg || null
               return (
               <Fragment key={frame.id}>
                 <div
@@ -533,23 +649,30 @@ export function StoryboardPanel({
                   }}
                 >
                   <div className="relative flex h-full flex-col text-[#E5E0DB]">
-                    {/* Image area with hover overlay */}
                     <div className="relative overflow-hidden rounded-[10px] border border-white/8 bg-[#0E1014] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]" style={{ aspectRatio: "16 / 8.7" }}>
-                      <Image
-                        src={shot?.thumbnailUrl || frame.svg}
-                        alt={`${frame.meta.shot} frame preview`}
-                        width={320}
-                        height={320}
-                        unoptimized
-                        className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
-                        draggable={false}
-                      />
+                      {previewSrc ? (
+                        <Image
+                          src={previewSrc}
+                          alt={`${frame.meta.shot} frame preview`}
+                          width={320}
+                          height={320}
+                          unoptimized
+                          className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                          draggable={false}
+                        />
+                      ) : (
+                        <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_58%),linear-gradient(180deg,#151922_0%,#0E1014_100%)] px-6 text-center">
+                          <div>
+                            <p className="text-[10px] uppercase tracking-[0.18em] text-[#8D919B]">No image yet</p>
+                            <p className="mt-1 text-[11px] text-[#C3B8AA]">Run Breakdown or Generate to create shot artwork.</p>
+                          </div>
+                        </div>
+                      )}
                       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(8,10,14,0.04)_0%,rgba(8,10,14,0.12)_52%,rgba(8,10,14,0.34)_100%)]" />
                       <div className="absolute left-2 top-2 rounded-md border border-white/10 bg-black/30 px-1.5 py-1 text-[9px] uppercase tracking-[0.18em] text-[#EAE2D7] backdrop-blur-sm">
                         Shot {String(index + 1).padStart(2, "0")}
                       </div>
 
-                      {/* AI generation overlay */}
                       {isGenerating ? (
                         <div className="absolute inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm">
                           <Loader2 size={28} className="animate-spin text-white/70" />
@@ -668,10 +791,246 @@ export function StoryboardPanel({
                 </span>
                 <div>
                   <p className="text-[11px] uppercase tracking-[0.2em] text-[#E7E3DC]">Add Shot</p>
-                  <p className="mt-1 text-[10px] text-[#7F8590]">Insert {nextFrame.title.toLowerCase()} to the sequence</p>
+                  <p className="mt-1 text-[10px] text-[#7F8590]">Insert {nextFrameLabel} to the sequence</p>
                 </div>
               </div>
             </button>
+          </div>
+          ) : viewMode === "inspector" ? (
+          <div className="flex flex-col gap-2">
+            {inspectorShots.length === 0 ? (
+              <div className="flex min-h-full flex-col items-center justify-center py-16 text-center">
+                <BookOpen size={28} className="mb-3 text-white/15" />
+                <p className="text-[12px] text-[#7F8590]">No shots to inspect yet.</p>
+              </div>
+            ) : (
+              inspectorShots.map((shot, index) => {
+                const isExpanded = expandedShotId === shot.id
+                const resolvedShot = editingShotField?.shotId === shot.id
+                  ? { ...shot, [editingShotField.field]: editingShotDraft }
+                  : shot
+                const imagePrompt = buildImagePrompt(resolvedShot, inspectorShots, characters, locations)
+                const videoPrompt = buildVideoPrompt(resolvedShot, characters, locations)
+                const refs = getReferencedBibleEntries(resolvedShot, characters, locations)
+                const previewSrc = shot.thumbnailUrl || shot.svg || null
+                const durationLabel = `${(shot.duration / 1000).toFixed(1)}s`
+
+                return (
+                  <div
+                    key={shot.id}
+                    className={`mb-2 overflow-hidden rounded-xl border transition-colors ${isExpanded ? "border-white/15 bg-white/3" : "border-white/8 bg-white/2 hover:bg-white/4"}`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setExpandedShotId(isExpanded ? null : shot.id)}
+                      className="flex w-full items-center gap-3 px-3 py-3 text-left"
+                    >
+                      <div className="relative h-9 w-16 overflow-hidden rounded-md border border-white/8 bg-white/3">
+                        {previewSrc ? (
+                          <Image src={previewSrc} alt={shot.label || `Shot ${index + 1}`} fill unoptimized className="object-cover" />
+                        ) : (
+                          <div className="flex h-full w-full items-center justify-center text-[9px] uppercase tracking-[0.16em] text-white/25">
+                            No Img
+                          </div>
+                        )}
+                      </div>
+                      <div className="w-8 shrink-0 text-[16px] font-medium tracking-[0.14em] text-[#E7E3DC]">
+                        {String(index + 1).padStart(2, "0")}
+                      </div>
+                      <div className="min-w-0 flex-1">
+                        <p className="truncate text-[13px] font-medium text-[#E7E3DC]">
+                          {shot.label || `Shot ${index + 1}`}
+                        </p>
+                        <p className="mt-1 truncate text-[10px] text-white/35">
+                          {shot.shotSize || "WIDE"} · {shot.cameraMotion || "Static"} · {durationLabel}
+                        </p>
+                      </div>
+                      <div className={`shrink-0 text-[16px] text-white/40 transition-transform ${isExpanded ? "rotate-90" : "rotate-0"}`}>
+                        ▸
+                      </div>
+                    </button>
+
+                    {isExpanded ? (
+                      <div className="grid gap-3 border-t border-white/8 px-3 pb-3 pt-2">
+                        <section className="grid gap-1.5">
+                          <div className="flex items-center gap-2">
+                            <BookOpen size={12} className="text-white/35" />
+                            <p className="text-[10px] uppercase tracking-wider text-white/30">Литературный</p>
+                          </div>
+                          {editingShotField?.shotId === shot.id && editingShotField.field === "caption" ? (
+                            <textarea
+                              autoFocus
+                              rows={4}
+                              value={editingShotDraft}
+                              onChange={(event) => setEditingShotDraft(event.target.value)}
+                              onBlur={() => commitEditingShotField(shot.id)}
+                              className="w-full resize-y rounded-lg bg-white/3 p-3 text-[13px] text-white/80 outline-none ring-1 ring-inset ring-white/10"
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => startEditingShotField(shot, "caption", shot.caption || "")}
+                              className="w-full rounded-lg bg-white/3 p-3 text-left text-[13px] text-white/80 transition-colors hover:bg-white/4"
+                            >
+                              <span className="whitespace-pre-wrap">{resolvedShot.caption || shot.label || "Нет описания кадра."}</span>
+                            </button>
+                          )}
+                        </section>
+
+                        <section className="grid gap-1.5">
+                          <div className="flex items-center gap-2">
+                            <Clapperboard size={12} className="text-white/35" />
+                            <p className="text-[10px] uppercase tracking-wider text-white/30">Режиссёрский</p>
+                          </div>
+                          {editingShotField?.shotId === shot.id && editingShotField.field === "directorNote" ? (
+                            <textarea
+                              autoFocus
+                              rows={4}
+                              value={editingShotDraft}
+                              onChange={(event) => setEditingShotDraft(event.target.value)}
+                              onBlur={() => commitEditingShotField(shot.id)}
+                              className="w-full resize-y rounded-lg bg-white/3 p-3 text-[12px] leading-5 text-white/60 outline-none ring-1 ring-inset ring-white/10"
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => startEditingShotField(shot, "directorNote", shot.directorNote || "")}
+                              className="w-full rounded-lg bg-white/3 p-3 text-left text-[12px] leading-5 text-white/60 transition-colors hover:bg-white/4"
+                            >
+                              <span className="whitespace-pre-wrap">{resolvedShot.directorNote || "Нет режиссёрской заметки."}</span>
+                            </button>
+                          )}
+                        </section>
+
+                        <section className="grid gap-1.5">
+                          <div className="flex items-center gap-2">
+                            <Camera size={12} className="text-amber-400/70" />
+                            <p className="text-[10px] uppercase tracking-wider text-white/30">Операторский</p>
+                          </div>
+                          {editingShotField?.shotId === shot.id && editingShotField.field === "cameraNote" ? (
+                            <textarea
+                              autoFocus
+                              rows={5}
+                              value={editingShotDraft}
+                              onChange={(event) => setEditingShotDraft(event.target.value)}
+                              onBlur={() => commitEditingShotField(shot.id)}
+                              className="w-full resize-y rounded-lg bg-white/3 p-3 font-mono text-[12px] leading-5 text-amber-400/70 outline-none ring-1 ring-inset ring-white/10"
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => startEditingShotField(shot, "cameraNote", shot.cameraNote || "")}
+                              className="w-full rounded-lg bg-white/3 p-3 text-left font-mono text-[12px] leading-5 text-amber-400/70 transition-colors hover:bg-white/4"
+                            >
+                              <span className="whitespace-pre-wrap">{resolvedShot.cameraNote || "Нет операторской заметки."}</span>
+                            </button>
+                          )}
+                        </section>
+
+                        <section className="grid gap-1.5">
+                          <div className="flex items-center gap-2">
+                            <ImageIcon size={12} className="text-white/35" />
+                            <p className="text-[10px] uppercase tracking-wider text-white/30">Промпт картинки</p>
+                            <span className="rounded-full border border-[#D4A853]/35 bg-[#D4A853]/12 px-2 py-0.5 text-[9px] uppercase tracking-[0.16em] text-[#E8D7B2]">EN</span>
+                          </div>
+                          {editingShotField?.shotId === shot.id && editingShotField.field === "imagePrompt" ? (
+                            <textarea
+                              autoFocus
+                              rows={7}
+                              value={editingShotDraft}
+                              onChange={(event) => setEditingShotDraft(event.target.value)}
+                              onBlur={() => commitEditingShotField(shot.id)}
+                              className="w-full resize-y rounded-lg bg-white/2 p-3 font-mono text-[11px] leading-5 text-white/40 outline-none ring-1 ring-inset ring-white/10"
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => startEditingShotField(shot, "imagePrompt", shot.imagePrompt || imagePrompt)}
+                              className="w-full rounded-lg bg-white/2 p-3 text-left font-mono text-[11px] leading-5 text-white/40 transition-colors hover:bg-white/4"
+                            >
+                              <span className="whitespace-pre-wrap">{imagePrompt}</span>
+                            </button>
+                          )}
+                        </section>
+
+                        <section className="grid gap-1.5 opacity-60">
+                          <div className="flex items-center gap-2">
+                            <Film size={12} className="text-white/35" />
+                            <p className="text-[10px] uppercase tracking-wider text-white/30">Промпт видео</p>
+                            <span className="rounded-full border border-[#D4A853]/35 bg-[#D4A853]/12 px-2 py-0.5 text-[9px] uppercase tracking-[0.16em] text-[#E8D7B2]">EN</span>
+                            <span className="rounded-full border border-white/12 bg-white/4 px-2 py-0.5 text-[9px] uppercase tracking-[0.16em] text-white/40">будущее</span>
+                          </div>
+                          {editingShotField?.shotId === shot.id && editingShotField.field === "videoPrompt" ? (
+                            <textarea
+                              autoFocus
+                              rows={6}
+                              value={editingShotDraft}
+                              onChange={(event) => setEditingShotDraft(event.target.value)}
+                              onBlur={() => commitEditingShotField(shot.id)}
+                              className="w-full resize-y rounded-lg bg-white/2 p-3 font-mono text-[11px] leading-5 text-white/30 outline-none ring-1 ring-inset ring-white/10"
+                            />
+                          ) : (
+                            <button
+                              type="button"
+                              onClick={() => startEditingShotField(shot, "videoPrompt", shot.videoPrompt || videoPrompt)}
+                              className="w-full rounded-lg bg-white/2 p-3 text-left font-mono text-[11px] leading-5 text-white/30 transition-colors hover:bg-white/4"
+                            >
+                              <span className="whitespace-pre-wrap">{videoPrompt}</span>
+                            </button>
+                          )}
+                        </section>
+
+                        <section className="grid gap-1.5">
+                          <p className="text-[10px] uppercase tracking-wider text-white/30">Библия — референсы</p>
+                          <div className="grid gap-2 rounded-lg bg-white/3 p-3">
+                            {refs.characters.length === 0 && !refs.location ? (
+                              <p className="text-[12px] text-white/35">Нет связанных bible entries для этого шота.</p>
+                            ) : null}
+
+                            {refs.characters.map((character) => (
+                              <div key={character.id} className="flex items-center gap-3">
+                                <div className="relative h-8 w-8 overflow-hidden rounded-md border border-white/10 bg-white/4">
+                                  {character.generatedPortraitUrl ? (
+                                    <Image src={character.generatedPortraitUrl} alt={character.name} fill unoptimized className="object-cover" />
+                                  ) : (
+                                    <div className="flex h-full w-full items-center justify-center text-[9px] uppercase tracking-[0.14em] text-white/25">
+                                      {character.name.slice(0, 2)}
+                                    </div>
+                                  )}
+                                </div>
+                                <div>
+                                  <p className="text-[12px] text-[#E7E3DC]">{character.name}</p>
+                                  <p className="text-[11px] text-white/35">portrait · ref ×{character.referenceImages.length}</p>
+                                </div>
+                              </div>
+                            ))}
+
+                            {refs.location ? (
+                              <div className="flex items-center gap-3">
+                                <div className="relative h-8 w-8 overflow-hidden rounded-md border border-white/10 bg-white/4">
+                                  {refs.location.generatedImageUrl ? (
+                                    <Image src={refs.location.generatedImageUrl} alt={refs.location.name} fill unoptimized className="object-cover" />
+                                  ) : (
+                                    <div className="flex h-full w-full items-center justify-center text-[9px] uppercase tracking-[0.14em] text-white/25">
+                                      LOC
+                                    </div>
+                                  )}
+                                </div>
+                                <div>
+                                  <p className="text-[12px] text-[#E7E3DC]">{refs.location.name}</p>
+                                  <p className="text-[11px] text-white/35">{refs.location.intExt} · ref ×{refs.location.referenceImages.length}</p>
+                                </div>
+                              </div>
+                            ) : null}
+                          </div>
+                        </section>
+
+                      </div>
+                    ) : null}
+                  </div>
+                )
+              })
+            )}
           </div>
           ) : (
           /* Shot List (table) view */

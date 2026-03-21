@@ -1,18 +1,23 @@
 import { useEffect } from "react"
 import { useScriptStore } from "@/store/script"
 import { useScenesStore } from "@/store/scenes"
+import { useBibleStore } from "@/store/bible"
 
-/**
- * Syncs scene_heading blocks from the script store to:
- * 1. Scenes store (parsed scene list)
- * 2. Timeline (shot stubs for each scene heading)
- */
 export function useSceneSync() {
   const blocks = useScriptStore((s) => s.blocks)
   const updateScenes = useScenesStore((s) => s.updateScenes)
+  const scenes = useScenesStore((s) => s.scenes)
+  const updateFromScreenplay = useBibleStore((s) => s.updateFromScreenplay)
 
   useEffect(() => {
-    // Sync scenes store only — shots are created via Breakdown (manual or AI)
     updateScenes(blocks)
   }, [blocks, updateScenes])
+
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      updateFromScreenplay(blocks, scenes)
+    }, 2000)
+
+    return () => window.clearTimeout(timer)
+  }, [blocks, scenes, updateFromScreenplay])
 }
