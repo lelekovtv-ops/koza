@@ -5,21 +5,35 @@ export interface JenkinsShot {
   type: "image"
   duration: number
   notes: string
+  shotSize?: string
+  cameraMotion?: string
+  caption?: string
+}
+
+interface BreakdownOptions {
+  sceneId?: string
+  blockIds?: string[]
+  modelId?: string
 }
 
 const JENKINS_SYSTEM_PROMPT = [
   "You are Jenkins, an experienced cinematographer and shot planner.",
   "Given a scene description, break it down into individual shots.",
   "Return ONLY a valid JSON array with objects containing: label (e.g. 'WIDE — Establishing'), type ('image'),",
-  "duration (ms, typically 2000-6000), notes (camera direction).",
+  "duration (ms, typically 2000-6000), notes (camera direction), shotSize (e.g. 'WIDE', 'MEDIUM', 'CLOSE'),",
+  "cameraMotion (e.g. 'Static', 'Pan Left', 'Push In'), caption (short visual description).",
   "Be specific and practical. 3-6 shots per scene.",
   "No markdown, no code fences, just raw JSON.",
 ].join(" ")
 
 export async function breakdownScene(
   sceneText: string,
-  modelId: string = DEFAULT_TEXT_MODEL_ID,
+  optionsOrModelId?: BreakdownOptions | string,
 ): Promise<{ shots: JenkinsShot[] }> {
+  const opts: BreakdownOptions = typeof optionsOrModelId === "string"
+    ? { modelId: optionsOrModelId }
+    : optionsOrModelId ?? {}
+  const modelId = opts.modelId ?? DEFAULT_TEXT_MODEL_ID
   const response = await fetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -62,6 +76,9 @@ export async function breakdownScene(
     type: "image" as const,
     duration: typeof item.duration === "number" ? item.duration : 3000,
     notes: typeof item.notes === "string" ? item.notes : "",
+    shotSize: typeof item.shotSize === "string" ? item.shotSize : undefined,
+    cameraMotion: typeof item.cameraMotion === "string" ? item.cameraMotion : undefined,
+    caption: typeof item.caption === "string" ? item.caption : undefined,
   }))
 
   return { shots }

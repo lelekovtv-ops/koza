@@ -17,6 +17,9 @@ export interface TimelineShot {
   cameraMotion: string
   caption: string
   svg: string
+  blockRange: [string, string] | null
+  locked: boolean
+  sourceText: string
 }
 
 export interface AudioClip {
@@ -131,6 +134,9 @@ export const createTimelineShot = (partial: Partial<TimelineShot> = {}): Timelin
   cameraMotion: partial.cameraMotion ?? "",
   caption: partial.caption ?? "",
   svg: partial.svg ?? "",
+  blockRange: partial.blockRange ?? null,
+  locked: partial.locked ?? false,
+  sourceText: partial.sourceText ?? "",
 })
 
 export const createAudioClip = (partial: Partial<AudioClip> = {}): AudioClip => ({

@@ -15,6 +15,11 @@ import {
   SCREENPLAY_TRANSITION_MARGIN_TOP_PX,
 } from "./screenplayLayoutConstants"
 
+interface SceneMarkerInfo {
+  index: number
+  color: string
+}
+
 interface CreateRenderElementArgs {
   editor: Editor
   colors: {
@@ -26,6 +31,9 @@ interface CreateRenderElementArgs {
   editorFontSize: number
   editorLineHeightPx: number
   pageBreakMargins?: Map<number, number>
+  sceneMap?: Map<string, SceneMarkerInfo>
+  highlightBlockId?: string | null
+  lockedBlockIds?: Set<string>
 }
 
 export function createRenderElement({
@@ -34,6 +42,9 @@ export function createRenderElement({
   editorFontSize,
   editorLineHeightPx,
   pageBreakMargins,
+  sceneMap,
+  highlightBlockId,
+  lockedBlockIds,
 }: CreateRenderElementArgs) {
   const RenderElement = (props: RenderElementProps) => {
     const { attributes, children, element } = props
@@ -86,28 +97,92 @@ export function createRenderElement({
       marginTop: `${marginTop}px`,
     }
 
+    const isLocked = lockedBlockIds?.has(el.id) ?? false
+
     switch (el.type) {
-      case "scene_heading":
+      case "scene_heading": {
+        const sceneInfo = sceneMap?.get(el.id)
+        const isHighlighted = highlightBlockId === el.id
         return (
           <div
             {...attributes}
-            style={{ ...baseStyle, fontWeight: "bold", color: colors.scene, textTransform: "uppercase" }}
+            data-block-id={el.id}
+            style={{
+              ...baseStyle,
+              fontWeight: "bold",
+              color: colors.scene,
+              textTransform: "uppercase",
+              position: "relative",
+              transition: "box-shadow 0.3s ease",
+              boxShadow: isHighlighted && sceneInfo
+                ? `inset 3px 0 0 ${sceneInfo.color}, 0 0 0 1px ${sceneInfo.color}40`
+                : sceneInfo
+                  ? `inset 3px 0 0 ${sceneInfo.color}`
+                  : undefined,
+              borderRadius: isHighlighted ? 3 : undefined,
+              backgroundColor: isHighlighted ? `${sceneInfo?.color ?? "#4A7C6F"}12` : undefined,
+            }}
           >
+            {sceneInfo && (
+              <span
+                contentEditable={false}
+                style={{
+                  position: "absolute",
+                  left: -48,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  fontSize: 8,
+                  fontWeight: 700,
+                  fontFamily: "system-ui, sans-serif",
+                  letterSpacing: "0.08em",
+                  textTransform: "uppercase",
+                  color: sceneInfo.color,
+                  backgroundColor: `${sceneInfo.color}18`,
+                  borderRadius: 3,
+                  padding: "1px 4px",
+                  userSelect: "none",
+                  whiteSpace: "nowrap",
+                  lineHeight: "14px",
+                }}
+              >
+                SC {sceneInfo.index}
+              </span>
+            )}
             {children}
           </div>
         )
+      }
       case "character":
         return (
           <div
             {...attributes}
+            data-block-id={el.id}
             style={{
               ...baseStyle,
               fontWeight: "bold",
               color: colors.character,
               textTransform: "uppercase",
               paddingLeft: `${SCREENPLAY_CHARACTER_INDENT_CH}ch`,
+              position: isLocked ? "relative" as const : undefined,
             }}
           >
+            {isLocked && (
+              <span
+                contentEditable={false}
+                style={{
+                  position: "absolute",
+                  left: -16,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  fontSize: 8,
+                  opacity: 0.35,
+                  userSelect: "none",
+                }}
+                title="Locked — shot breakdown exists"
+              >
+                🔒
+              </span>
+            )}
             {children}
           </div>
         )
@@ -155,7 +230,31 @@ export function createRenderElement({
         )
       default:
         return (
-          <div {...attributes} style={baseStyle}>
+          <div
+            {...attributes}
+            data-block-id={el.id}
+            style={{
+              ...baseStyle,
+              position: isLocked ? "relative" as const : undefined,
+            }}
+          >
+            {isLocked && (
+              <span
+                contentEditable={false}
+                style={{
+                  position: "absolute",
+                  left: -16,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  fontSize: 8,
+                  opacity: 0.35,
+                  userSelect: "none",
+                }}
+                title="Locked — shot breakdown exists"
+              >
+                🔒
+              </span>
+            )}
             {children}
           </div>
         )

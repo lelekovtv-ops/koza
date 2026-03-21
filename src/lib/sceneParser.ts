@@ -113,6 +113,9 @@ export function parseScenesToShots(blocks: Block[]): TimelineShot[] {
       cameraMotion: "",
       caption: "",
       svg: "",
+      blockRange: null,
+      locked: false,
+      sourceText: "",
     })
   }
 

@@ -9,6 +9,7 @@ import type { TimelineShot } from "@/store/timeline"
 import { timelineShotToStoryboardView, createShotFromStoryboardDefaults } from "@/lib/storyboardBridge"
 import { useScriptStore } from "@/store/script"
 import { useScenesStore } from "@/store/scenes"
+import { useNavigationStore } from "@/store/navigation"
 import { breakdownScene } from "@/lib/jenkins"
 import { saveBlob } from "@/lib/fileStorage"
 
@@ -167,10 +168,14 @@ export function StoryboardPanel({
   const scenes = useScenesStore((s) => s.scenes)
   const selectedSceneId = useScenesStore((s) => s.selectedSceneId)
   const selectScene = useScenesStore((s) => s.selectScene)
+  const requestScrollToBlock = useNavigationStore((s) => s.requestScrollToBlock)
+  const requestHighlightBlock = useNavigationStore((s) => s.requestHighlightBlock)
+  const scriptBlocks = useScriptStore((state) => state.blocks)
   const cardScale = 90
   const frames = useMemo(() => shots.map((shot, index) => timelineShotToStoryboardView(shot, index)), [shots])
   const scenario = useScriptStore((state) => state.scenario)
   const [jenkinsLoading, setJenkinsLoading] = useState(false)
+  const [breakdownLoadingSceneId, setBreakdownLoadingSceneId] = useState<string | null>(null)
 
   const handleJenkinsBreakdown = useCallback(async () => {
     const text = scenario.trim()
@@ -192,6 +197,51 @@ export function StoryboardPanel({
       setJenkinsLoading(false)
     }
   }, [scenario, jenkinsLoading, addShot])
+
+  const handleSceneBreakdown = useCallback(async (scene: { id: string; blockIds: string[]; title: string }) => {
+    if (breakdownLoadingSceneId) return
+    setBreakdownLoadingSceneId(scene.id)
+    try {
+      const sceneText = scene.blockIds
+        .map((bid) => scriptBlocks.find((b) => b.id === bid)?.text)
+        .filter(Boolean)
+        .join("\n")
+      if (!sceneText.trim()) return
+      const { shots: jenkinsShots } = await breakdownScene(sceneText, {
+        sceneId: scene.id,
+        blockIds: scene.blockIds,
+      })
+      const firstBlockId = scene.blockIds[0] ?? ""
+      const lastBlockId = scene.blockIds[scene.blockIds.length - 1] ?? ""
+      for (const shot of jenkinsShots) {
+        addShot({
+          duration: shot.duration,
+          type: shot.type,
+          label: shot.label,
+          notes: shot.notes,
+          shotSize: shot.shotSize ?? "",
+          cameraMotion: shot.cameraMotion ?? "",
+          caption: shot.caption ?? "",
+          sceneId: scene.id,
+          blockRange: firstBlockId && lastBlockId ? [firstBlockId, lastBlockId] : null,
+          locked: true,
+          sourceText: sceneText,
+        })
+      }
+    } catch (error) {
+      console.error("Scene breakdown error:", error)
+    } finally {
+      setBreakdownLoadingSceneId(null)
+    }
+  }, [breakdownLoadingSceneId, scriptBlocks, addShot])
+
+  const handleSceneClick = useCallback((scene: { id: string; headingBlockId: string }) => {
+    selectScene(selectedSceneId === scene.id ? null : scene.id)
+    if (scene.headingBlockId) {
+      requestScrollToBlock(scene.headingBlockId)
+      requestHighlightBlock(scene.headingBlockId)
+    }
+  }, [selectScene, selectedSceneId, requestScrollToBlock, requestHighlightBlock])
 
   const handleGenerateImage = useCallback(async (shotId: string) => {
     const shot = shots.find((s) => s.id === shotId)
@@ -371,18 +421,21 @@ export function StoryboardPanel({
             ) : (
               scenes.map((scene) => {
                 const isSelected = selectedSceneId === scene.id
-                const relatedShots = shots.filter((s) => s.sceneId && scene.blockIds.some((bid) => s.sceneId === `scene-${bid}` || s.label === scene.title))
+                const relatedShots = shots.filter((s) => s.sceneId === scene.id)
+                const isBreaking = breakdownLoadingSceneId === scene.id
                 return (
-                  <button
+                  <div
                     key={scene.id}
-                    type="button"
-                    onClick={() => selectScene(isSelected ? null : scene.id)}
-                    className={`flex items-stretch gap-3 rounded-lg px-3 py-2 text-left transition-colors ${
+                    className={`flex items-stretch gap-3 rounded-lg px-3 py-2 text-left transition-colors cursor-pointer ${
                       isSelected
                         ? "bg-white/5 border-l-2"
                         : "hover:bg-white/3 border-l-2 border-transparent"
                     }`}
                     style={isSelected ? { borderLeftColor: scene.color } : undefined}
+                    onClick={() => handleSceneClick(scene)}
+                    role="button"
+                    tabIndex={0}
+                    onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") handleSceneClick(scene) }}
                   >
                     <div
                       className="w-1 shrink-0 rounded-full"
@@ -401,15 +454,18 @@ export function StoryboardPanel({
                       </div>
                     </div>
                     <div className="flex shrink-0 items-center">
-                      <span
-                        className="flex h-6 items-center gap-1 rounded-md px-1.5 text-[9px] uppercase tracking-[0.12em] text-[#7F8590] transition-colors hover:bg-white/5 hover:text-white"
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); handleSceneBreakdown(scene) }}
+                        disabled={isBreaking}
+                        className="flex h-6 items-center gap-1 rounded-md px-1.5 text-[9px] uppercase tracking-[0.12em] text-[#7F8590] transition-colors hover:bg-white/5 hover:text-white disabled:opacity-40"
                         aria-label={`Breakdown scene ${scene.index}`}
                       >
-                        <Clapperboard size={10} />
-                        Breakdown
-                      </span>
+                        {isBreaking ? <Loader2 size={10} className="animate-spin" /> : <Clapperboard size={10} />}
+                        {relatedShots.length > 0 ? "Re-breakdown" : "Breakdown"}
+                      </button>
                     </div>
-                  </button>
+                  </div>
                 )
               })
             )}

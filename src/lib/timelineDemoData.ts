@@ -52,6 +52,9 @@ export function generateDemoShots(count: number): Omit<TimelineShot, "id">[] {
       cameraMotion: "",
       caption: "",
       svg: "",
+      blockRange: null,
+      locked: false,
+      sourceText: "",
     })
 
     shotInScene++

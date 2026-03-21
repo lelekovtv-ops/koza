@@ -91,6 +91,9 @@ import type {
   ScreenplayElementType,
 } from "@/lib/screenplayTypes"
 import { createScreenplayElement } from "@/lib/screenplayTypes"
+import { useScenesStore } from "@/store/scenes"
+import { useNavigationStore } from "@/store/navigation"
+import { useBlockLockStatus } from "@/hooks/useBlockLockStatus"
 
 // ─── Types ───────────────────────────────────────────────
 
@@ -337,6 +340,11 @@ const SlateScreenplayEditor = forwardRef<
   const setBlocks = useScriptStore((s) => s.setBlocks)
   const setScenario = useScriptStore((s) => s.setScenario)
   const isDark = theme === "sepia"
+  const scenes = useScenesStore((s) => s.scenes)
+  const scrollToBlockId = useNavigationStore((s) => s.scrollToBlockId)
+  const clearScrollRequest = useNavigationStore((s) => s.clearScrollRequest)
+  const highlightBlockId = useNavigationStore((s) => s.highlightBlockId)
+  const blockLockMap = useBlockLockStatus()
 
   const lastPushedRef = useRef(scenario)
   const embeddedInitialFocusDoneRef = useRef(false)
@@ -384,6 +392,44 @@ const SlateScreenplayEditor = forwardRef<
 
   // ── Industry standard margins: top 1", right 1", bottom 1", left 1.5" ──
   const editorPadding = `${SCREENPLAY_PAGE_PADDING_TOP_PX * zoomScale}px ${SCREENPLAY_PAGE_PADDING_RIGHT_PX * zoomScale}px ${SCREENPLAY_PAGE_PADDING_BOTTOM_PX * zoomScale}px ${SCREENPLAY_PAGE_PADDING_LEFT_PX * zoomScale}px`
+
+  // ── Scene map for markers ──
+
+  const sceneMap = useMemo(() => {
+    const map = new Map<string, { index: number; color: string }>()
+    for (const scene of scenes) {
+      if (scene.headingBlockId) {
+        map.set(scene.headingBlockId, { index: scene.index, color: scene.color })
+      }
+    }
+    return map
+  }, [scenes])
+
+  const lockedBlockIds = useMemo(() => {
+    const set = new Set<string>()
+    for (const [blockId] of blockLockMap) {
+      set.add(blockId)
+    }
+    return set
+  }, [blockLockMap])
+
+  // ── Scroll-to-block navigation ──
+
+  useEffect(() => {
+    if (!scrollToBlockId) return
+    const index = editor.children.findIndex((n) => {
+      const candidate = n as { id?: unknown }
+      return typeof candidate.id === "string" && candidate.id === scrollToBlockId
+    })
+    if (index >= 0) {
+      try {
+        const node = editor.children[index]
+        const domNode = ReactEditor.toDOMNode(editor as ReactEditor, node)
+        domNode?.scrollIntoView({ behavior: "smooth", block: "center" })
+      } catch { /* ignore */ }
+    }
+    clearScrollRequest()
+  }, [scrollToBlockId, clearScrollRequest, editor])
 
   // ── Colors ──
 
@@ -905,8 +951,8 @@ const SlateScreenplayEditor = forwardRef<
   // ── Render element (with industry-standard indents) ──
 
   const renderElement = useMemo(
-    () => createRenderElement({ editor, colors, editorFontSize, editorLineHeightPx, pageBreakMargins: scaledPageBreakMargins }),
-    [editor, colors, editorFontSize, editorLineHeightPx, scaledPageBreakMargins]
+    () => createRenderElement({ editor, colors, editorFontSize, editorLineHeightPx, pageBreakMargins: scaledPageBreakMargins, sceneMap, highlightBlockId, lockedBlockIds }),
+    [editor, colors, editorFontSize, editorLineHeightPx, scaledPageBreakMargins, sceneMap, highlightBlockId, lockedBlockIds]
   )
 
   useEffect(() => {
