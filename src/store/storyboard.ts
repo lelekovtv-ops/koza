@@ -92,8 +92,8 @@ function renumberFrames(items: StoryboardFrame[]) {
   }))
 }
 
-function createDefaultFrames() {
-  return Array.from({ length: 4 }, (_, index) => createStoryboardFrame(index))
+function createDefaultFrames(): StoryboardFrame[] {
+  return []
 }
 
 interface StoryboardState {
@@ -144,6 +144,14 @@ export const useStoryboardStore = create<StoryboardState>()(
     }),
     {
       name: "koza-storyboard",
+      version: 2,
+      migrate: (persisted: unknown, version: number) => {
+        if (version < 2) {
+          const state = persisted as Record<string, unknown>
+          if (state) state.frames = []
+        }
+        return persisted
+      },
     }
   )
 )

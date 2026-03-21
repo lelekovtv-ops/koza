@@ -513,13 +513,16 @@ export default function TimelinePage() {
           /* 5 — Empty state */
           <div className="flex flex-1 flex-col items-center justify-center gap-4 py-20">
             <p className="text-sm text-white/30">No shots on timeline</p>
-            <button
-              type="button"
-              onClick={generateDemoShots}
-              className="rounded-md border border-white/10 bg-white/5 px-4 py-2 text-xs text-white/60 hover:bg-white/10 hover:text-white transition-colors"
-            >
-              Generate 100 demo shots
-            </button>
+            <p className="text-xs text-white/20">Use Breakdown in Storyboard to create shots</p>
+            {process.env.NODE_ENV === "development" && (
+              <button
+                type="button"
+                onClick={generateDemoShots}
+                className="rounded-md border border-white/10 bg-white/5 px-4 py-2 text-xs text-white/60 hover:bg-white/10 hover:text-white transition-colors"
+              >
+                Demo (100)
+              </button>
+            )}
           </div>
         ) : (
           <>

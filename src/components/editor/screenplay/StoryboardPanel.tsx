@@ -12,6 +12,8 @@ import { useScenesStore } from "@/store/scenes"
 import { useNavigationStore } from "@/store/navigation"
 import { breakdownScene } from "@/lib/jenkins"
 import { saveBlob } from "@/lib/fileStorage"
+import { useLibraryStore } from "@/store/library"
+import { useProjectsStore } from "@/store/projects"
 
 const SHOT_SIZE_OPTIONS = ["WIDE", "MEDIUM", "CLOSE", "EXTREME CLOSE", "OVER SHOULDER", "POV", "INSERT", "AERIAL", "TWO SHOT"] as const
 const CAMERA_MOTION_OPTIONS = ["Static", "Pan Left", "Pan Right", "Pan Up", "Tilt Down", "Push In", "Pull Out", "Track Left", "Track Right", "Track Around", "Dolly In", "Crane Up", "Crane Down", "Drone In", "Handheld", "Steadicam"] as const
@@ -111,7 +113,7 @@ function InlineText({ value, onChange, placeholder, multiline }: { value: string
 
 // ── AI Image Generation ─────────────────────────────────────────
 
-async function generateShotImage(shot: TimelineShot): Promise<string> {
+async function generateShotImage(shot: TimelineShot): Promise<{ objectUrl: string; fileId: string; blob: Blob }> {
   const rawPrompt = `Cinematic storyboard frame. ${shot.shotSize} shot. ${shot.caption}. ${shot.cameraMotion} camera. Film noir style, high contrast, dramatic lighting.`
 
   // Enhance prompt via Claude
@@ -132,9 +134,10 @@ async function generateShotImage(shot: TimelineShot): Promise<string> {
   if (!imageRes.ok) throw new Error(`Image generation failed: ${imageRes.status}`)
 
   const blob = await imageRes.blob()
-  const blobKey = `shot-thumb-${shot.id}`
-  await saveBlob(blobKey, blob)
-  return URL.createObjectURL(blob)
+  const fileId = `shot-gen-${shot.id}-${Date.now()}`
+  await saveBlob(fileId, blob)
+  const objectUrl = URL.createObjectURL(blob)
+  return { objectUrl, fileId, blob }
 }
 
 interface StoryboardPanelProps {
@@ -248,8 +251,31 @@ export function StoryboardPanel({
     if (!shot || generatingIds.has(shotId)) return
     setGeneratingIds((prev) => new Set(prev).add(shotId))
     try {
-      const imageUrl = await generateShotImage(shot)
-      updateShot(shotId, { thumbnailUrl: imageUrl })
+      const { objectUrl, fileId, blob } = await generateShotImage(shot)
+
+      // Save to Library store
+      const projectId = useProjectsStore.getState().activeProjectId || "global"
+      useLibraryStore.getState().addFile({
+        id: fileId,
+        name: `${shot.label || "Shot"} — generated.png`,
+        type: "image",
+        mimeType: "image/png",
+        size: blob.size,
+        url: objectUrl,
+        thumbnailUrl: objectUrl,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        tags: ["generated", "storyboard", shot.sceneId || ""],
+        projectId,
+        folder: "/storyboard",
+        origin: "generated",
+      })
+
+      // Update shot with blob key for persistence
+      updateShot(shotId, {
+        thumbnailUrl: objectUrl,
+        thumbnailBlobKey: fileId,
+      })
     } catch (error) {
       console.error("Image generation error:", error)
     } finally {

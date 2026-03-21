@@ -308,12 +308,47 @@ export const useTimelineStore = create<TimelineState>()(
     }),
     {
       name: "koza-timeline",
+      version: 2,
+      migrate: (persisted: unknown, version: number) => {
+        if (version < 2) {
+          const state = persisted as Record<string, unknown>
+          if (state?.shots && Array.isArray(state.shots)) {
+            state.shots = (state.shots as Array<Record<string, unknown>>).filter(
+              (s) => s.locked === true || s.blockRange !== null || s.thumbnailBlobKey !== null
+            )
+          }
+        }
+        return persisted
+      },
       partialize: (state) => ({
         shots: state.shots,
         audioClips: state.audioClips,
         zoom: state.zoom,
         playbackRate: state.playbackRate,
       }),
+      onRehydrateStorage: () => (state) => {
+        if (!state) return
+        const shotsWithBlobs = state.shots.filter((s) => s.thumbnailBlobKey)
+        if (shotsWithBlobs.length === 0) return
+
+        Promise.all(
+          shotsWithBlobs.map(async (shot) => {
+            try {
+              const { loadBlob } = await import("@/lib/fileStorage")
+              const url = await loadBlob(shot.thumbnailBlobKey!)
+              if (url) {
+                useTimelineStore.setState((current) => ({
+                  shots: current.shots.map((s) =>
+                    s.id === shot.id ? { ...s, thumbnailUrl: url } : s
+                  ),
+                }))
+              }
+            } catch {
+              // Ignore missing blobs
+            }
+          })
+        )
+      },
     }
   )
 )
