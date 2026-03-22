@@ -1,6 +1,7 @@
 import { DEFAULT_TEXT_MODEL_ID } from "@/lib/models"
 import { DEAKINS_RULES, SHOT_TRANSITION_RULES } from "@/lib/cinematographyRules"
 import { DEFAULT_PROJECT_STYLE } from "@/lib/projectStyle"
+import { devlog } from "@/store/devlog"
 
 export interface JenkinsShot {
   label: string
@@ -250,44 +251,76 @@ export async function breakdownScene(
     ? { modelId: optionsOrModelId }
     : optionsOrModelId ?? {}
   const modelId = opts.modelId ?? DEFAULT_TEXT_MODEL_ID
+  const group = `breakdown-${opts.sceneId || Date.now()}`
+  const systemPrompt = buildJenkinsSystemPrompt(opts)
+  const userMessage = buildBreakdownUserMessage(normalizedSceneText)
 
-  const response = await fetch("/api/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      messages: [{ role: "user", content: buildBreakdownUserMessage(normalizedSceneText) }],
-      modelId,
-      system: buildJenkinsSystemPrompt(opts),
-    }),
-  })
+  devlog.breakdown("breakdown_start", `Breakdown: ${normalizedSceneText.slice(0, 60)}...`, "", {
+    sceneId: opts.sceneId,
+    modelId,
+    textLength: normalizedSceneText.length,
+  }, group)
 
-  if (!response.ok) {
-    const errorText = await response.text()
-    throw new Error(`Jenkins breakdown failed: ${errorText}`)
+  devlog.breakdown("breakdown_prompt", "System prompt", systemPrompt, {
+    hasBible: !!opts.bible,
+    characterCount: opts.bible?.characters.length || 0,
+    locationCount: opts.bible?.locations.length || 0,
+  }, group)
+
+  devlog.breakdown("breakdown_request", "User message", userMessage, {}, group)
+
+  try {
+    const response = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messages: [{ role: "user", content: userMessage }],
+        modelId,
+        system: systemPrompt,
+      }),
+    })
+
+    if (!response.ok) {
+      const errorText = await response.text()
+      throw new Error(`Jenkins breakdown failed: ${errorText}`)
+    }
+
+    const reader = response.body?.getReader()
+    if (!reader) throw new Error("No response body")
+
+    const decoder = new TextDecoder()
+    let fullText = ""
+
+    for (;;) {
+      const { done, value } = await reader.read()
+      if (done) break
+      fullText += decoder.decode(value, { stream: true })
+    }
+
+    fullText += decoder.decode()
+
+    devlog.breakdown("breakdown_response", "Raw AI response", fullText, {
+      responseLength: fullText.length,
+    }, group)
+
+    const parsed: unknown = JSON.parse(extractJsonArray(fullText))
+
+    if (!Array.isArray(parsed)) {
+      throw new Error("Jenkins returned non-array response")
+    }
+
+    const shots = parsed.map(normalizeShot)
+
+    devlog.breakdown("breakdown_result", `Parsed ${shots.length} shots`, JSON.stringify(shots, null, 2), {
+      shotCount: shots.length,
+      labels: shots.map((shot) => shot.label),
+    }, group)
+
+    return { shots }
+  } catch (error) {
+    devlog.breakdown("breakdown_error", "Breakdown failed", String(error), {
+      sceneId: opts.sceneId,
+    }, group)
+    throw error
   }
-
-  // The endpoint streams text — collect full response
-  const reader = response.body?.getReader()
-  if (!reader) throw new Error("No response body")
-
-  const decoder = new TextDecoder()
-  let fullText = ""
-
-  for (;;) {
-    const { done, value } = await reader.read()
-    if (done) break
-    fullText += decoder.decode(value, { stream: true })
-  }
-
-  fullText += decoder.decode()
-
-  const parsed: unknown = JSON.parse(extractJsonArray(fullText))
-
-  if (!Array.isArray(parsed)) {
-    throw new Error("Jenkins returned non-array response")
-  }
-
-  const shots = parsed.map(normalizeShot)
-
-  return { shots }
 }

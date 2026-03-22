@@ -1,6 +1,7 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
 import { loadBlob } from "@/lib/fileStorage"
+import { useDevLogStore } from "@/store/devlog"
 import {
   type BibleReferenceImage,
   type CharacterEntry,
@@ -180,6 +181,21 @@ export const useBibleStore = create<BibleState>()(
           characters: mergeCharacters(state.characters, characters),
           locations: mergeLocations(state.locations, locations),
         }))
+
+        useDevLogStore.getState().log({
+          type: "bible_sync",
+          title: "Bible sync",
+          details: JSON.stringify({
+            characters: characters.map((entry) => entry.name),
+            locations: locations.map((entry) => entry.name),
+          }, null, 2),
+          meta: {
+            blockCount: blocks.length,
+            sceneCount: scenes.length,
+            characterCount: characters.length,
+            locationCount: locations.length,
+          },
+        })
       },
       updateCharacter: (id, patch) => {
         set((state) => ({

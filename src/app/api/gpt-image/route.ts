@@ -1,8 +1,12 @@
 import OpenAI from "openai"
-import type { ResponseInput, ResponseInputMessageContentList, ResponseOutputItem, Tool } from "openai/resources/responses/responses"
+import type {
+  ResponseInput,
+  ResponseInputImage,
+  ResponseInputMessageContentList,
+  ResponseInputText,
+  Tool,
+} from "openai/resources/responses/responses"
 import { NextResponse } from "next/server"
-
-type ImageGenerationCall = Extract<ResponseOutputItem, { type: "image_generation_call" }>
 
 export async function POST(req: Request) {
   try {
@@ -20,17 +24,21 @@ export async function POST(req: Request) {
 
     if (normalizedReferenceImages.length > 0) {
       const content: ResponseInputMessageContentList = [
-        { type: "input_text", text: prompt },
-        ...normalizedReferenceImages.map((imageUrl) => ({
-          type: "input_image" as const,
-          image_url: imageUrl,
-          detail: "high" as const,
-        })),
+        { type: "input_text", text: prompt } as ResponseInputText,
       ]
-      const input: ResponseInput = [{
+
+      normalizedReferenceImages.forEach((imageUrl) => {
+        content.push({
+          type: "input_image",
+          image_url: imageUrl,
+          detail: "high",
+        } as ResponseInputImage)
+      })
+
+      const input = [{
         role: "user",
         content,
-      }]
+      }] as ResponseInput
       const tools: Tool[] = [{
         type: "image_generation",
         action: "edit",
@@ -41,16 +49,15 @@ export async function POST(req: Request) {
 
       const response = await openai.responses.create({
         model: "gpt-4.1",
-        input,
+        input: input as any,
         tools,
       })
 
-      const imageCall = response.output.find(
-        (entry): entry is ImageGenerationCall => entry.type === "image_generation_call"
-      )
+      const imageCall = response.output.find((entry: any) => entry.type === "image_generation_call" && entry.result) as any
+      const imageResult = imageCall?.result as string | undefined
 
-      if (imageCall?.result) {
-        return new Response(Buffer.from(imageCall.result, "base64"), {
+      if (imageResult) {
+        return new Response(Buffer.from(imageResult, "base64"), {
           headers: { "Content-Type": "image/png" },
         })
       }

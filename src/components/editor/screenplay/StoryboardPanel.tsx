@@ -17,6 +17,7 @@ import { buildImagePrompt, buildVideoPrompt, getReferencedBibleEntries } from "@
 import { ProjectStylePicker } from "@/components/ui/ProjectStylePicker"
 import { useBibleStore } from "@/store/bible"
 import { useBoardStore } from "@/store/board"
+import { devlog } from "@/store/devlog"
 import { useLibraryStore } from "@/store/library"
 import { useProjectsStore } from "@/store/projects"
 
@@ -134,8 +135,21 @@ async function generateShotImage(
   const { selectedImageGenModel, projectStyle } = useBoardStore.getState()
   const selectedModel = selectedImageGenModel || "nano-banana-2"
   const start = Date.now()
+  const group = `generate-${shot.id}`
   const references = getShotGenerationReferenceImages(shot, characters, locations)
   const referenceImages = await convertReferenceImagesToDataUrls(references)
+  const { characters: mentionedChars, location } = getReferencedBibleEntries(shot, characters, locations)
+  const charRefs = mentionedChars
+    .map((character) => `${character.name}: ${character.appearancePrompt || character.description || "no description"}`)
+    .join("\n")
+  const locRef = location?.appearancePrompt || location?.description || location?.name || ""
+
+  devlog.image("image_start", `Generate: ${shot.label}`, "", {
+    shotId: shot.id,
+    shotSize: shot.shotSize,
+    model: selectedModel,
+  }, group)
+
   const referenceInstruction = referenceImages.length > 0
     ? "Use the provided reference images as hard visual anchors. Preserve the exact face identity, hair, costume silhouette, proportions, and environment design from those references. Do not redesign recurring characters or locations."
     : ""
@@ -143,6 +157,17 @@ async function generateShotImage(
     buildImagePrompt(shot, allShots, characters, locations, projectStyle),
     referenceInstruction,
   ].filter(Boolean).join("\n\n")
+
+  devlog.image("image_prompt", "Image prompt", prompt, {
+    promptLength: prompt.length,
+  }, group)
+
+  devlog.image("image_bible_inject", "Bible data injected", `Characters: ${charRefs || "none"}\nLocation: ${locRef || "none"}`, {
+    characterCount: mentionedChars.length,
+    hasLocation: !!locRef,
+  }, group)
+
+  devlog.image("image_style_inject", "Style", projectStyle, {}, group)
 
   let apiUrl: string
   let body: { prompt: string; model?: string; referenceImages?: string[] }
@@ -155,43 +180,62 @@ async function generateShotImage(
     body = { prompt, model: selectedModel, referenceImages }
   }
 
-  const response = await fetch(apiUrl, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  })
+  devlog.image("image_api_call", `API call: ${apiUrl}`, JSON.stringify(body, null, 2), {
+    model: selectedModel,
+    endpoint: apiUrl,
+  }, group)
 
-  if (!response.ok) {
-    const err = await response.json().catch(() => ({}))
-    throw new Error(err.error || `Generation failed: ${response.status}`)
+  try {
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    })
+
+    if (!response.ok) {
+      const err = await response.json().catch(() => ({}))
+      throw new Error(err.error || `Generation failed: ${response.status}`)
+    }
+
+    const blob = await response.blob()
+    const blobKey = `shot-thumb-${shot.id}`
+    await saveBlob(blobKey, blob)
+
+    const projectId = useProjectsStore.getState().activeProjectId || "global"
+    const objectUrl = URL.createObjectURL(blob)
+
+    useLibraryStore.getState().addFile({
+      id: blobKey,
+      name: `${shot.label || "Shot"} — generated.png`,
+      type: "image",
+      mimeType: "image/png",
+      size: blob.size,
+      url: objectUrl,
+      thumbnailUrl: objectUrl,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      tags: ["generated", "storyboard"],
+      projectId,
+      folder: "/storyboard",
+      origin: "generated",
+    })
+
+    devlog.image("image_result", `Generated in ${Date.now() - start}ms`, "", {
+      timing: Date.now() - start,
+      blobSize: blob.size,
+      model: selectedModel,
+    }, group)
+
+    console.log(`[KOZA] Image generated in ${Date.now() - start}ms via ${selectedModel}`)
+
+    return objectUrl
+  } catch (error) {
+    devlog.image("image_error", "Generation failed", String(error), {
+      shotId: shot.id,
+      model: selectedModel,
+    }, group)
+    throw error
   }
-
-  const blob = await response.blob()
-  const blobKey = `shot-thumb-${shot.id}`
-  await saveBlob(blobKey, blob)
-
-  const projectId = useProjectsStore.getState().activeProjectId || "global"
-  const objectUrl = URL.createObjectURL(blob)
-
-  useLibraryStore.getState().addFile({
-    id: blobKey,
-    name: `${shot.label || "Shot"} — generated.png`,
-    type: "image",
-    mimeType: "image/png",
-    size: blob.size,
-    url: objectUrl,
-    thumbnailUrl: objectUrl,
-    createdAt: Date.now(),
-    updatedAt: Date.now(),
-    tags: ["generated", "storyboard"],
-    projectId,
-    folder: "/storyboard",
-    origin: "generated",
-  })
-
-  console.log(`[KOZA] Image generated in ${Date.now() - start}ms via ${selectedModel}`)
-
-  return objectUrl
 }
 
 interface StoryboardPanelProps {

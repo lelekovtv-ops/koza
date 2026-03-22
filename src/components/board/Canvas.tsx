@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, BookOpen } from 'lucide-react'
+import { ArrowLeft, BookOpen, GitBranch } from 'lucide-react'
 import {
   Background,
   BackgroundVariant,
@@ -14,16 +14,36 @@ import {
   type ReactFlowInstance,
   type Edge,
   type Node,
+  type NodeChange,
   type OnSelectionChangeFunc,
 } from '@xyflow/react'
 import '@xyflow/react/dist/style.css'
 import BoardAssistant from './BoardAssistant'
 import LibraryButton from './LibraryButton'
 import LibraryPanel from './LibraryPanel'
+import BibleNode from './nodes/BibleNode'
+import BreakdownNode from './nodes/BreakdownNode'
+import ImageGenNode from './nodes/ImageGenNode'
+import PreviewNode from './nodes/PreviewNode'
+import PromptNode from './nodes/PromptNode'
+import SceneNode from './nodes/SceneNode'
+import SettingsNode from './nodes/SettingsNode'
+import ShotNode from './nodes/ShotNode'
 import ScriptDocNode from './nodes/ScriptDocNode'
+import StyleNode from './nodes/StyleNode'
 import ScriptWriterOverlay from '@/components/editor/ScriptWriterOverlay'
 import { KozaLogo } from "@/components/ui/KozaLogo";
+import { buildProjectGraph } from '@/lib/boardGraphBuilder'
+import { saveBlob } from '@/lib/fileStorage'
+import { breakdownScene } from '@/lib/jenkins'
+import { buildImagePrompt, getReferencedBibleEntries } from '@/lib/promptBuilder'
+import { useBibleStore } from '@/store/bible'
+import { useBoardStore } from '@/store/board'
+import { devlog } from '@/store/devlog'
+import { useLibraryStore } from '@/store/library'
+import { useNavigationStore } from '@/store/navigation'
 import { useProjectsStore } from '@/store/projects'
+import { useScenesStore } from '@/store/scenes'
 import { useScriptStore } from '@/store/script'
 import { useTimelineStore } from '@/store/timeline'
 
@@ -36,6 +56,15 @@ type NodeScreenRect = {
 
 const nodeTypes: NodeTypes = {
   scriptDoc: ScriptDocNode,
+  bible: BibleNode,
+  scene: SceneNode,
+  breakdown: BreakdownNode,
+  shot: ShotNode,
+  imageGen: ImageGenNode,
+  preview: PreviewNode,
+  style: StyleNode,
+  settings: SettingsNode,
+  prompt: PromptNode,
 }
 
 const nodes: Node[] = [
@@ -57,13 +86,21 @@ export default function Canvas({ onBack }: CanvasProps) {
   const router = useRouter()
   const reactFlowRef = useRef<ReactFlowInstance<Node, Edge> | null>(null)
   const syncFromTimelineRef = useRef(false)
+  const shouldFitPipelineRef = useRef(false)
   const activeProjectId = useProjectsStore((state) => state.activeProjectId)
   const scriptTitle = useScriptStore((state) => state.title)
   const scriptAuthor = useScriptStore((state) => state.author)
   const scriptDate = useScriptStore((state) => state.date)
   const scriptDraft = useScriptStore((state) => state.draft)
-  const [nodesState, setNodesState, onNodesChange] = useNodesState(nodes)
-  const [edgesState, , onEdgesChange] = useEdgesState(edges)
+  const timelineShots = useTimelineStore((state) => state.shots)
+  const [nodesState, setNodesState, onNodesChangeBase] = useNodesState(nodes)
+  const [edgesState, setEdgesState, onEdgesChange] = useEdgesState(edges)
+  const [pipelineVisible, setPipelineVisible] = useState(false)
+  const [expandedSceneIds, setExpandedSceneIds] = useState<Set<string>>(new Set())
+  const [expandedShotIds, setExpandedShotIds] = useState<Set<string>>(new Set())
+  const [breakdownStatusByScene, setBreakdownStatusByScene] = useState<Record<string, 'idle' | 'running' | 'done'>>({})
+  const [imageGenStatusByShot, setImageGenStatusByShot] = useState<Record<string, 'idle' | 'generating' | 'done'>>({})
+  const customNodePositionsRef = useRef<Record<string, { x: number; y: number }>>({})
   const [editorMode, setEditorMode] = useState<{
     active: boolean
     nodeId: string | null
@@ -90,6 +127,18 @@ export default function Canvas({ onBack }: CanvasProps) {
     setEditorMode({ active: false, nodeId: null, type: null, initialRect: null })
   }, [])
 
+  const handleNodesChange = useCallback((changes: NodeChange<Node>[]) => {
+    onNodesChangeBase(changes)
+    for (const change of changes) {
+      if (change.type === 'position' && change.position) {
+        customNodePositionsRef.current[change.id] = change.position
+      }
+      if (change.type === 'remove') {
+        delete customNodePositionsRef.current[change.id]
+      }
+    }
+  }, [onNodesChangeBase])
+
   useEffect(() => {
     let prev = useTimelineStore.getState().selectedShotId
     return useTimelineStore.subscribe((state) => {
@@ -98,13 +147,13 @@ export default function Canvas({ onBack }: CanvasProps) {
       prev = selectedShotId
       if (!selectedShotId || !reactFlowRef.current) return
       const rf = reactFlowRef.current
-      const node = rf.getNode(selectedShotId)
+      const node = rf.getNode(`shot-${selectedShotId}`) ?? rf.getNode(selectedShotId)
       if (!node) return
       syncFromTimelineRef.current = true
       setNodesState((nds) =>
-        nds.map((n) => ({ ...n, selected: n.id === selectedShotId }))
+        nds.map((n) => ({ ...n, selected: n.id === node.id }))
       )
-      rf.fitView({ nodes: [{ id: selectedShotId }], duration: 500, padding: 0.4 })
+      rf.fitView({ nodes: [{ id: node.id }], duration: 500, padding: 0.4 })
       window.setTimeout(() => { syncFromTimelineRef.current = false }, 600)
     })
   }, [setNodesState])
@@ -118,10 +167,10 @@ export default function Canvas({ onBack }: CanvasProps) {
       prev = activateNodeId
       if (!activateNodeId || !reactFlowRef.current) return
       const rf = reactFlowRef.current
-      const node = rf.getNode(activateNodeId)
+      const node = rf.getNode(`shot-${activateNodeId}`) ?? rf.getNode(activateNodeId)
       useTimelineStore.getState().activateNode(null)
       if (!node) return
-      rf.fitView({ nodes: [{ id: activateNodeId }], duration: 500, padding: 0.3 })
+      rf.fitView({ nodes: [{ id: node.id }], duration: 500, padding: 0.3 })
       if (node.type === 'scriptDoc') {
         const domNode = document.querySelector(`[data-id="${CSS.escape(activateNodeId)}"]`)
         if (domNode) {
@@ -146,28 +195,340 @@ export default function Canvas({ onBack }: CanvasProps) {
       const selected = selectedNodes[0]
       if (!selected) return
       const timelineState = useTimelineStore.getState()
-      if (timelineState.shots.some((s) => s.id === selected.id)) {
-        timelineState.scrollToShot(selected.id)
+      const selectedData = (selected.data ?? {}) as {
+        shot?: { id?: string }
+        scene?: { id?: string; headingBlockId?: string }
+      }
+      const selectedShotId = typeof selectedData.shot?.id === 'string'
+        ? selectedData.shot.id
+        : selected.id.startsWith('shot-')
+          ? selected.id.slice(5)
+          : null
+      if (selectedShotId && timelineState.shots.some((shot) => shot.id === selectedShotId)) {
+        timelineState.selectShot(selectedShotId)
+        timelineState.scrollToShot(selectedShotId)
+      }
+
+      if (selected.type === 'scene' && typeof selectedData.scene?.id === 'string') {
+        useScenesStore.getState().selectScene(selectedData.scene.id)
+        if (selectedData.scene.headingBlockId) {
+          useNavigationStore.getState().requestScrollToBlock(selectedData.scene.headingBlockId)
+        }
       }
     },
     [],
   )
 
+  const toggleSceneExpand = useCallback((sceneId: string) => {
+    setExpandedShotIds(new Set())
+    setExpandedSceneIds((prev) => (prev.has(sceneId) ? new Set() : new Set([sceneId])))
+  }, [])
+
+  const toggleShotExpand = useCallback((shotId: string) => {
+    setExpandedShotIds((prev) => (prev.has(shotId) ? new Set() : new Set([shotId])))
+  }, [])
+
+  const handleRunBreakdown = useCallback(async (sceneId: string) => {
+    const scenes = useScenesStore.getState().scenes
+    const scene = scenes.find((s) => s.id === sceneId)
+    if (!scene) return
+
+    const blocks = useScriptStore.getState().blocks
+    const sceneText = scene.blockIds
+      .map((bid) => blocks.find((b) => b.id === bid)?.text)
+      .filter(Boolean)
+      .join('\n')
+    if (!sceneText.trim()) return
+
+    const { characters, locations } = useBibleStore.getState()
+    const bible = {
+      characters: characters.map((c) => ({
+        name: c.name,
+        description: c.description,
+        appearancePrompt: c.appearancePrompt,
+      })),
+      locations: locations.map((l) => ({
+        name: l.name,
+        description: l.description,
+        appearancePrompt: l.appearancePrompt,
+        intExt: l.intExt,
+      })),
+    }
+
+    setBreakdownStatusByScene((prev) => ({ ...prev, [sceneId]: 'running' }))
+
+    try {
+      const { shots: jenkinsShots } = await breakdownScene(sceneText, {
+        sceneId: scene.id,
+        blockIds: scene.blockIds,
+        bible,
+      })
+
+      const addShot = useTimelineStore.getState().addShot
+      const firstBlockId = scene.blockIds[0] ?? ''
+      const lastBlockId = scene.blockIds[scene.blockIds.length - 1] ?? ''
+
+      for (const shot of jenkinsShots) {
+        addShot({
+          label: shot.label,
+          shotSize: shot.shotSize ?? '',
+          cameraMotion: shot.cameraMotion ?? '',
+          duration: shot.duration,
+          caption: shot.caption ?? '',
+          directorNote: shot.directorNote ?? '',
+          cameraNote: shot.cameraNote ?? '',
+          imagePrompt: shot.imagePrompt ?? '',
+          videoPrompt: shot.videoPrompt ?? '',
+          visualDescription: shot.visualDescription ?? '',
+          notes: shot.notes,
+          type: shot.type || 'image',
+          sceneId: scene.id,
+          blockRange: firstBlockId && lastBlockId ? [firstBlockId, lastBlockId] : null,
+          locked: true,
+          sourceText: sceneText,
+        })
+      }
+
+      setBreakdownStatusByScene((prev) => ({ ...prev, [sceneId]: 'done' }))
+      setExpandedSceneIds(new Set([sceneId]))
+      setExpandedShotIds(new Set())
+    } catch (error) {
+      console.error('Pipeline breakdown error:', error)
+      setBreakdownStatusByScene((prev) => ({ ...prev, [sceneId]: 'idle' }))
+    }
+  }, [])
+
+  const handleGenerateImage = useCallback(async (shotId: string) => {
+    const shot = useTimelineStore.getState().shots.find((s) => s.id === shotId)
+    if (!shot) return
+
+    const { characters, locations } = useBibleStore.getState()
+    const allShots = useTimelineStore.getState().shots
+    const projectStyle = useBoardStore.getState().projectStyle
+    const selectedModel = useBoardStore.getState().selectedImageGenModel || 'nano-banana-2'
+    const group = `generate-${shotId}`
+    const startTime = Date.now()
+    const { characters: mentionedChars, location } = getReferencedBibleEntries(shot, characters, locations)
+    const charRefs = mentionedChars
+      .map((character) => `${character.name}: ${character.appearancePrompt || character.description || 'no description'}`)
+      .join('\n')
+    const locRef = location?.appearancePrompt || location?.description || location?.name || ''
+
+    devlog.image('image_start', `Generate: ${shot.label}`, '', {
+      shotId,
+      shotSize: shot.shotSize,
+      model: selectedModel,
+    }, group)
+
+    const prompt = buildImagePrompt(shot, allShots, characters, locations, projectStyle)
+
+    devlog.image('image_prompt', 'Image prompt', prompt, {
+      promptLength: prompt.length,
+    }, group)
+
+    devlog.image('image_bible_inject', 'Bible data injected', `Characters: ${charRefs || 'none'}\nLocation: ${locRef || 'none'}`, {
+      characterCount: mentionedChars.length,
+      hasLocation: !!locRef,
+    }, group)
+
+    devlog.image('image_style_inject', 'Style', projectStyle, {}, group)
+
+    setImageGenStatusByShot((prev) => ({ ...prev, [shotId]: 'generating' }))
+
+    try {
+      const apiUrl = selectedModel === 'gpt-image' ? '/api/gpt-image' : '/api/nano-banana'
+      const body = selectedModel === 'gpt-image' ? { prompt } : { prompt, model: selectedModel }
+
+      devlog.image('image_api_call', `API call: ${apiUrl}`, JSON.stringify(body, null, 2), {
+        model: selectedModel,
+        endpoint: apiUrl,
+      }, group)
+
+      const response = await fetch(apiUrl, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(body),
+      })
+
+      if (!response.ok) throw new Error(`Generation failed: ${response.status}`)
+
+      const blob = await response.blob()
+      const blobKey = `shot-thumb-${shotId}`
+      await saveBlob(blobKey, blob)
+      const objectUrl = URL.createObjectURL(blob)
+
+      useTimelineStore.getState().updateShot(shotId, {
+        thumbnailUrl: objectUrl,
+        thumbnailBlobKey: blobKey,
+      })
+
+      const projectId = useProjectsStore.getState().activeProjectId || 'global'
+      useLibraryStore.getState().addFile({
+        id: blobKey,
+        name: `${shot.label || 'Shot'} — generated.png`,
+        type: 'image',
+        mimeType: 'image/png',
+        size: blob.size,
+        url: objectUrl,
+        thumbnailUrl: objectUrl,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        tags: ['generated', 'storyboard', 'pipeline'],
+        projectId,
+        folder: '/storyboard',
+        origin: 'generated',
+      })
+
+      devlog.image('image_result', `Generated in ${Date.now() - startTime}ms`, '', {
+        timing: Date.now() - startTime,
+        blobSize: blob.size,
+        model: selectedModel,
+      }, group)
+
+      setImageGenStatusByShot((prev) => ({ ...prev, [shotId]: 'done' }))
+    } catch (error) {
+      devlog.image('image_error', 'Generation failed', String(error), {
+        shotId,
+        model: selectedModel,
+      }, group)
+      console.error('Pipeline image generation error:', error)
+      setImageGenStatusByShot((prev) => ({ ...prev, [shotId]: 'idle' }))
+    }
+  }, [])
+
+  const rebuildPipelineGraph = useCallback(() => {
+    const currentScenes = useScenesStore.getState().scenes
+    const currentShots = useTimelineStore.getState().shots
+    const currentCharacters = useBibleStore.getState().characters
+    const currentLocations = useBibleStore.getState().locations
+
+    const { nodes: graphNodes, edges: graphEdges } = buildProjectGraph(
+      {
+        scenes: currentScenes,
+        shots: currentShots,
+        characters: currentCharacters,
+        locations: currentLocations,
+        expandedSceneIds,
+        expandedShotIds,
+        breakdownStatusByScene,
+        imageGenStatusByShot,
+      },
+      {
+        onToggleScene: toggleSceneExpand,
+        onToggleShotExpand: toggleShotExpand,
+        onRunBreakdown: handleRunBreakdown,
+        onGenerateImage: handleGenerateImage,
+      },
+    )
+
+    setNodesState((prev) => {
+      const previousNodes = new Map(prev.map((node) => [node.id, node]))
+      const scriptNode = previousNodes.get('doc-1')
+      const positions = customNodePositionsRef.current
+      const mergedNodes = graphNodes.map((node) => ({
+        ...node,
+        position: positions[node.id] ?? node.position,
+        selected: previousNodes.get(node.id)?.selected,
+      }))
+
+      return scriptNode ? [scriptNode, ...mergedNodes] : mergedNodes
+    })
+    setEdgesState(graphEdges)
+
+    if (shouldFitPipelineRef.current) {
+      shouldFitPipelineRef.current = false
+      window.setTimeout(() => {
+        reactFlowRef.current?.fitView({ duration: 800, padding: 0.08 })
+      }, 100)
+    }
+  }, [
+    expandedSceneIds,
+    expandedShotIds,
+    breakdownStatusByScene,
+    imageGenStatusByShot,
+    handleRunBreakdown,
+    handleGenerateImage,
+    setEdgesState,
+    setNodesState,
+    toggleSceneExpand,
+    toggleShotExpand,
+  ])
+
+  const handleTogglePipeline = useCallback(() => {
+    if (pipelineVisible) {
+      setNodesState((prev) => prev.filter((node) => node.id === 'doc-1'))
+      setEdgesState([])
+      setExpandedSceneIds(new Set())
+      setExpandedShotIds(new Set())
+      setPipelineVisible(false)
+      window.setTimeout(() => {
+        reactFlowRef.current?.fitView({ nodes: [{ id: 'doc-1' }], duration: 600, padding: 0.3 })
+      }, 50)
+      return
+    }
+
+    shouldFitPipelineRef.current = true
+    setExpandedSceneIds(new Set())
+    setExpandedShotIds(new Set())
+    setPipelineVisible(true)
+  }, [pipelineVisible, setEdgesState, setNodesState])
+
+  // Rebuild graph ONLY on structural changes — NOT on drag or store data updates
+  useEffect(() => {
+    if (!pipelineVisible) return
+    rebuildPipelineGraph()
+  }, [pipelineVisible, expandedSceneIds, expandedShotIds, breakdownStatusByScene, imageGenStatusByShot]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Data-only update: refresh node data (thumbnails, durations) without touching positions
+  useEffect(() => {
+    if (!pipelineVisible) return
+    setNodesState((prev) =>
+      prev.map((node) => {
+        const d = node.data as Record<string, unknown>
+        if (node.type === 'shot') {
+          const shotData = d.shot as { id?: string } | undefined
+          if (shotData?.id) {
+            const freshShot = timelineShots.find((s) => s.id === shotData.id)
+            if (freshShot && freshShot !== shotData) {
+              return { ...node, data: { ...d, shot: freshShot } }
+            }
+          }
+        }
+        if (node.type === 'imageGen' && typeof d.shotId === 'string') {
+          const freshShot = timelineShots.find((s) => s.id === d.shotId) as { thumbnailUrl?: string } | undefined
+          if (freshShot) {
+            return { ...node, data: { ...d, thumbnailUrl: freshShot.thumbnailUrl } }
+          }
+        }
+        if (node.type === 'preview' && typeof d.shotId === 'string') {
+          const freshShot = timelineShots.find((s) => s.id === d.shotId) as { thumbnailUrl?: string; duration?: number } | undefined
+          if (freshShot) {
+            return { ...node, data: { ...d, thumbnailUrl: freshShot.thumbnailUrl, duration: freshShot.duration } }
+          }
+        }
+        return node
+      }),
+    )
+  }, [pipelineVisible, timelineShots, setNodesState])
+
   const viewNodes = useMemo(
     () =>
       nodesState.map((node) => {
-        if (node.type !== 'scriptDoc') return node
-        return {
-          ...node,
-          data: {
-            ...(node.data || {}),
-            onEnterEditor: enterEditor,
-            scriptTitle,
-            scriptAuthor,
-            scriptDate,
-            scriptDraft,
-          },
+        if (node.type === 'scriptDoc') {
+          return {
+            ...node,
+            data: {
+              ...(node.data || {}),
+              onEnterEditor: enterEditor,
+              scriptTitle,
+              scriptAuthor,
+              scriptDate,
+              scriptDraft,
+            },
+          }
         }
+
+        return node
       }),
     [nodesState, enterEditor, scriptTitle, scriptAuthor, scriptDate, scriptDraft]
   )
@@ -178,7 +539,7 @@ export default function Canvas({ onBack }: CanvasProps) {
         <ReactFlow
           nodes={viewNodes}
           edges={edgesState}
-          onNodesChange={onNodesChange}
+          onNodesChange={handleNodesChange}
           onEdgesChange={onEdgesChange}
           nodeTypes={nodeTypes}
           onInit={handleInit}
@@ -223,6 +584,17 @@ export default function Canvas({ onBack }: CanvasProps) {
         >
           <BookOpen className="h-4 w-4" />
           Bible
+        </button>
+        <button
+          onClick={handleTogglePipeline}
+          className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium shadow-sm backdrop-blur transition-all hover:shadow-md ${
+            pipelineVisible
+              ? 'border border-[#D4A853]/30 bg-[#D4A853]/20 text-[#D4A853]'
+              : 'bg-white/80 text-[#2D2A26] hover:bg-white'
+          }`}
+        >
+          <GitBranch className="h-4 w-4" />
+          Pipeline
         </button>
         <button
           onClick={onBack}

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono, IBM_Plex_Mono, PT_Mono, PT_Serif } from "next/font/google";
 import { StorageCleanup } from "@/components/app/StorageCleanup";
+import { DevButton } from "@/components/ui/DevButton";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -48,6 +49,7 @@ export default function RootLayout({
       >
         <StorageCleanup />
         {children}
+        <DevButton />
       </body>
     </html>
   );

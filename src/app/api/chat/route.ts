@@ -28,9 +28,10 @@ const KOZA_DEFAULT_SYSTEM = [
 
 export async function POST(req: Request) {
   try {
-    const { messages, modelId, system, workspace } = await req.json()
+    const { messages, modelId, system, workspace, temperature } = await req.json()
     const resolvedModelId = modelId || DEFAULT_TEXT_MODEL_ID
     const resolvedSystem = system || (workspace === "nova" ? KOZA_DEFAULT_SYSTEM : undefined)
+    const resolvedTemperature = typeof temperature === "number" ? temperature : undefined
 
     if (resolvedModelId.startsWith("claude") && !hasConfiguredKey(process.env.ANTHROPIC_API_KEY, "sk-ant-")) {
       return new Response("ANTHROPIC_API_KEY is missing or does not look like an Anthropic key.", {
@@ -50,6 +51,7 @@ export async function POST(req: Request) {
       model: getModel(resolvedModelId),
       system: resolvedSystem,
       messages,
+      temperature: resolvedTemperature,
     })
 
     return result.toTextStreamResponse()
