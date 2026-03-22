@@ -1,5 +1,7 @@
 import { create } from "zustand"
 
+export type DevLogMeta = object
+
 export type LogEntryType =
   | "breakdown_start"
   | "breakdown_prompt"
@@ -7,6 +9,7 @@ export type LogEntryType =
   | "breakdown_response"
   | "breakdown_result"
   | "breakdown_scene_analysis"
+  | "breakdown_action_split"
   | "breakdown_shot_plan"
   | "breakdown_continuity_memory"
   | "breakdown_continuity_risks"
@@ -34,7 +37,7 @@ export interface LogEntry {
   type: LogEntryType
   title: string
   details: string
-  meta?: Record<string, any>
+  meta?: DevLogMeta
   group?: string
 }
 
@@ -75,24 +78,24 @@ export const useDevLogStore = create<DevLogState>()((set, get) => ({
 }))
 
 export const devlog = {
-  info: (title: string, details: string = "", meta?: Record<string, any>) =>
+  info: (title: string, details: string = "", meta?: DevLogMeta) =>
     useDevLogStore.getState().log({ type: "info", title, details, meta }),
-  warn: (title: string, details: string = "", meta?: Record<string, any>) =>
+  warn: (title: string, details: string = "", meta?: DevLogMeta) =>
     useDevLogStore.getState().log({ type: "warning", title, details, meta }),
-  error: (title: string, details: string = "", meta?: Record<string, any>) =>
+  error: (title: string, details: string = "", meta?: DevLogMeta) =>
     useDevLogStore.getState().log({ type: "error", title, details, meta }),
   breakdown: (
     type: LogEntryType,
     title: string,
     details: string,
-    meta?: Record<string, any>,
+    meta?: DevLogMeta,
     group?: string,
   ) => useDevLogStore.getState().log({ type, title, details, meta, group }),
   image: (
     type: LogEntryType,
     title: string,
     details: string,
-    meta?: Record<string, any>,
+    meta?: DevLogMeta,
     group?: string,
   ) => useDevLogStore.getState().log({ type, title, details, meta, group }),
 }

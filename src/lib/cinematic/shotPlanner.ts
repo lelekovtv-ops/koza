@@ -1,4 +1,11 @@
 import { DEAKINS_RULES, SHOT_TRANSITION_RULES } from "@/lib/cinematographyRules"
+import type { ActionSplitStep } from "@/lib/cinematic/actionSplitter"
+import {
+  buildBreakdownConfigPrompt,
+  getContinuityWarningLimit,
+  getShotDensityMultiplier,
+  type BreakdownEngineConfig,
+} from "@/lib/cinematic/config"
 import type { SceneAnalysis } from "@/lib/cinematic/sceneAnalyst"
 import {
   buildBibleContextPrompt,
@@ -18,6 +25,8 @@ import type { ShotContinuity, ShotSpec } from "@/types/cinematic"
 export interface ShotPlannerInput {
   sceneId: string
   analysis: SceneAnalysis
+  actions: ActionSplitStep[]
+  config?: BreakdownEngineConfig
   sceneText?: string
   bible?: CinematicBibleContext
   style?: CinematicStyleContext
@@ -45,6 +54,19 @@ type ShotPlannerAnalysisPayload = {
     visualAnchors: string[]
     transitionOut: string
   }>
+}
+
+type ShotPlannerActionPayload = {
+  order: number
+  title: string
+  summary: string
+  whyItMatters: string
+  visibleChange: string
+  emotionalChange: string
+  characterIds: string[]
+  propIds: string[]
+  locationId: string | null
+  transitionOut: string
 }
 
 type ScreenplayCue = {
@@ -106,6 +128,21 @@ function toShotPlannerAnalysisPayload(analysis: SceneAnalysis): ShotPlannerAnaly
       transitionOut: beat.transitionOut,
     })),
   }
+}
+
+function toShotPlannerActionPayload(actions: ActionSplitStep[]): ShotPlannerActionPayload[] {
+  return actions.map((action) => ({
+    order: action.order,
+    title: action.title,
+    summary: action.summary,
+    whyItMatters: action.whyItMatters,
+    visibleChange: action.visibleChange,
+    emotionalChange: action.emotionalChange,
+    characterIds: action.characterIds,
+    propIds: action.propIds,
+    locationId: action.locationId,
+    transitionOut: action.transitionOut,
+  }))
 }
 
 function extractScreenplayLines(sceneText?: string): string[] {
@@ -239,6 +276,24 @@ function inferFallbackPalette(analysis: SceneAnalysis, visualAnchors: string[]):
 }
 
 function buildFallbackBeatPool(input: ShotPlannerInput): SceneAnalysis["dramaticBeats"] {
+  if (input.actions.length > 0) {
+    return input.actions.map((action, index) => ({
+      id: action.id,
+      sceneId: input.sceneId,
+      order: index,
+      title: action.title,
+      summary: action.summary,
+      narrativeFunction: action.whyItMatters,
+      emotionalShift: action.emotionalChange,
+      subjectFocus: action.visibleChange,
+      characterIds: action.characterIds,
+      locationId: action.locationId,
+      propIds: action.propIds,
+      visualAnchors: [],
+      transitionOut: action.transitionOut,
+    }))
+  }
+
   if (input.analysis.dramaticBeats.length > 0) {
     return input.analysis.dramaticBeats
   }
@@ -337,7 +392,9 @@ function buildFallbackBlockingFromCue(
 
 export function composeShotSpecsLocally(input: ShotPlannerInput): ShotSpec[] {
   const beatPool = buildFallbackBeatPool(input)
-  const targetCount = clampInteger(input.analysis.recommendedShotCount, beatPool.length || 1, 1, 12)
+  const densityAdjustedCount = Math.max(1, Math.round(input.analysis.recommendedShotCount * getShotDensityMultiplier(input.config)))
+  const targetCount = clampInteger(densityAdjustedCount, beatPool.length || 1, 1, 12)
+  const continuityWarningLimit = getContinuityWarningLimit(input.config)
   const cuePool = buildScreenplayCuePool(input.sceneText)
 
   return Array.from({ length: targetCount }, (_, index) => {
@@ -379,7 +436,7 @@ export function composeShotSpecsLocally(input: ShotPlannerInput): ShotSpec[] {
         carryOverFromPrevious: index > 0 ? "maintain wardrobe, props, and actor geography from the prior shot" : "introduce the scene state cleanly",
         setupForNext: index < targetCount - 1 ? transitionOut : "",
         lockedVisualAnchors: beat.visualAnchors,
-        continuityWarnings: input.analysis.continuityRisks.slice(0, 3),
+        continuityWarnings: input.analysis.continuityRisks.slice(0, continuityWarningLimit),
       },
       transitionIn: index === 0 ? "open on established geography" : "continue from previous beat",
       transitionOut,
@@ -432,11 +489,11 @@ function normalizeShotSpec(item: unknown, sceneId: string, index: number): ShotS
   return normalized
 }
 
-export function buildShotPlannerSystemPrompt(input: Omit<ShotPlannerInput, "analysis">): string {
+export function buildShotPlannerSystemPrompt(input: Omit<ShotPlannerInput, "analysis" | "actions" | "sceneText">): string {
   const styleDirective = resolveStyleDirective(input.style)
 
-  return `You are Shot Planner, the second stage of a cinematic planning pipeline.
-Your job is to translate scene analysis into a sequence of structured ShotSpec objects.
+  return `You are Shot Planner, the third stage of a cinematic planning pipeline.
+Your job is to translate scene analysis plus an explicit action split into a sequence of structured ShotSpec objects.
 Do not write final image prompts or polished video prompts. Only write planning-level ShotSpec data.
 
 Return valid JSON array only. Each array item must have this exact shape:
@@ -476,6 +533,7 @@ Return valid JSON array only. Each array item must have this exact shape:
 }
 
 Rules:
+- Use the action split as the backbone for coverage.
 - Plan the scene as a sequence with visual rhythm and continuity.
 - Think shot-to-shot, not isolated coverage.
 - Use transitions and continuity fields intentionally.
@@ -488,6 +546,7 @@ ${DEAKINS_RULES}
 ${SHOT_TRANSITION_RULES}
 
 Visual style direction: ${styleDirective}
+${buildBreakdownConfigPrompt(input.config)}
 ${buildBibleContextPrompt(input.bible)}
 
 Respond with JSON only.`
@@ -496,7 +555,7 @@ Respond with JSON only.`
 export function buildShotPlannerUserMessage(input: ShotPlannerInput): string {
   const screenplayExcerpt = buildScreenplayExcerpt(input.sceneText)
 
-  return `Plan structured cinematic shots for scene ${input.sceneId}.\n\nScene analysis summary:\n${serializeForPrompt(toShotPlannerAnalysisPayload(input.analysis))}${screenplayExcerpt ? `\n\nScreenplay excerpt:\n${screenplayExcerpt}` : ""}`
+  return `Plan structured cinematic shots for scene ${input.sceneId}.\n\nScene analysis summary:\n${serializeForPrompt(toShotPlannerAnalysisPayload(input.analysis))}\n\nAction split:\n${serializeForPrompt(toShotPlannerActionPayload(input.actions))}${screenplayExcerpt ? `\n\nScreenplay excerpt:\n${screenplayExcerpt}` : ""}`
 }
 
 export function parseShotPlannerResponse(rawText: string, sceneId: string): ShotSpec[] {

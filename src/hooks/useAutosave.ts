@@ -1,6 +1,6 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import { useProjectsStore } from "@/store/projects"
 import { useScriptStore } from "@/store/script"
 
@@ -22,13 +22,27 @@ export function useAutosave(enabled = true): UseAutosaveResult {
   const [status, setStatus] = useState<AutosaveStatus>("idle")
   const [visible, setVisible] = useState(false)
   const hasMountedRef = useRef(false)
+  const showTimerRef = useRef<number | null>(null)
   const saveTimerRef = useRef<number | null>(null)
   const hideTimerRef = useRef<number | null>(null)
 
+  const clearTimer = useCallback((timerRef: React.MutableRefObject<number | null>) => {
+    if (timerRef.current) {
+      window.clearTimeout(timerRef.current)
+      timerRef.current = null
+    }
+  }, [])
+
+  const clearPendingTimers = useCallback(() => {
+    clearTimer(showTimerRef)
+    clearTimer(saveTimerRef)
+    clearTimer(hideTimerRef)
+  }, [clearTimer])
+
   useEffect(() => {
+    clearPendingTimers()
+
     if (!enabled) {
-      setStatus("idle")
-      setVisible(false)
       return
     }
 
@@ -37,15 +51,10 @@ export function useAutosave(enabled = true): UseAutosaveResult {
       return
     }
 
-    if (saveTimerRef.current) {
-      window.clearTimeout(saveTimerRef.current)
-    }
-    if (hideTimerRef.current) {
-      window.clearTimeout(hideTimerRef.current)
-    }
-
-    setStatus("saving")
-    setVisible(true)
+    showTimerRef.current = window.setTimeout(() => {
+      setStatus("saving")
+      setVisible(true)
+    }, 0)
 
     saveTimerRef.current = window.setTimeout(() => {
       const current = useScriptStore.getState()
@@ -71,23 +80,15 @@ export function useAutosave(enabled = true): UseAutosaveResult {
       }, 2000)
     }, 2000)
 
-    return () => {
-      if (saveTimerRef.current) {
-        window.clearTimeout(saveTimerRef.current)
-      }
-    }
-  }, [enabled, activeProjectId, scenario, title, author, draft, date])
+    return clearPendingTimers
+  }, [enabled, activeProjectId, scenario, title, author, draft, date, clearPendingTimers])
 
   useEffect(() => {
-    return () => {
-      if (saveTimerRef.current) {
-        window.clearTimeout(saveTimerRef.current)
-      }
-      if (hideTimerRef.current) {
-        window.clearTimeout(hideTimerRef.current)
-      }
-    }
-  }, [])
+    return clearPendingTimers
+  }, [clearPendingTimers])
 
-  return { status, visible }
+  return {
+    status: enabled ? status : "idle",
+    visible: enabled ? visible : false,
+  }
 }

@@ -1,7 +1,7 @@
 'use client'
 
 import { useMemo } from 'react'
-import { Handle, Position, type NodeProps } from '@xyflow/react'
+import { Handle, Position } from '@xyflow/react'
 import { BookOpen, MapPinned, Users } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useBibleStore } from '@/store/bible'
@@ -15,7 +15,7 @@ const handleStyle = {
   borderColor: '#D4A853',
 }
 
-export default function BibleNode(_: NodeProps) {
+export default function BibleNode() {
   const router = useRouter()
   const characters = useBibleStore((state) => state.characters)
   const locations = useBibleStore((state) => state.locations)

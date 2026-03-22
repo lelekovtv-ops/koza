@@ -1,5 +1,6 @@
 "use client"
 
+import Image from "next/image"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   Film,
@@ -181,9 +182,12 @@ function ShotThumb({
       title={shot.label}
     >
       {shot.thumbnailUrl ? (
-        <img
+        <Image
           src={shot.thumbnailUrl}
           alt={shot.label}
+          fill
+          unoptimized
+          sizes={`${Math.max(2, Math.round(width))}px`}
           className="h-full w-full object-cover"
           draggable={false}
         />
@@ -584,9 +588,12 @@ function PreviewPanel({
               className="h-full w-full object-cover"
             />
           ) : hasImage ? (
-            <img
-              src={previewShot.thumbnailUrl ?? undefined}
+            <Image
+              src={previewShot.thumbnailUrl!}
               alt={previewShot.label}
+              fill
+              unoptimized
+              sizes="(max-width: 768px) 100vw, 50vw"
               className="h-full w-full object-cover"
               draggable={false}
             />

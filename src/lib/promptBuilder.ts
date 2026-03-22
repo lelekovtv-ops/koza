@@ -48,10 +48,6 @@ function hasLocationVisualAnchors(location: LocationEntry | null): boolean {
   return Boolean(location && (location.generatedImageUrl || location.referenceImages.length > 0))
 }
 
-function formatCharacterNames(characters: CharacterEntry[]): string {
-  return characters.map((character) => character.name).join(", ")
-}
-
 export function characterMentionedInShot(character: CharacterEntry, shot: TimelineShot): boolean {
   const shotText = getShotText(shot)
   const name = character.name.toLowerCase()

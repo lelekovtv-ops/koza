@@ -1,4 +1,13 @@
 import { superviseShotContinuity } from "@/lib/cinematic/continuitySupervisor"
+import type { ActionSplitStep } from "@/lib/cinematic/actionSplitter"
+import {
+  buildActionSplitterSystemPrompt,
+  buildActionSplitterUserMessage,
+  composeActionStepsLocally,
+  parseActionSplitResponse,
+} from "@/lib/cinematic/actionSplitter"
+import type { BreakdownEngineConfig } from "@/lib/cinematic/config"
+import { shouldAllowLocalFallback } from "@/lib/cinematic/config"
 import {
   buildPromptComposerSystemPrompt,
   buildPromptComposerUserMessage,
@@ -18,6 +27,7 @@ import {
   composeShotSpecsLocally,
   parseShotPlannerResponse,
 } from "@/lib/cinematic/shotPlanner"
+import type { ContinuitySupervisorResult } from "@/lib/cinematic/continuitySupervisor"
 import { getErrorMessage, type CinematicStyleContext } from "@/lib/cinematic/stageUtils"
 import { DEFAULT_TEXT_MODEL_ID } from "@/lib/models"
 import { shotSpecToTimelineShot } from "@/lib/shotSpecAdapter"
@@ -41,6 +51,7 @@ export interface JenkinsShot {
 
 export interface BreakdownDiagnostics {
   usedFallback: boolean
+  actionSplitFallback: boolean
   shotPlannerFallback: boolean
   promptComposerFallback: boolean
 }
@@ -48,6 +59,15 @@ export interface BreakdownDiagnostics {
 export interface BreakdownResult {
   shots: JenkinsShot[]
   diagnostics: BreakdownDiagnostics
+}
+
+export interface BreakdownDetailedResult extends BreakdownResult {
+  sceneId: string
+  analysis: SceneAnalysis
+  actionSplit: ActionSplitStep[]
+  shotPlan: ShotSpec[]
+  continuity: ContinuitySupervisorResult
+  promptPackages: PromptComposerShot[]
 }
 
 export interface BibleContext {
@@ -61,12 +81,13 @@ interface BreakdownOptions {
   modelId?: string
   bible?: BibleContext
   style?: CinematicStyleContext
+  config?: BreakdownEngineConfig
 }
 
-type StageResultLogType = "breakdown_scene_analysis" | "breakdown_shot_plan" | "breakdown_prompt_compose"
+type StageResultLogType = "breakdown_scene_analysis" | "breakdown_action_split" | "breakdown_shot_plan" | "breakdown_prompt_compose"
 
 interface StageConfig<T> {
-  stageLabel: "Scene Analyst" | "Shot Planner" | "Prompt Composer"
+  stageLabel: "Scene Analyst" | "Action Splitter" | "Shot Planner" | "Prompt Composer"
   stageLogType: StageResultLogType
   systemPrompt: string
   userMessage: string
@@ -193,13 +214,47 @@ export async function breakdownScene(
   sceneText: string,
   optionsOrModelId?: BreakdownOptions | string,
 ): Promise<BreakdownResult> {
+  const result = await breakdownSceneDetailed(sceneText, optionsOrModelId)
+
+  return {
+    shots: result.shots,
+    diagnostics: result.diagnostics,
+  }
+}
+
+export async function breakdownSceneDetailed(
+  sceneText: string,
+  optionsOrModelId?: BreakdownOptions | string,
+): Promise<BreakdownDetailedResult> {
   const normalizedSceneText = sceneText.trim()
 
   if (!normalizedSceneText) {
     return {
+      sceneId: "scene",
       shots: [],
+      analysis: {
+        sceneSummary: "",
+        dramaticBeats: [],
+        emotionalTone: "",
+        geography: "",
+        characterPresence: [],
+        propCandidates: [],
+        visualMotifs: [],
+        continuityRisks: [],
+        recommendedShotCount: 0,
+      },
+      actionSplit: [],
+      shotPlan: [],
+      continuity: {
+        shots: [],
+        memories: [],
+        risks: [],
+        relations: [],
+      },
+      promptPackages: [],
       diagnostics: {
         usedFallback: false,
+        actionSplitFallback: false,
         shotPlannerFallback: false,
         promptComposerFallback: false,
       },
@@ -212,6 +267,8 @@ export async function breakdownScene(
   const modelId = opts.modelId ?? DEFAULT_TEXT_MODEL_ID
   const sceneId = opts.sceneId ?? `scene-${Date.now()}`
   const group = `breakdown-${sceneId}`
+  const allowLocalFallback = shouldAllowLocalFallback(opts.config)
+  let usedActionSplitFallback = false
   let usedShotPlannerFallback = false
   let usedPromptComposerFallback = false
 
@@ -241,14 +298,64 @@ export async function breakdownScene(
       }),
     })
 
+    let actionSplit: ActionSplitStep[]
+
+    try {
+      actionSplit = await executeStage<ActionSplitStep[]>({
+        stageLabel: "Action Splitter",
+        stageLogType: "breakdown_action_split",
+        systemPrompt: buildActionSplitterSystemPrompt({ sceneId, config: opts.config, bible: opts.bible, style: opts.style }),
+        userMessage: buildActionSplitterUserMessage({
+          sceneId,
+          analysis,
+          config: opts.config,
+          sceneText: normalizedSceneText,
+          bible: opts.bible,
+          style: opts.style,
+        }),
+        modelId,
+        group,
+        parse: (rawText) => parseActionSplitResponse(rawText, sceneId),
+        buildLogEntry: (parsed) => ({
+          title: `Action Splitter produced ${parsed.length} actions`,
+          details: JSON.stringify(parsed, null, 2),
+          meta: {
+            sceneId,
+            actionCount: parsed.length,
+          },
+        }),
+      })
+    } catch (error) {
+      if (!allowLocalFallback) {
+        throw error
+      }
+
+      usedActionSplitFallback = true
+      actionSplit = composeActionStepsLocally({
+        sceneId,
+        analysis,
+        config: opts.config,
+        sceneText: normalizedSceneText,
+        bible: opts.bible,
+        style: opts.style,
+      })
+
+      devlog.breakdown("breakdown_action_split", "Action Splitter fallback used", JSON.stringify(actionSplit, null, 2), {
+        sceneId,
+        reason: getErrorMessage(error),
+        actionCount: actionSplit.length,
+        fallback: "local-action-splitter",
+      }, group)
+    }
+
     let shotSpecs: ShotSpec[]
 
     try {
       shotSpecs = await executeStage<ShotSpec[]>({
         stageLabel: "Shot Planner",
         stageLogType: "breakdown_shot_plan",
-        systemPrompt: buildShotPlannerSystemPrompt({ sceneId, bible: opts.bible, style: opts.style }),
-        userMessage: buildShotPlannerUserMessage({ sceneId, analysis, sceneText: normalizedSceneText, bible: opts.bible, style: opts.style }),
+        systemPrompt: buildShotPlannerSystemPrompt({ sceneId, config: opts.config, bible: opts.bible, style: opts.style }),
+        userMessage: buildShotPlannerUserMessage({ sceneId, analysis, actions: actionSplit, config: opts.config, sceneText: normalizedSceneText, bible: opts.bible, style: opts.style }),
         modelId,
         group,
         parse: (rawText) => parseShotPlannerResponse(rawText, sceneId),
@@ -263,10 +370,16 @@ export async function breakdownScene(
         }),
       })
     } catch (error) {
+      if (!allowLocalFallback) {
+        throw error
+      }
+
       usedShotPlannerFallback = true
       shotSpecs = composeShotSpecsLocally({
         sceneId,
         analysis,
+        actions: actionSplit,
+        config: opts.config,
         sceneText: normalizedSceneText,
         bible: opts.bible,
         style: opts.style,
@@ -309,10 +422,11 @@ export async function breakdownScene(
       composedShots = await executeStage<PromptComposerShot[]>({
         stageLabel: "Prompt Composer",
         stageLogType: "breakdown_prompt_compose",
-        systemPrompt: buildPromptComposerSystemPrompt({ sceneId, bible: opts.bible, style: opts.style }),
+        systemPrompt: buildPromptComposerSystemPrompt({ sceneId, config: opts.config, bible: opts.bible, style: opts.style }),
         userMessage: buildPromptComposerUserMessage({
           sceneId,
           analysis,
+          config: opts.config,
           sceneText: normalizedSceneText,
           shots: continuity.shots,
           memories: continuity.memories,
@@ -322,7 +436,7 @@ export async function breakdownScene(
         }),
         modelId,
         group,
-        parse: (rawText) => parsePromptComposerResponse(rawText, continuity.shots, continuity.memories, continuity.relations, opts.style),
+        parse: (rawText) => parsePromptComposerResponse(rawText, continuity.shots, continuity.memories, continuity.relations, opts.config, opts.style),
         buildLogEntry: (parsed) => ({
           title: `Prompt Composer produced ${parsed.length} prompt packages`,
           details: JSON.stringify(parsed, null, 2),
@@ -334,10 +448,15 @@ export async function breakdownScene(
         }),
       })
     } catch (error) {
+      if (!allowLocalFallback) {
+        throw error
+      }
+
       usedPromptComposerFallback = true
       composedShots = composePromptPackagesLocally({
         sceneId,
         analysis,
+        config: opts.config,
         sceneText: normalizedSceneText,
         shots: continuity.shots,
         memories: continuity.memories,
@@ -364,9 +483,16 @@ export async function breakdownScene(
     }, group)
 
     return {
+      sceneId,
       shots,
+      analysis,
+      actionSplit,
+      shotPlan: continuity.shots,
+      continuity,
+      promptPackages: composedShots,
       diagnostics: {
-        usedFallback: usedShotPlannerFallback || usedPromptComposerFallback,
+        usedFallback: usedActionSplitFallback || usedShotPlannerFallback || usedPromptComposerFallback,
+        actionSplitFallback: usedActionSplitFallback,
         shotPlannerFallback: usedShotPlannerFallback,
         promptComposerFallback: usedPromptComposerFallback,
       },

@@ -22,6 +22,7 @@ const PIPELINE_TYPES: LogEntryType[] = [
   "breakdown_response",
   "breakdown_result",
   "breakdown_scene_analysis",
+  "breakdown_action_split",
   "breakdown_shot_plan",
   "breakdown_continuity_memory",
   "breakdown_continuity_risks",
@@ -106,15 +107,27 @@ function badgeByType(type: LogEntryType): string {
   return "bg-white/5 text-white/50"
 }
 
+function getEntryMeta(entry: LogEntry): Record<string, unknown> | null {
+  return entry.meta && typeof entry.meta === "object" ? (entry.meta as Record<string, unknown>) : null
+}
+
 function buildGroupSummary(entries: LogEntry[]): string {
   const ordered = [...entries].sort((left, right) => left.timestamp - right.timestamp)
   const first = ordered[0]
   const last = ordered[ordered.length - 1]
-  const shotCount = ordered.find((entry) => typeof entry.meta?.shotCount === "number")?.meta?.shotCount as number | undefined
-  const timing = ordered.find((entry) => typeof entry.meta?.timing === "number")?.meta?.timing as number | undefined
+  const shotCount = ordered
+    .map((entry) => getEntryMeta(entry)?.shotCount)
+    .find((value): value is number => typeof value === "number")
+  const timing = ordered
+    .map((entry) => getEntryMeta(entry)?.timing)
+    .find((value): value is number => typeof value === "number")
   const derivedTiming = timing ?? Math.max(0, last.timestamp - first.timestamp)
-  const sceneId = ordered.find((entry) => typeof entry.meta?.sceneId === "string")?.meta?.sceneId as string | undefined
-  const shotId = ordered.find((entry) => typeof entry.meta?.shotId === "string")?.meta?.shotId as string | undefined
+  const sceneId = ordered
+    .map((entry) => getEntryMeta(entry)?.sceneId)
+    .find((value): value is string => typeof value === "string")
+  const shotId = ordered
+    .map((entry) => getEntryMeta(entry)?.shotId)
+    .find((value): value is string => typeof value === "string")
   const prefix = first.type.startsWith("breakdown_")
     ? `Breakdown ${sceneId ?? first.title}`
     : first.type.startsWith("image_")
@@ -288,6 +301,11 @@ function LogCard({
   onToggle: () => void
   onDownload?: () => void
 }) {
+  const meta = getEntryMeta(entry)
+  const timing = meta?.timing
+  const timingLabel = typeof timing === "number" || typeof timing === "string" ? `${timing}ms` : null
+  const model = typeof meta?.model === "string" || typeof meta?.model === "number" ? String(meta.model) : null
+
   return (
     <div className="overflow-hidden rounded-lg border border-white/8">
       <div
@@ -300,11 +318,11 @@ function LogCard({
           {entry.type.replaceAll("_", " ")}
         </span>
         <span className="flex-1 truncate text-[12px] text-white/80">{entry.title}</span>
-        {entry.meta?.timing && (
-          <span className="text-[9px] text-white/30">{entry.meta.timing}ms</span>
+        {timingLabel && (
+          <span className="text-[9px] text-white/30">{timingLabel}</span>
         )}
-        {entry.meta?.model && (
-          <span className="text-[9px] text-[#D4A853]/60">{String(entry.meta.model)}</span>
+        {model && (
+          <span className="text-[9px] text-[#D4A853]/60">{model}</span>
         )}
         {onDownload && (
           <button
@@ -329,9 +347,9 @@ function LogCard({
           <pre className="max-h-100 overflow-auto whitespace-pre-wrap break-all font-mono text-[10px] text-white/40">
             {entry.details || "No details"}
           </pre>
-          {entry.meta && Object.keys(entry.meta).length > 0 && (
+          {meta && Object.keys(meta).length > 0 && (
             <div className="mt-2 flex flex-wrap gap-2">
-              {Object.entries(entry.meta).map(([key, value]) => (
+              {Object.entries(meta).map(([key, value]) => (
                 <span key={key} className="rounded bg-white/5 px-1.5 py-0.5 text-[9px] text-white/30">
                   {key}: {JSON.stringify(value)}
                 </span>

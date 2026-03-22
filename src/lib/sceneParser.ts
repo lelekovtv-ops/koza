@@ -28,7 +28,6 @@ export function parseScenes(blocks: Block[]): Scene[] {
       // Finalize previous scene
       if (current) scenes.push(current)
 
-      const idx = scenes.length + (current ? 0 : 0)
       const sceneIndex = scenes.length + 1
       current = {
         id: `scene-${block.id}`,

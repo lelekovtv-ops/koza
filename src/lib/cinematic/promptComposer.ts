@@ -1,4 +1,10 @@
 import type { SceneAnalysis } from "@/lib/cinematic/sceneAnalyst"
+import {
+  buildBreakdownConfigPrompt,
+  enrichText,
+  resolveBreakdownConfig,
+  type BreakdownEngineConfig,
+} from "@/lib/cinematic/config"
 import type { ShotMemory } from "@/lib/cinematic/shotMemory"
 import {
   buildBibleContextPrompt,
@@ -19,6 +25,7 @@ export interface PromptComposerInput {
   shots: ShotSpec[]
   memories: ShotMemory[]
   relations: ShotRelation[]
+  config?: BreakdownEngineConfig
   sceneText?: string
   bible?: CinematicBibleContext
   style?: CinematicStyleContext
@@ -408,6 +415,7 @@ function normalizePromptComposerShot(
   item: unknown,
   shot: ShotSpec,
   styleDirective: string,
+  config: BreakdownEngineConfig,
   memory: ShotMemory | undefined,
   nextMemory: ShotMemory | undefined,
   relation: ShotRelation | undefined,
@@ -418,26 +426,30 @@ function normalizePromptComposerShot(
   const imagePackage = normalizeImagePackage(composed.imagePackage, shot, styleDirective, continuityConstraint)
   const videoPackage = normalizeVideoPackage(composed.videoPackage, shot, styleDirective, continuityConstraint, relationTransition)
 
+  const notes = normalizePreferredText(
+    composed.notes,
+    compactText([
+      shot.narrativePurpose,
+      shot.blocking,
+      shot.continuity.carryOverFromPrevious,
+      shot.continuity.setupForNext,
+      continuityConstraint,
+    ])
+  )
+  const directorNote = normalizePreferredText(composed.directorNote, compactText([shot.narrativePurpose, shot.dramaticBeat, shot.transitionOut]))
+  const cameraNote = normalizePreferredText(composed.cameraNote, compactText([shot.shotType, shot.composition, shot.camera, shot.lighting]))
+
   return {
     shotId: normalizePreferredText(composed.shotId, shot.id),
     label: normalizePreferredText(composed.label, shot.narrativePurpose || shot.subject || `Shot ${shot.order + 1}`, { rejectGenericShotLabel: true }),
     type: "image",
     duration: clampInteger(composed.duration, 3000, 500, 15000),
-    notes: normalizePreferredText(
-      composed.notes,
-      compactText([
-        shot.narrativePurpose,
-        shot.blocking,
-        shot.continuity.carryOverFromPrevious,
-        shot.continuity.setupForNext,
-        continuityConstraint,
-      ])
-    ),
+    notes: enrichText(notes, `Keep the scene readable and emotionally clear for the next shot.`, config.textRichness),
     shotSize: normalizePreferredText(composed.shotSize, shot.shotSize),
     cameraMotion: normalizePreferredText(composed.cameraMotion, shot.camera),
     caption: normalizePreferredText(composed.caption, compactText([shot.subject, shot.environment])),
-    directorNote: normalizePreferredText(composed.directorNote, compactText([shot.narrativePurpose, shot.dramaticBeat, shot.transitionOut])),
-    cameraNote: normalizePreferredText(composed.cameraNote, compactText([shot.shotType, shot.composition, shot.camera, shot.lighting])),
+    directorNote: enrichText(directorNote, `Let the emotional turn stay obvious for the viewer.`, config.textRichness),
+    cameraNote: enrichText(cameraNote, `Keep the framing logic and movement motivation easy to follow.`, config.textRichness),
     imagePrompt: mergePromptWithContinuity(normalizePreferredText(composed.imagePrompt, imagePackage.finalPrompt), continuityConstraint),
     videoPrompt: mergePromptWithContinuity(
       normalizePreferredText(composed.videoPrompt, videoPackage.finalPrompt),
@@ -452,7 +464,7 @@ function normalizePromptComposerShot(
 export function buildPromptComposerSystemPrompt(input: Omit<PromptComposerInput, "analysis" | "shots" | "memories" | "relations">): string {
   const styleDirective = resolveStyleDirective(input.style)
 
-  return `You are Prompt Composer, the third stage of a cinematic planning pipeline.
+  return `You are Prompt Composer, the fourth stage that writes production-facing text after continuity and relations are known.
 You do not plan new shots. You do not change shot order. You do not merge or split shots.
 You only translate structured ShotSpec data into final production-facing text and prompt packages.
 
@@ -509,6 +521,7 @@ Rules:
 - Use the provided shot relations to express transition logic in the video prompt.
 - Preserve continuity details from the ShotSpec continuity block.
 - Visual style directive: ${styleDirective}
+${buildBreakdownConfigPrompt(input.config)}
 ${buildBibleContextPrompt(input.bible)}
 
 Respond with JSON only.`
@@ -530,6 +543,7 @@ export function buildPromptComposerUserMessage(input: PromptComposerInput): stri
 
 export function composePromptPackagesLocally(input: PromptComposerInput): PromptComposerShot[] {
   const styleDirective = resolveStyleDirective(input.style)
+  const config = resolveBreakdownConfig(input.config)
   const memoryByShotId = new Map(input.memories.map((memory) => [memory.shotId, memory]))
   const relationByToShotId = new Map(input.relations.map((relation) => [relation.toShotId, relation]))
 
@@ -537,6 +551,7 @@ export function composePromptPackagesLocally(input: PromptComposerInput): Prompt
     {},
     shot,
     styleDirective,
+    config,
     memoryByShotId.get(shot.id),
     index < input.shots.length - 1 ? memoryByShotId.get(input.shots[index + 1].id) : undefined,
     relationByToShotId.get(shot.id),
@@ -548,10 +563,12 @@ export function parsePromptComposerResponse(
   shots: ShotSpec[],
   memories: ShotMemory[],
   relations: ShotRelation[],
+  config?: BreakdownEngineConfig,
   style?: CinematicStyleContext,
 ): PromptComposerShot[] {
   const parsed = JSON.parse(extractJsonArray(rawText)) as unknown
   const styleDirective = resolveStyleDirective(style)
+  const resolvedConfig = resolveBreakdownConfig(config)
 
   if (!Array.isArray(parsed)) {
     throw new Error("Prompt Composer returned non-array response")
@@ -564,6 +581,7 @@ export function parsePromptComposerResponse(
     parsed[index],
     shot,
     styleDirective,
+    resolvedConfig,
     memoryByShotId.get(shot.id),
     index < shots.length - 1 ? memoryByShotId.get(shots[index + 1].id) : undefined,
     relationByToShotId.get(shot.id),

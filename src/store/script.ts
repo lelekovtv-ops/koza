@@ -156,7 +156,7 @@ function updateCurrentProjectScript(
 
 export const useScriptStore = create<ScriptState>()(
   persist(
-    (set, get) => ({
+    (set) => ({
       ...createDefaultScript(),
       activeProjectId: null,
       projectScripts: {},

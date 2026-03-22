@@ -2,7 +2,7 @@
 
 import Image from "next/image"
 import { useRouter } from "next/navigation"
-import { BookOpen, Camera, Clapperboard, Film, Grid, Image as ImageIcon, List, Loader2, MoreHorizontal, Plus, RefreshCw, Wand2 } from "lucide-react"
+import { BookOpen, Camera, ChevronDown, ChevronRight, Clapperboard, Copy, Film, Grid, Image as ImageIcon, List, Loader2, MoreHorizontal, Plus, RefreshCw, Trash2, Wand2 } from "lucide-react"
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createTimelineShot, useTimelineStore } from "@/store/timeline"
 import type { TimelineShot } from "@/store/timeline"
@@ -24,8 +24,31 @@ import { useProjectsStore } from "@/store/projects"
 const SHOT_SIZE_OPTIONS = ["WIDE", "MEDIUM", "CLOSE", "EXTREME CLOSE", "OVER SHOULDER", "POV", "INSERT", "AERIAL", "TWO SHOT"] as const
 const CAMERA_MOTION_OPTIONS = ["Static", "Pan Left", "Pan Right", "Pan Up", "Tilt Down", "Push In", "Pull Out", "Track Left", "Track Right", "Track Around", "Dolly In", "Crane Up", "Crane Down", "Drone In", "Handheld", "Steadicam"] as const
 
-type ViewMode = "scenes" | "board" | "list" | "inspector"
+type ViewMode = "scenes" | "board" | "list" | "inspector" | "director"
 type EditableShotField = "caption" | "directorNote" | "cameraNote" | "imagePrompt" | "videoPrompt"
+
+const DIRECTOR_ASSISTANT_SYSTEM = [
+  "You are a Director Assistant inside a cinematic storyboard system.",
+  "Your role is to help a human director develop shots, not replace them.",
+  "You receive a single shot Action plus optional scene context and optional bible context.",
+  "Your job is to enhance the action, clarify visual behavior, strengthen intention, and keep it cinematic and natural.",
+  "Return short director notes only.",
+  "Use 2 to 4 short lines maximum.",
+  "Each line should express intention, focus, emotional direction, or visual meaning.",
+  "Use clear language, visual thinking, and subtle emotion.",
+  "Do not rewrite the action.",
+  "Do not create multiple shots.",
+  "Do not invent new actions.",
+  "Do not describe camera.",
+  "Do not use technical terms.",
+  "Do not explain your reasoning.",
+  "Preserve the user's original intent.",
+  "If bible context is relevant, integrate it naturally without forcing it.",
+].join("\n")
+
+const DIRECTOR_ASSISTANT_MAX_LINES = 4
+const DIRECTOR_UPDATE_DEBOUNCE_MS = 250
+const MAX_DIRECTOR_SHOTS_PER_SCENE = 30
 
 const IMAGE_GEN_MODELS = [
   { id: "gpt-image", label: "GPT Image", price: "$0.04" },
@@ -122,6 +145,319 @@ function InlineText({ value, onChange, placeholder, multiline }: { value: string
       onKeyDown={(e) => { if (e.key === "Enter") { onChange((e.target as HTMLInputElement).value); setEditing(false) } }}
       className="w-full rounded border border-white/10 bg-white/5 px-1 py-0.5 text-[10px] text-[#B9AEA0] outline-none placeholder:text-white/20"
     />
+  )
+}
+
+function sanitizeDirectorAssistantText(value: string): string {
+  return value
+    .split(/\r?\n/)
+    .map((line) => line.trim().replace(/^[-*•]\s+/, "").replace(/^\d+\.\s+/, ""))
+    .filter(Boolean)
+    .slice(0, DIRECTOR_ASSISTANT_MAX_LINES)
+    .join("\n")
+}
+
+function mergeDirectorNotes(existing: string, addition: string): string {
+  const current = existing.trim()
+  const next = addition.trim()
+
+  if (!next) return current
+  if (!current) return next
+  if (current.includes(next)) return current
+
+  return `${current}\n${next}`
+}
+
+async function readStreamedText(response: Response): Promise<string> {
+  if (!response.body) {
+    return await response.text()
+  }
+
+  const reader = response.body.getReader()
+  const decoder = new TextDecoder()
+  let fullText = ""
+
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    fullText += decoder.decode(value, { stream: true })
+  }
+
+  fullText += decoder.decode()
+  return fullText
+}
+
+function buildSceneContextText(sceneId: string | null, scenes: ReturnType<typeof useScenesStore.getState>["scenes"], scriptBlocks: ReturnType<typeof useScriptStore.getState>["blocks"]): string {
+  if (!sceneId) return ""
+
+  const scene = scenes.find((entry) => entry.id === sceneId)
+  if (!scene) return ""
+
+  const excerpt = scene.blockIds
+    .slice(0, 6)
+    .map((blockId) => scriptBlocks.find((block) => block.id === blockId)?.text?.trim())
+    .filter(Boolean)
+    .join(" ")
+    .slice(0, 500)
+
+  return [
+    `Scene: ${scene.title}`,
+    excerpt ? `Excerpt: ${excerpt}` : "",
+  ].filter(Boolean).join("\n")
+}
+
+function DebouncedTextarea({
+  value,
+  onCommit,
+  placeholder,
+  rows = 3,
+  className,
+  autoFocusRequested = false,
+  dataFocusId,
+}: {
+  value: string
+  onCommit: (value: string) => void
+  placeholder?: string
+  rows?: number
+  className?: string
+  autoFocusRequested?: boolean
+  dataFocusId?: string
+}) {
+  const [draft, setDraft] = useState(value)
+  const [isEditing, setIsEditing] = useState(false)
+  const lastCommittedRef = useRef(value)
+  const timerRef = useRef<number | null>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
+  useEffect(() => {
+    return () => {
+      if (timerRef.current !== null) {
+        window.clearTimeout(timerRef.current)
+      }
+    }
+  }, [])
+
+  const scheduleCommit = useCallback((nextValue: string) => {
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current)
+    }
+
+    timerRef.current = window.setTimeout(() => {
+      lastCommittedRef.current = nextValue
+      onCommit(nextValue)
+      timerRef.current = null
+    }, DIRECTOR_UPDATE_DEBOUNCE_MS)
+  }, [onCommit])
+
+  const flush = useCallback(() => {
+    if (draft === lastCommittedRef.current) return
+    if (timerRef.current !== null) {
+      window.clearTimeout(timerRef.current)
+      timerRef.current = null
+    }
+    lastCommittedRef.current = draft
+    onCommit(draft)
+  }, [draft, onCommit])
+
+  useEffect(() => {
+    if (!autoFocusRequested) return
+
+    const node = textareaRef.current
+    if (!node) return
+
+    const rafId = window.requestAnimationFrame(() => {
+      node.focus()
+      const length = node.value.length
+      node.setSelectionRange(length, length)
+    })
+
+    return () => window.cancelAnimationFrame(rafId)
+  }, [autoFocusRequested])
+
+  return (
+    <textarea
+      ref={textareaRef}
+      rows={rows}
+      value={isEditing ? draft : value}
+      placeholder={placeholder}
+      data-focus-id={dataFocusId}
+      onFocus={() => {
+        if (isEditing) return
+        setDraft(value)
+        lastCommittedRef.current = value
+        setIsEditing(true)
+      }}
+      onChange={(event) => {
+        const nextValue = event.target.value
+        setDraft(nextValue)
+        scheduleCommit(nextValue)
+      }}
+      onBlur={() => {
+        flush()
+        setIsEditing(false)
+      }}
+      className={className}
+    />
+  )
+}
+
+function DirectorSection({
+  title,
+  open,
+  onToggle,
+  children,
+}: {
+  title: string
+  open: boolean
+  onToggle: () => void
+  children: React.ReactNode
+}) {
+  return (
+    <section className="rounded-xl border border-white/8 bg-white/3">
+      <button
+        type="button"
+        onClick={onToggle}
+        className="flex w-full items-center justify-between px-3 py-2 text-left text-[10px] uppercase tracking-[0.18em] text-[#9FA4AE] transition-colors hover:bg-white/3"
+      >
+        <span>{title}</span>
+        {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+      </button>
+      {open ? <div className="border-t border-white/8 p-3">{children}</div> : null}
+    </section>
+  )
+}
+
+function DirectorShotCard({
+  shot,
+  index,
+  selected,
+  canDuplicate,
+  isEnhancing,
+  autoFocusAction,
+  cardRef,
+  onSelect,
+  onUpdate,
+  onEnhance,
+  onDelete,
+  onDuplicate,
+}: {
+  shot: TimelineShot
+  index: number
+  selected: boolean
+  canDuplicate: boolean
+  isEnhancing: boolean
+  autoFocusAction: boolean
+  cardRef?: (node: HTMLElement | null) => void
+  onSelect: () => void
+  onUpdate: (patch: Partial<TimelineShot>) => void
+  onEnhance: () => void
+  onDelete: () => void
+  onDuplicate: () => void
+}) {
+  const [directorOpen, setDirectorOpen] = useState(false)
+  const [cameraOpen, setCameraOpen] = useState(false)
+  const previewSrc = shot.thumbnailUrl || shot.svg || null
+
+  return (
+    <article
+      ref={cardRef}
+      data-director-shot-id={shot.id}
+      className={`rounded-[18px] border bg-[#111317] p-3 text-[#E5E0DB] shadow-[0_20px_45px_rgba(0,0,0,0.22)] transition-colors ${selected ? "border-[#D4A853]/35 bg-[#13161B]" : "border-white/8 hover:border-white/12"}`}
+      onClick={onSelect}
+    >
+      <div className="flex gap-3">
+        <div className="relative h-24 w-36 shrink-0 overflow-hidden rounded-xl border border-white/8 bg-[#0E1014]">
+          {previewSrc ? (
+            <Image
+              src={previewSrc}
+              alt={shot.label || `Shot ${index + 1}`}
+              fill
+              unoptimized
+              className="object-cover"
+            />
+          ) : (
+            <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_58%),linear-gradient(180deg,#151922_0%,#0E1014_100%)] px-3 text-center">
+              <div>
+                <p className="text-[9px] uppercase tracking-[0.16em] text-[#8D919B]">Shot {String(index + 1).padStart(2, "0")}</p>
+                <p className="mt-1 text-[10px] text-[#C3B8AA]">No thumbnail</p>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-[10px] uppercase tracking-[0.18em] text-[#8D919B]">Shot {String(index + 1).padStart(2, "0")}</p>
+              <p className="mt-1 text-[12px] text-[#C4BBB0]">Action</p>
+            </div>
+
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onClick={(event) => { event.stopPropagation(); onEnhance() }}
+                disabled={isEnhancing || !shot.caption.trim()}
+                className="flex items-center gap-1 rounded-md border border-white/12 bg-white/5 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-[#E5E0DB] transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                {isEnhancing ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />}
+                Enhance
+              </button>
+              <button
+                type="button"
+                onClick={(event) => { event.stopPropagation(); onDuplicate() }}
+                disabled={!canDuplicate}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-white/12 bg-white/5 text-white/60 transition-colors hover:bg-white/8 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+                aria-label="Duplicate shot"
+              >
+                <Copy size={13} />
+              </button>
+              <button
+                type="button"
+                onClick={(event) => { event.stopPropagation(); onDelete() }}
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-red-500/20 bg-red-500/5 text-red-300/80 transition-colors hover:bg-red-500/10 hover:text-red-200"
+                aria-label="Delete shot"
+              >
+                <Trash2 size={13} />
+              </button>
+            </div>
+          </div>
+
+          <div className="mt-2">
+            <DebouncedTextarea
+              value={shot.caption}
+              onCommit={(value) => onUpdate({ caption: value })}
+              placeholder="Describe the shot action..."
+              rows={3}
+              autoFocusRequested={autoFocusAction}
+              dataFocusId={`director-action-${shot.id}`}
+              className="min-h-21 w-full resize-y rounded-xl border border-white/10 bg-white/4 px-3 py-2 text-[13px] leading-6 text-[#ECE5D8] outline-none placeholder:text-white/20"
+            />
+          </div>
+        </div>
+      </div>
+
+      <div className="mt-3 space-y-2">
+        <DirectorSection title="Director" open={directorOpen} onToggle={() => setDirectorOpen((value) => !value)}>
+          <DebouncedTextarea
+            value={shot.directorNote}
+            onCommit={(value) => onUpdate({ directorNote: value })}
+            placeholder="Director notes..."
+            rows={4}
+            className="min-h-24 w-full resize-y rounded-xl border border-white/10 bg-white/4 px-3 py-2 text-[13px] leading-6 text-[#D8D0C3] outline-none placeholder:text-white/20"
+          />
+        </DirectorSection>
+
+        <DirectorSection title="Camera (DP)" open={cameraOpen} onToggle={() => setCameraOpen((value) => !value)}>
+          <DebouncedTextarea
+            value={shot.cameraNote}
+            onCommit={(value) => onUpdate({ cameraNote: value })}
+            placeholder="DP notes..."
+            rows={4}
+            className="min-h-24 w-full resize-y rounded-xl border border-white/10 bg-white/4 px-3 py-2 text-[13px] leading-6 text-[#D8D0C3] outline-none placeholder:text-white/20"
+          />
+        </DirectorSection>
+      </div>
+    </article>
   )
 }
 
@@ -267,9 +603,12 @@ export function StoryboardPanel({
   const resolvedPanelWidth = isExpanded ? "100vw" : `${panelWidth}px`
   const shots = useTimelineStore((state) => state.shots)
   const addShot = useTimelineStore((state) => state.addShot)
+  const removeShot = useTimelineStore((state) => state.removeShot)
   const updateShot = useTimelineStore((state) => state.updateShot)
   const reorderShot = useTimelineStore((state) => state.reorderShot)
   const reorderShots = useTimelineStore((state) => state.reorderShots)
+  const selectedShotId = useTimelineStore((state) => state.selectedShotId)
+  const selectShot = useTimelineStore((state) => state.selectShot)
   const [recentInsertedFrameId, setRecentInsertedFrameId] = useState<string | null>(null)
   const [draggedFrameId, setDraggedFrameId] = useState<string | null>(null)
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null)
@@ -278,6 +617,8 @@ export function StoryboardPanel({
   const [editingShotField, setEditingShotField] = useState<{ shotId: string; field: EditableShotField } | null>(null)
   const [editingShotDraft, setEditingShotDraft] = useState("")
   const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set())
+  const [enhancingIds, setEnhancingIds] = useState<Set<string>>(new Set())
+  const [pendingActionFocusShotId, setPendingActionFocusShotId] = useState<string | null>(null)
   const [breakdownWarning, setBreakdownWarning] = useState<string | null>(null)
   const scenes = useScenesStore((s) => s.scenes)
   const selectedSceneId = useScenesStore((s) => s.selectedSceneId)
@@ -296,9 +637,18 @@ export function StoryboardPanel({
   const scenario = useScriptStore((state) => state.scenario)
   const [jenkinsLoading, setJenkinsLoading] = useState(false)
   const [breakdownLoadingSceneId, setBreakdownLoadingSceneId] = useState<string | null>(null)
+  const selectedScene = useMemo(() => scenes.find((scene) => scene.id === selectedSceneId) ?? null, [scenes, selectedSceneId])
   const inspectorShots = useMemo(
     () => (selectedSceneId ? shots.filter((shot) => shot.sceneId === selectedSceneId) : shots),
     [shots, selectedSceneId]
+  )
+  const directorShots = useMemo(
+    () => selectedSceneId ? shots.filter((shot) => shot.sceneId === selectedSceneId).slice(0, MAX_DIRECTOR_SHOTS_PER_SCENE) : [],
+    [shots, selectedSceneId]
+  )
+  const selectedSceneContext = useMemo(
+    () => buildSceneContextText(selectedSceneId, scenes, scriptBlocks),
+    [selectedSceneId, scenes, scriptBlocks]
   )
 
   const startEditingShotField = useCallback((shot: TimelineShot, field: EditableShotField, value: string) => {
@@ -508,6 +858,93 @@ export function StoryboardPanel({
     }
   }, [shots, generatingIds, updateShot])
 
+  const handleDirectorShotUpdate = useCallback((shotId: string, patch: Partial<TimelineShot>) => {
+    updateShot(shotId, patch)
+  }, [updateShot])
+
+  const handleAddDirectorShot = useCallback(() => {
+    if (!selectedSceneId || directorShots.length >= MAX_DIRECTOR_SHOTS_PER_SCENE) return
+
+    const shotId = addShot({
+      sceneId: selectedSceneId,
+      caption: "",
+      directorNote: "",
+      cameraNote: "",
+      type: "image",
+    })
+
+    setPendingActionFocusShotId(shotId)
+  }, [addShot, directorShots.length, selectedSceneId])
+
+  const handleDuplicateDirectorShot = useCallback((shot: TimelineShot) => {
+    if (!selectedSceneId || directorShots.length >= MAX_DIRECTOR_SHOTS_PER_SCENE) return
+    const shotId = addShot({ ...shot, id: undefined as unknown as string })
+    setPendingActionFocusShotId(shotId)
+  }, [addShot, directorShots.length, selectedSceneId])
+
+  const bindDirectorShotCardRef = useCallback((shotId: string) => (node: HTMLElement | null) => {
+    if (!node || pendingActionFocusShotId !== shotId) return
+
+    node.scrollIntoView({ behavior: "smooth", block: "nearest" })
+
+    const actionField = node.querySelector<HTMLTextAreaElement>(`[data-focus-id="director-action-${shotId}"]`)
+    if (actionField) {
+      actionField.focus()
+      const length = actionField.value.length
+      actionField.setSelectionRange(length, length)
+    }
+
+    setPendingActionFocusShotId(null)
+  }, [pendingActionFocusShotId])
+
+  const handleEnhanceDirectorShot = useCallback(async (shot: TimelineShot) => {
+    if (!shot.caption.trim() || enhancingIds.has(shot.id)) return
+
+    setEnhancingIds((prev) => new Set(prev).add(shot.id))
+
+    try {
+      const relevantCharacters = characters.filter((character) => !selectedSceneId || character.sceneIds.includes(selectedSceneId))
+      const relevantLocations = locations.filter((location) => !selectedSceneId || location.sceneIds.includes(selectedSceneId))
+
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          system: DIRECTOR_ASSISTANT_SYSTEM,
+          temperature: 0.6,
+          messages: [{
+            role: "user",
+            content: [
+              `Action:\n${shot.caption.trim()}`,
+              selectedSceneContext ? `Scene Context:\n${selectedSceneContext}` : "",
+              relevantCharacters.length > 0 ? `Bible Characters:\n${relevantCharacters.map((character) => `- ${character.name}: ${character.description || ""}${character.appearancePrompt ? ` [Visual: ${character.appearancePrompt}]` : ""}`).join("\n")}` : "",
+              relevantLocations.length > 0 ? `Bible Locations:\n${relevantLocations.map((location) => `- ${location.name}: ${location.description || ""}${location.appearancePrompt ? ` [Visual: ${location.appearancePrompt}]` : ""}`).join("\n")}` : "",
+            ].filter(Boolean).join("\n\n"),
+          }],
+        }),
+      })
+
+      if (!response.ok) {
+        throw new Error(await response.text())
+      }
+
+      const enhancement = sanitizeDirectorAssistantText(await readStreamedText(response))
+      if (!enhancement) return
+
+      updateShot(shot.id, {
+        directorNote: mergeDirectorNotes(shot.directorNote, enhancement),
+      })
+    } catch (error) {
+      console.error("Director assist error:", error)
+    } finally {
+      setEnhancingIds((prev) => {
+        const next = new Set(prev)
+        next.delete(shot.id)
+        return next
+      })
+    }
+  }, [characters, enhancingIds, locations, selectedSceneContext, selectedSceneId, updateShot])
+
   const nextFrameLabel = `shot ${frames.length + 1}`
 
   useEffect(() => {
@@ -547,7 +984,7 @@ export function StoryboardPanel({
     ? Math.round(248 + ((cardScale - 72) / 32) * 74)
     : Math.round(224 + ((cardScale - 72) / 32) * 30)
   const cardGap = isExpanded ? 14 : 12
-  const sceneTitle = "SCENE 03 - Lonely man in mountains"
+  const sceneTitle = selectedScene?.title || "Storyboard Workspace"
   const panelChrome = backgroundColor === "#0B0C10"
     ? "linear-gradient(180deg, rgba(16,18,24,0.98) 0%, rgba(12,13,18,0.98) 100%)"
     : `linear-gradient(180deg, ${backgroundColor} 0%, #0E1016 100%)`
@@ -687,6 +1124,14 @@ export function StoryboardPanel({
             >
               <BookOpen size={10} />
               Inspector
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("director")}
+              className={`flex items-center gap-1 rounded-md px-2 py-1 text-[10px] uppercase tracking-[0.14em] transition-colors ${viewMode === "director" ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
+            >
+              <Camera size={10} />
+              Director
             </button>
           </div>
         </div>
@@ -947,6 +1392,63 @@ export function StoryboardPanel({
                 </div>
               </div>
             </button>
+          </div>
+          ) : viewMode === "director" ? (
+          <div className="flex flex-col gap-4">
+            {!selectedSceneId ? (
+              <div className="flex min-h-80 flex-col items-center justify-center rounded-[18px] border border-white/8 bg-white/3 px-6 text-center">
+                <Camera size={28} className="mb-3 text-white/15" />
+                <p className="text-[13px] text-[#D7CDC1]">Select a scene to open Director Workspace.</p>
+                <p className="mt-1 text-[11px] text-white/30">Scene navigation stays driven by the existing script and scene stores.</p>
+              </div>
+            ) : (
+              <>
+                <div className="flex items-center justify-between gap-3 rounded-[18px] border border-white/8 bg-white/3 px-4 py-3">
+                  <div>
+                    <p className="text-[10px] uppercase tracking-[0.18em] text-[#8D919B]">Director Workspace</p>
+                    <p className="mt-1 text-[14px] text-[#E7E3DC]">{selectedScene?.title || "Selected scene"}</p>
+                    <p className="mt-1 text-[11px] text-white/30">{directorShots.length} / {MAX_DIRECTOR_SHOTS_PER_SCENE} shots in this scene</p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={handleAddDirectorShot}
+                    disabled={directorShots.length >= MAX_DIRECTOR_SHOTS_PER_SCENE}
+                    className="flex items-center gap-2 rounded-md border border-white/12 bg-white/5 px-3 py-2 text-[10px] uppercase tracking-[0.16em] text-[#E5E0DB] transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-40"
+                  >
+                    <Plus size={12} />
+                    Add Shot
+                  </button>
+                </div>
+
+                {directorShots.length === 0 ? (
+                  <div className="flex min-h-60 flex-col items-center justify-center rounded-[18px] border border-dashed border-white/10 bg-white/2 px-6 text-center">
+                    <Clapperboard size={28} className="mb-3 text-white/15" />
+                    <p className="text-[13px] text-[#D7CDC1]">No shots in this scene yet.</p>
+                    <p className="mt-1 text-[11px] text-white/30">Add a shot and edit Action, Director, and Camera notes inline.</p>
+                  </div>
+                ) : (
+                  <div className="flex flex-col gap-3">
+                    {directorShots.map((shot, index) => (
+                      <DirectorShotCard
+                        key={shot.id}
+                        shot={shot}
+                        index={index}
+                        selected={selectedShotId === shot.id}
+                        canDuplicate={directorShots.length < MAX_DIRECTOR_SHOTS_PER_SCENE}
+                        isEnhancing={enhancingIds.has(shot.id)}
+                        autoFocusAction={pendingActionFocusShotId === shot.id}
+                        cardRef={bindDirectorShotCardRef(shot.id)}
+                        onSelect={() => selectShot(shot.id)}
+                        onUpdate={(patch) => handleDirectorShotUpdate(shot.id, patch)}
+                        onEnhance={() => void handleEnhanceDirectorShot(shot)}
+                        onDelete={() => removeShot(shot.id)}
+                        onDuplicate={() => handleDuplicateDirectorShot(shot)}
+                      />
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
           </div>
           ) : viewMode === "inspector" ? (
           <div className="flex flex-col gap-2">

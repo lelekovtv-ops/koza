@@ -1,6 +1,6 @@
 'use client'
 
-import { Handle, Position, type NodeProps } from '@xyflow/react'
+import { Handle, Position } from '@xyflow/react'
 import { Settings } from 'lucide-react'
 import { useBoardStore } from '@/store/board'
 
@@ -20,7 +20,7 @@ const IMAGE_MODELS = [
   { id: 'nano-banana-pro', label: 'NB Pro' },
 ] as const
 
-export default function SettingsNode(_: NodeProps) {
+export default function SettingsNode() {
   const selectedChatModel = useBoardStore((state) => state.selectedChatModel)
   const selectedImageGenModel = useBoardStore((state) => state.selectedImageGenModel)
   const setSelectedImageGenModel = useBoardStore((state) => state.setSelectedImageGenModel)

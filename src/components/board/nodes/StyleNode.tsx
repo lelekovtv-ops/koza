@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Handle, Position, type NodeProps } from '@xyflow/react'
+import { Handle, Position } from '@xyflow/react'
 import { Palette } from 'lucide-react'
 import { STYLE_PRESETS, getProjectStylePresetId } from '@/lib/projectStyle'
 import { useBoardStore } from '@/store/board'
@@ -15,7 +15,7 @@ const handleStyle = {
   borderColor: '#7C4A6F',
 }
 
-export default function StyleNode(_: NodeProps) {
+export default function StyleNode() {
   const projectStyle = useBoardStore((state) => state.projectStyle)
   const setProjectStyle = useBoardStore((state) => state.setProjectStyle)
   const currentPresetId = getProjectStylePresetId(projectStyle)

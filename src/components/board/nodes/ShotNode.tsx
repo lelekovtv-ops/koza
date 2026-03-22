@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { Handle, Position, type NodeProps } from '@xyflow/react'
 import { ChevronDown, ChevronRight, Clock3, ImageIcon } from 'lucide-react'
 import { type TimelineShot, useTimelineStore } from '@/store/timeline'
@@ -29,23 +29,19 @@ export default function ShotNode({ data, selected }: NodeProps) {
   const currentShot = useTimelineStore((state) => state.shots.find((entry) => entry.id === shot.id) ?? shot)
   const selectShot = useTimelineStore((state) => state.selectShot)
   const updateShot = useTimelineStore((state) => state.updateShot)
-  const [editingDuration, setEditingDuration] = useState(false)
-  const [durationInput, setDurationInput] = useState((currentShot.duration / 1000).toFixed(1))
-
-  useEffect(() => {
-    setDurationInput((currentShot.duration / 1000).toFixed(1))
-  }, [currentShot.duration])
+  const [durationDraft, setDurationDraft] = useState<string | null>(null)
+  const durationInput = durationDraft ?? (currentShot.duration / 1000).toFixed(1)
+  const editingDuration = durationDraft !== null
 
   const commitDuration = () => {
     const parsed = Number(durationInput)
     if (!Number.isFinite(parsed) || parsed < 0) {
-      setDurationInput((currentShot.duration / 1000).toFixed(1))
-      setEditingDuration(false)
+      setDurationDraft(null)
       return
     }
 
     updateShot(currentShot.id, { duration: Math.round(parsed * 1000) })
-    setEditingDuration(false)
+    setDurationDraft(null)
   }
 
   return (
@@ -87,15 +83,14 @@ export default function ShotNode({ data, selected }: NodeProps) {
             <input
               autoFocus
               value={durationInput}
-              onChange={(event) => setDurationInput(event.target.value)}
+              onChange={(event) => setDurationDraft(event.target.value)}
               onBlur={commitDuration}
               onKeyDown={(event) => {
                 if (event.key === 'Enter') {
                   commitDuration()
                 }
                 if (event.key === 'Escape') {
-                  setDurationInput((currentShot.duration / 1000).toFixed(1))
-                  setEditingDuration(false)
+                  setDurationDraft(null)
                 }
               }}
               onClick={(event) => event.stopPropagation()}
@@ -106,7 +101,7 @@ export default function ShotNode({ data, selected }: NodeProps) {
               type="button"
               onClick={(event) => {
                 event.stopPropagation()
-                setEditingDuration(true)
+                setDurationDraft((currentShot.duration / 1000).toFixed(1))
               }}
               className="nodrag nopan inline-flex items-center gap-1 rounded-full border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] text-white/60"
             >
