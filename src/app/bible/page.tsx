@@ -6,10 +6,17 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { BookOpen, Loader2, MapPin, Plus, Upload, User, Wand2 } from "lucide-react"
 import { type BibleReferenceImage, type CharacterEntry, type LocationEntry } from "@/lib/bibleParser"
 import { deleteBlob, saveBlob } from "@/lib/fileStorage"
+import {
+  convertReferenceImagesToDataUrls,
+  getCharacterGenerationReferenceImages,
+  getLocationGenerationReferenceImages,
+} from "@/lib/imageGenerationReferences"
+import { ProjectStylePicker } from "@/components/ui/ProjectStylePicker"
+import { DEFAULT_PROJECT_STYLE } from "@/lib/projectStyle"
 import { parseScenes } from "@/lib/sceneParser"
 import { useBoardStore } from "@/store/board"
 import { useScriptStore } from "@/store/script"
-import { useBibleStore } from "@/store/bible"
+import { GENERATED_CANONICAL_IMAGE_ID, useBibleStore } from "@/store/bible"
 
 type BibleTab = "characters" | "locations"
 
@@ -24,9 +31,9 @@ function formatSceneCount(count: number): string {
   return `${count} ${count === 1 ? "scene" : "scenes"}`
 }
 
-async function generateBibleImage(prompt: string, model: string): Promise<Blob> {
+async function generateBibleImage(prompt: string, model: string, referenceImages: string[] = []): Promise<Blob> {
   const apiUrl = model === "gpt-image" ? "/api/gpt-image" : "/api/nano-banana"
-  const body = model === "gpt-image" ? { prompt } : { prompt, model }
+  const body = model === "gpt-image" ? { prompt, referenceImages } : { prompt, model, referenceImages }
 
   const response = await fetch(apiUrl, {
     method: "POST",
@@ -46,20 +53,23 @@ function formatLineCount(count: number): string {
   return `${count} ${count === 1 ? "line" : "lines"}`
 }
 
-function buildCharacterPrompt(character: CharacterEntry): string {
+function buildCharacterPrompt(character: CharacterEntry, style: string): string {
+  const resolvedStyle = style.trim() || DEFAULT_PROJECT_STYLE
   const referenceHint = character.referenceImages.length > 0 ? " Matching the reference style." : ""
+  const identityInstruction = "Preserve the exact same facial identity, hair shape, costume silhouette, and proportions from the provided reference images."
 
   if (character.appearancePrompt.trim()) {
-    return `Cinematic portrait photograph. ${character.appearancePrompt.trim()}.${referenceHint} Dark moody lighting, film noir style. Head and shoulders, looking into camera. No text.`
+    return `Cinematic portrait photograph. ${character.appearancePrompt.trim()}.${referenceHint} ${resolvedStyle}. ${identityInstruction} Portrait framing, head and shoulders, looking into camera. No text.`
   }
 
-  return `Cinematic portrait of a character named ${character.name}.${referenceHint} Dark moody lighting, film noir style. Head and shoulders. No text.`
+  return `Cinematic portrait of a character named ${character.name}.${referenceHint} ${resolvedStyle}. ${identityInstruction} Portrait framing, head and shoulders. No text.`
 }
 
-function buildLocationPrompt(location: LocationEntry): string {
+function buildLocationPrompt(location: LocationEntry, style: string): string {
+  const resolvedStyle = style.trim() || DEFAULT_PROJECT_STYLE
   const exteriorLabel = location.intExt === "INT" ? "Interior" : "Exterior"
   const referenceHint = location.referenceImages.length > 0 ? " Matching the reference style." : ""
-  return `Cinematic wide shot of location: ${location.appearancePrompt || location.name}. ${exteriorLabel}.${referenceHint} Atmospheric, film noir style. No text. No people.`
+  return `Cinematic wide shot of location: ${location.appearancePrompt || location.name}. ${exteriorLabel}.${referenceHint} ${resolvedStyle}. Preserve the architecture, layout, and key environmental features from the provided reference images. Wide environmental frame. No text. No people.`
 }
 
 async function replaceBlobImage(currentUrl: string | null, currentBlobKey: string | null, nextBlobKey: string, blob: Blob): Promise<string> {
@@ -196,11 +206,15 @@ function EditableTextArea({
 
 function ReferenceStrip({
   references,
+  canonicalImageId,
   onAdd,
+  onSetCanonical,
   onRemove,
 }: {
   references: BibleReferenceImage[]
+  canonicalImageId: string | null
   onAdd: (files: File[]) => void
+  onSetCanonical: (reference: BibleReferenceImage) => void
   onRemove: (reference: BibleReferenceImage) => void
 }) {
   const inputRef = useRef<HTMLInputElement>(null)
@@ -211,12 +225,20 @@ function ReferenceStrip({
       <p className="mb-2 text-[9px] uppercase tracking-[0.18em] text-white/30">References</p>
       <div className="flex flex-wrap gap-2">
         {references.map((reference) => (
-          <div key={reference.id} className="group relative h-12 w-12 overflow-hidden rounded-md border border-white/10">
+          <div key={reference.id} className={`group relative h-12 w-12 overflow-hidden rounded-md border ${canonicalImageId === reference.id ? "border-[#D4A853]" : "border-white/10"}`}>
             <Image src={reference.url} alt="Reference" fill unoptimized className="object-cover" />
             <button
               type="button"
+              onClick={() => onSetCanonical(reference)}
+              className={`absolute left-1 top-1 rounded-full px-1.5 py-0.5 text-[8px] uppercase tracking-[0.16em] ${canonicalImageId === reference.id ? "bg-[#D4A853] text-black" : "bg-black/60 text-white/80 opacity-0 transition-opacity duration-200 group-hover:opacity-100"}`}
+              aria-label="Set canonical reference"
+            >
+              {canonicalImageId === reference.id ? "Anchor" : "Set"}
+            </button>
+            <button
+              type="button"
               onClick={() => onRemove(reference)}
-              className="absolute inset-0 flex items-center justify-center bg-black/60 text-xs text-white opacity-0 transition-opacity duration-200 group-hover:opacity-100"
+              className="absolute inset-0 flex items-center justify-center bg-black/60 pt-4 text-xs text-white opacity-0 transition-opacity duration-200 group-hover:opacity-100"
               aria-label="Remove reference"
             >
               ×
@@ -258,16 +280,20 @@ function CharacterCard({
   generating,
   onUpdate,
   onGenerate,
+  onSetCanonicalPrimary,
   onUploadPrimary,
   onAddReferences,
+  onSetCanonicalReference,
   onRemoveReference,
 }: {
   entry: CharacterEntry
   generating: boolean
   onUpdate: (patch: Partial<CharacterEntry>) => void
   onGenerate: () => void
+  onSetCanonicalPrimary: () => void
   onUploadPrimary: (file: File) => void
   onAddReferences: (files: File[]) => void
+  onSetCanonicalReference: (reference: BibleReferenceImage) => void
   onRemoveReference: (reference: BibleReferenceImage) => void
 }) {
   const primaryInputRef = useRef<HTMLInputElement>(null)
@@ -297,6 +323,17 @@ function CharacterCard({
         }}
       />
 
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <span className="text-[9px] uppercase tracking-[0.18em] text-white/35">Primary portrait</span>
+        <button
+          type="button"
+          onClick={onSetCanonicalPrimary}
+          className={`rounded-full px-2 py-1 text-[9px] uppercase tracking-[0.16em] ${entry.canonicalImageId === GENERATED_CANONICAL_IMAGE_ID ? "bg-[#D4A853] text-black" : "border border-white/10 text-white/60 hover:bg-white/6"}`}
+        >
+          {entry.canonicalImageId === GENERATED_CANONICAL_IMAGE_ID ? "Canonical" : "Use as anchor"}
+        </button>
+      </div>
+
       <div className="mt-3 space-y-3">
         <div>
           <h2 className="text-[14px] font-bold uppercase tracking-[0.14em] text-white">{entry.name}</h2>
@@ -322,7 +359,9 @@ function CharacterCard({
 
         <ReferenceStrip
           references={entry.referenceImages}
+          canonicalImageId={entry.canonicalImageId}
           onAdd={onAddReferences}
+          onSetCanonical={onSetCanonicalReference}
           onRemove={onRemoveReference}
         />
       </div>
@@ -335,16 +374,20 @@ function LocationCard({
   generating,
   onUpdate,
   onGenerate,
+  onSetCanonicalPrimary,
   onUploadPrimary,
   onAddReferences,
+  onSetCanonicalReference,
   onRemoveReference,
 }: {
   entry: LocationEntry
   generating: boolean
   onUpdate: (patch: Partial<LocationEntry>) => void
   onGenerate: () => void
+  onSetCanonicalPrimary: () => void
   onUploadPrimary: (file: File) => void
   onAddReferences: (files: File[]) => void
+  onSetCanonicalReference: (reference: BibleReferenceImage) => void
   onRemoveReference: (reference: BibleReferenceImage) => void
 }) {
   const primaryInputRef = useRef<HTMLInputElement>(null)
@@ -375,6 +418,17 @@ function LocationCard({
         }}
       />
 
+      <div className="mt-2 flex items-center justify-between gap-2">
+        <span className="text-[9px] uppercase tracking-[0.18em] text-white/35">Primary location</span>
+        <button
+          type="button"
+          onClick={onSetCanonicalPrimary}
+          className={`rounded-full px-2 py-1 text-[9px] uppercase tracking-[0.16em] ${entry.canonicalImageId === GENERATED_CANONICAL_IMAGE_ID ? "bg-[#D4A853] text-black" : "border border-white/10 text-white/60 hover:bg-white/6"}`}
+        >
+          {entry.canonicalImageId === GENERATED_CANONICAL_IMAGE_ID ? "Canonical" : "Use as anchor"}
+        </button>
+      </div>
+
       <div className="mt-3 space-y-3">
         <div>
           <h2 className="text-[14px] font-bold uppercase tracking-[0.14em] text-white">{entry.name}</h2>
@@ -400,7 +454,9 @@ function LocationCard({
 
         <ReferenceStrip
           references={entry.referenceImages}
+          canonicalImageId={entry.canonicalImageId}
           onAdd={onAddReferences}
+          onSetCanonical={onSetCanonicalReference}
           onRemove={onRemoveReference}
         />
       </div>
@@ -419,6 +475,8 @@ export default function BiblePage() {
   const updateLocation = useBibleStore((state) => state.updateLocation)
   const selectedImageGenModel = useBoardStore((state) => state.selectedImageGenModel)
   const setSelectedImageGenModel = useBoardStore((state) => state.setSelectedImageGenModel)
+  const projectStyle = useBoardStore((state) => state.projectStyle)
+  const setProjectStyle = useBoardStore((state) => state.setProjectStyle)
 
   const scenes = useMemo(() => parseScenes(blocks), [blocks])
 
@@ -429,12 +487,14 @@ export default function BiblePage() {
   const handleCharacterGenerate = async (character: CharacterEntry) => {
     setGeneratingId(character.id)
     try {
-      const prompt = buildCharacterPrompt(character)
-      const resBlob = await generateBibleImage(prompt, selectedImageGenModel || "nano-banana-2")
+      const prompt = buildCharacterPrompt(character, projectStyle)
+      const referenceImages = await convertReferenceImagesToDataUrls(getCharacterGenerationReferenceImages(character))
+      const resBlob = await generateBibleImage(prompt, selectedImageGenModel || "nano-banana-2", referenceImages)
       const blobKey = `bible-char-${character.id}-${Date.now()}`
       const url = await replaceBlobImage(character.generatedPortraitUrl, character.portraitBlobKey, blobKey, resBlob)
 
       updateCharacter(character.id, {
+        canonicalImageId: character.canonicalImageId ?? GENERATED_CANONICAL_IMAGE_ID,
         generatedPortraitUrl: url,
         portraitBlobKey: blobKey,
       })
@@ -448,12 +508,14 @@ export default function BiblePage() {
   const handleLocationGenerate = async (location: LocationEntry) => {
     setGeneratingId(location.id)
     try {
-      const prompt = buildLocationPrompt(location)
-      const blob = await generateBibleImage(prompt, selectedImageGenModel || "nano-banana-2")
+      const prompt = buildLocationPrompt(location, projectStyle)
+      const referenceImages = await convertReferenceImagesToDataUrls(getLocationGenerationReferenceImages(location))
+      const blob = await generateBibleImage(prompt, selectedImageGenModel || "nano-banana-2", referenceImages)
       const blobKey = `bible-location-${location.id}-${Date.now()}`
       const url = await replaceBlobImage(location.generatedImageUrl, location.imageBlobKey, blobKey, blob)
 
       updateLocation(location.id, {
+        canonicalImageId: location.canonicalImageId ?? GENERATED_CANONICAL_IMAGE_ID,
         generatedImageUrl: url,
         imageBlobKey: blobKey,
       })
@@ -468,6 +530,7 @@ export default function BiblePage() {
     const blobKey = `bible-char-${character.id}-${Date.now()}`
     const url = await replaceBlobImage(character.generatedPortraitUrl, character.portraitBlobKey, blobKey, file)
     updateCharacter(character.id, {
+      canonicalImageId: character.canonicalImageId ?? GENERATED_CANONICAL_IMAGE_ID,
       generatedPortraitUrl: url,
       portraitBlobKey: blobKey,
     })
@@ -477,6 +540,7 @@ export default function BiblePage() {
     const blobKey = `bible-location-${location.id}-${Date.now()}`
     const url = await replaceBlobImage(location.generatedImageUrl, location.imageBlobKey, blobKey, file)
     updateLocation(location.id, {
+      canonicalImageId: location.canonicalImageId ?? GENERATED_CANONICAL_IMAGE_ID,
       generatedImageUrl: url,
       imageBlobKey: blobKey,
     })
@@ -496,6 +560,8 @@ export default function BiblePage() {
     }))
 
     updateCharacter(character.id, {
+      canonicalImageId: character.canonicalImageId
+        ?? (character.generatedPortraitUrl ? GENERATED_CANONICAL_IMAGE_ID : newReferences[0]?.id ?? null),
       referenceImages: [...character.referenceImages, ...newReferences],
     })
   }
@@ -514,6 +580,8 @@ export default function BiblePage() {
     }))
 
     updateLocation(location.id, {
+      canonicalImageId: location.canonicalImageId
+        ?? (location.generatedImageUrl ? GENERATED_CANONICAL_IMAGE_ID : newReferences[0]?.id ?? null),
       referenceImages: [...location.referenceImages, ...newReferences],
     })
   }
@@ -521,16 +589,24 @@ export default function BiblePage() {
   const handleCharacterReferenceRemove = async (character: CharacterEntry, reference: BibleReferenceImage) => {
     await deleteBlob(reference.blobKey).catch(() => undefined)
     URL.revokeObjectURL(reference.url)
+    const nextReferences = character.referenceImages.filter((item) => item.id !== reference.id)
     updateCharacter(character.id, {
-      referenceImages: character.referenceImages.filter((item) => item.id !== reference.id),
+      canonicalImageId: character.canonicalImageId === reference.id
+        ? (character.generatedPortraitUrl ? GENERATED_CANONICAL_IMAGE_ID : nextReferences[0]?.id ?? null)
+        : character.canonicalImageId,
+      referenceImages: nextReferences,
     })
   }
 
   const handleLocationReferenceRemove = async (location: LocationEntry, reference: BibleReferenceImage) => {
     await deleteBlob(reference.blobKey).catch(() => undefined)
     URL.revokeObjectURL(reference.url)
+    const nextReferences = location.referenceImages.filter((item) => item.id !== reference.id)
     updateLocation(location.id, {
-      referenceImages: location.referenceImages.filter((item) => item.id !== reference.id),
+      canonicalImageId: location.canonicalImageId === reference.id
+        ? (location.generatedImageUrl ? GENERATED_CANONICAL_IMAGE_ID : nextReferences[0]?.id ?? null)
+        : location.canonicalImageId,
+      referenceImages: nextReferences,
     })
   }
 
@@ -540,7 +616,7 @@ export default function BiblePage() {
         <header className="sticky top-0 z-20 mb-6 border-b border-white/8 bg-[#0E0D0B]/92 pb-5 backdrop-blur">
           <div className="flex items-center justify-between gap-4">
             <Link
-              href="/"
+              href="/?storyboard=open"
               className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/4 px-4 py-2 text-sm text-white/75 transition-colors hover:bg-white/8 hover:text-white"
             >
               ← Back
@@ -566,7 +642,9 @@ export default function BiblePage() {
             >
               Locations
             </button>
-            <div className="ml-auto flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-1">
+            <div className="ml-auto flex items-center gap-2">
+              <ProjectStylePicker projectStyle={projectStyle} setProjectStyle={setProjectStyle} />
+              <div className="flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-1">
               <span className="px-1 text-[8px] uppercase tracking-wider text-white/30">Model:</span>
               {IMAGE_GEN_MODELS.map((model) => (
                 <button
@@ -583,6 +661,7 @@ export default function BiblePage() {
                   {model.label}
                 </button>
               ))}
+              </div>
             </div>
           </div>
         </header>
@@ -596,8 +675,10 @@ export default function BiblePage() {
                 generating={generatingId === entry.id}
                 onUpdate={(patch) => updateCharacter(entry.id, patch)}
                 onGenerate={() => void handleCharacterGenerate(entry)}
+                onSetCanonicalPrimary={() => updateCharacter(entry.id, { canonicalImageId: GENERATED_CANONICAL_IMAGE_ID })}
                 onUploadPrimary={(file) => void handleCharacterPrimaryUpload(entry, file)}
                 onAddReferences={(files) => void handleCharacterReferenceAdd(entry, files)}
+                onSetCanonicalReference={(reference) => updateCharacter(entry.id, { canonicalImageId: reference.id })}
                 onRemoveReference={(reference) => void handleCharacterReferenceRemove(entry, reference)}
               />
             ))}
@@ -616,8 +697,10 @@ export default function BiblePage() {
                 generating={generatingId === entry.id}
                 onUpdate={(patch) => updateLocation(entry.id, patch)}
                 onGenerate={() => void handleLocationGenerate(entry)}
+                onSetCanonicalPrimary={() => updateLocation(entry.id, { canonicalImageId: GENERATED_CANONICAL_IMAGE_ID })}
                 onUploadPrimary={(file) => void handleLocationPrimaryUpload(entry, file)}
                 onAddReferences={(files) => void handleLocationReferenceAdd(entry, files)}
+                onSetCanonicalReference={(reference) => updateLocation(entry.id, { canonicalImageId: reference.id })}
                 onRemoveReference={(reference) => void handleLocationReferenceRemove(entry, reference)}
               />
             ))}

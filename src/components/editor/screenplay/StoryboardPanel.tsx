@@ -12,7 +12,9 @@ import { useScenesStore } from "@/store/scenes"
 import { useNavigationStore } from "@/store/navigation"
 import { breakdownScene } from "@/lib/jenkins"
 import { saveBlob } from "@/lib/fileStorage"
+import { convertReferenceImagesToDataUrls, getShotGenerationReferenceImages } from "@/lib/imageGenerationReferences"
 import { buildImagePrompt, buildVideoPrompt, getReferencedBibleEntries } from "@/lib/promptBuilder"
+import { ProjectStylePicker } from "@/components/ui/ProjectStylePicker"
 import { useBibleStore } from "@/store/bible"
 import { useBoardStore } from "@/store/board"
 import { useLibraryStore } from "@/store/library"
@@ -129,19 +131,28 @@ async function generateShotImage(
   allShots: TimelineShot[],
 ): Promise<string> {
   const { characters, locations } = useBibleStore.getState()
-  const selectedModel = useBoardStore.getState().selectedImageGenModel || "nano-banana-2"
+  const { selectedImageGenModel, projectStyle } = useBoardStore.getState()
+  const selectedModel = selectedImageGenModel || "nano-banana-2"
   const start = Date.now()
-  const prompt = buildImagePrompt(shot, allShots, characters, locations)
+  const references = getShotGenerationReferenceImages(shot, characters, locations)
+  const referenceImages = await convertReferenceImagesToDataUrls(references)
+  const referenceInstruction = referenceImages.length > 0
+    ? "Use the provided reference images as hard visual anchors. Preserve the exact face identity, hair, costume silhouette, proportions, and environment design from those references. Do not redesign recurring characters or locations."
+    : ""
+  const prompt = [
+    buildImagePrompt(shot, allShots, characters, locations, projectStyle),
+    referenceInstruction,
+  ].filter(Boolean).join("\n\n")
 
   let apiUrl: string
-  let body: Record<string, string>
+  let body: { prompt: string; model?: string; referenceImages?: string[] }
 
   if (selectedModel === "gpt-image") {
     apiUrl = "/api/gpt-image"
-    body = { prompt }
+    body = { prompt, referenceImages }
   } else {
     apiUrl = "/api/nano-banana"
-    body = { prompt, model: selectedModel }
+    body = { prompt, model: selectedModel, referenceImages }
   }
 
   const response = await fetch(apiUrl, {
@@ -222,6 +233,8 @@ export function StoryboardPanel({
   const scriptBlocks = useScriptStore((state) => state.blocks)
   const selectedImageGenModel = useBoardStore((state) => state.selectedImageGenModel)
   const setSelectedImageGenModel = useBoardStore((state) => state.setSelectedImageGenModel)
+  const projectStyle = useBoardStore((state) => state.projectStyle)
+  const setProjectStyle = useBoardStore((state) => state.setProjectStyle)
   const characters = useBibleStore((state) => state.characters)
   const locations = useBibleStore((state) => state.locations)
   const cardScale = 90
@@ -257,7 +270,20 @@ export function StoryboardPanel({
     if (!text || jenkinsLoading) return
     setJenkinsLoading(true)
     try {
-      const { shots: jenkinsShots } = await breakdownScene(text)
+      const bible = {
+        characters: characters.map((character) => ({
+          name: character.name,
+          description: character.description,
+          appearancePrompt: character.appearancePrompt,
+        })),
+        locations: locations.map((location) => ({
+          name: location.name,
+          description: location.description,
+          appearancePrompt: location.appearancePrompt,
+          intExt: location.intExt,
+        })),
+      }
+      const { shots: jenkinsShots } = await breakdownScene(text, { bible, style: projectStyle })
       for (const shot of jenkinsShots) {
         addShot({
           label: shot.label,
@@ -279,7 +305,7 @@ export function StoryboardPanel({
     } finally {
       setJenkinsLoading(false)
     }
-  }, [scenario, jenkinsLoading, addShot])
+  }, [scenario, jenkinsLoading, addShot, characters, locations, projectStyle])
 
   const handleSceneBreakdown = useCallback(async (scene: { id: string; blockIds: string[]; title: string }) => {
     if (breakdownLoadingSceneId) return
@@ -307,6 +333,7 @@ export function StoryboardPanel({
         sceneId: scene.id,
         blockIds: scene.blockIds,
         bible,
+        style: projectStyle,
       })
       const firstBlockId = scene.blockIds[0] ?? ""
       const lastBlockId = scene.blockIds[scene.blockIds.length - 1] ?? ""
@@ -335,7 +362,7 @@ export function StoryboardPanel({
     } finally {
       setBreakdownLoadingSceneId(null)
     }
-  }, [breakdownLoadingSceneId, scriptBlocks, characters, locations, addShot])
+  }, [breakdownLoadingSceneId, scriptBlocks, characters, locations, addShot, projectStyle])
 
   const handleSceneClick = useCallback((scene: { id: string; headingBlockId: string }) => {
     selectScene(selectedSceneId === scene.id ? null : scene.id)
@@ -481,6 +508,7 @@ export function StoryboardPanel({
                 </button>
               ))}
             </div>
+            <ProjectStylePicker projectStyle={projectStyle} setProjectStyle={setProjectStyle} />
             <button
               type="button"
               className="flex h-8 w-8 items-center justify-center rounded-md text-[#BDAF9F] transition-colors hover:bg-white/6 hover:text-white"
@@ -809,8 +837,8 @@ export function StoryboardPanel({
                 const resolvedShot = editingShotField?.shotId === shot.id
                   ? { ...shot, [editingShotField.field]: editingShotDraft }
                   : shot
-                const imagePrompt = buildImagePrompt(resolvedShot, inspectorShots, characters, locations)
-                const videoPrompt = buildVideoPrompt(resolvedShot, characters, locations)
+                const imagePrompt = buildImagePrompt(resolvedShot, inspectorShots, characters, locations, projectStyle)
+                const videoPrompt = buildVideoPrompt(resolvedShot, characters, locations, projectStyle)
                 const refs = getReferencedBibleEntries(resolvedShot, characters, locations)
                 const previewSrc = shot.thumbnailUrl || shot.svg || null
                 const durationLabel = `${(shot.duration / 1000).toFixed(1)}s`

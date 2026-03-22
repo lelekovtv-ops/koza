@@ -12,6 +12,7 @@ export interface CharacterEntry {
   name: string
   description: string
   referenceImages: BibleReferenceImage[]
+  canonicalImageId: string | null
   generatedPortraitUrl: string | null
   portraitBlobKey: string | null
   appearancePrompt: string
@@ -27,6 +28,7 @@ export interface LocationEntry {
   timeOfDay: string
   description: string
   referenceImages: BibleReferenceImage[]
+  canonicalImageId: string | null
   generatedImageUrl: string | null
   imageBlobKey: string | null
   appearancePrompt: string
@@ -120,6 +122,7 @@ export function parseCharacters(blocks: Block[]): CharacterEntry[] {
       name,
       description: existing?.description ?? "",
       referenceImages: existing?.referenceImages ?? [],
+      canonicalImageId: existing?.canonicalImageId ?? null,
       generatedPortraitUrl: existing?.generatedPortraitUrl ?? null,
       portraitBlobKey: existing?.portraitBlobKey ?? null,
       appearancePrompt: existing?.appearancePrompt ?? "",
@@ -157,6 +160,7 @@ export function parseLocations(blocks: Block[], scenes: Scene[]): LocationEntry[
       timeOfDay: existing?.timeOfDay || parsedHeading.timeOfDay,
       description: existing?.description ?? "",
       referenceImages: existing?.referenceImages ?? [],
+      canonicalImageId: existing?.canonicalImageId ?? null,
       generatedImageUrl: existing?.generatedImageUrl ?? null,
       imageBlobKey: existing?.imageBlobKey ?? null,
       appearancePrompt: existing?.appearancePrompt ?? "",

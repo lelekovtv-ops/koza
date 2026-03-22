@@ -1,5 +1,6 @@
 import { DEFAULT_TEXT_MODEL_ID } from "@/lib/models"
 import { DEAKINS_RULES, SHOT_TRANSITION_RULES } from "@/lib/cinematographyRules"
+import { DEFAULT_PROJECT_STYLE } from "@/lib/projectStyle"
 
 export interface JenkinsShot {
   label: string
@@ -26,6 +27,7 @@ interface BreakdownOptions {
   blockIds?: string[]
   modelId?: string
   bible?: BibleContext
+  style?: string
 }
 
 function buildBibleContextPrompt(bible?: BibleContext): string {
@@ -62,6 +64,8 @@ Reference locations with their visual details from the bible.
 }
 
 function buildJenkinsSystemPrompt(options?: BreakdownOptions): string {
+  const style = options?.style || DEFAULT_PROJECT_STYLE
+
   return `You are JENKINS — a veteran cinematographer and 1st AD with 30 years of experience.
 You think like Roger Deakins shoots: every frame has purpose, every cut has rhythm.
 
@@ -123,6 +127,11 @@ IMPORTANT: When creating your shot sequence, verify each shot transition
 follows the rules above. Check that no two adjacent shots break the 
 continuity guidelines. Your sequence should have a clear visual rhythm.
 
+PROJECT VISUAL STYLE: ${style}
+All imagePrompt values MUST incorporate this visual style.
+All videoPrompt values MUST reference this style.
+Do NOT hardcode "film noir" — use the style above.
+
 RESPOND ONLY with valid JSON array. No markdown, no backticks, no explanation.
 Each object in the array:
 {
@@ -133,8 +142,8 @@ Each object in the array:
   "caption": "Крупно на руки Бориса, перебирающего документы. Пальцы дрожат, фотография выскальзывает из стопки.",
   "directorNote": "CU, акцент на деталях, держим 2-3 сек. Этот кадр устанавливает тревожность до того как мы увидим лицо.",
   "cameraNote": "85mm, f1.8, shoulder rig, micro movement допустим. Focus breathing лёгкий. Key light — TV glow screen-left (60%), bounce fill минимальный. ISO 2000, WB 3200K.",
-  "imagePrompt": "extreme close-up weathered male hands over scattered papers on dark wooden desk, cigarette ash on documents, faded photograph half exposed from pile, single TV glow from screen-left casting harsh shadows across knuckles, shallow DOF at 85mm f1.8, dust in light beam, background falling into deep black bokeh, film noir high contrast black and white, cinematic still, 16:9",
-  "videoPrompt": "extreme close-up trembling hands holding papers, ash falling from cigarette, slow subtle handheld micro-movement, shallow depth of field, TV flicker light source from left, suspense mood, film grain, 24fps, 2.5 seconds",
+  "imagePrompt": "extreme close-up weathered male hands over scattered papers on dark wooden desk, cigarette ash on documents, faded photograph half exposed from pile, single TV glow from screen-left casting harsh shadows across knuckles, shallow DOF at 85mm f1.8, dust in light beam, background falling into deep black bokeh, ${style}, 16:9",
+  "videoPrompt": "extreme close-up trembling hands holding papers, ash falling from cigarette, slow subtle handheld micro-movement, shallow depth of field, TV flicker light source from left, suspense mood, film grain, 24fps, 2.5 seconds, visual style ${style}",
   "notes": "Lens: 85mm f1.8. Sound: paper rustling, clock ticking. Motivated by: establishing anxiety before face reveal.",
   "type": "image"
 }
@@ -158,7 +167,7 @@ FOR EACH SHOT, PROVIDE 5 LAYERS:
    Built FROM the cameraNote. Describes the FROZEN FRAME as a photograph.
    Include: subject, foreground, midground, background, light direction and quality,
    depth of field, film stock look, aspect ratio.
-   Must end with: "film noir high contrast black and white, cinematic still, 16:9"
+  Must end with the project visual style directive provided above.
    NO action verbs (no "walking", "running"). Only static description.
 
 5. "videoPrompt" — VIDEO PROMPT (English only)

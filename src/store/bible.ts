@@ -20,10 +20,33 @@ interface BibleState {
   updateLocation: (id: string, patch: Partial<LocationEntry>) => void
 }
 
+export const GENERATED_CANONICAL_IMAGE_ID = "__generated_primary__"
+
 type LegacyReferenceFields = {
   referenceImages?: BibleReferenceImage[]
   referenceImageUrl?: string | null
   referenceBlobKey?: string | null
+  canonicalImageId?: string | null
+}
+
+function resolveCanonicalImageId(
+  entry: LegacyReferenceFields | null | undefined,
+  referenceImages: BibleReferenceImage[],
+  generatedUrl?: string | null,
+): string | null {
+  if (entry?.canonicalImageId === GENERATED_CANONICAL_IMAGE_ID && generatedUrl) {
+    return GENERATED_CANONICAL_IMAGE_ID
+  }
+
+  if (entry?.canonicalImageId && referenceImages.some((image) => image.id === entry.canonicalImageId)) {
+    return entry.canonicalImageId
+  }
+
+  if (generatedUrl) {
+    return GENERATED_CANONICAL_IMAGE_ID
+  }
+
+  return referenceImages[0]?.id ?? null
 }
 
 function getReferenceImages(entry?: LegacyReferenceFields | null): BibleReferenceImage[] {
@@ -91,6 +114,11 @@ function mergeCharacters(existing: CharacterEntry[], parsed: CharacterEntry[]): 
       name: next?.name ?? current?.name ?? "",
       description: current?.description ?? next?.description ?? "",
       referenceImages: currentReferences.length > 0 ? currentReferences : nextReferences,
+      canonicalImageId: resolveCanonicalImageId(
+        current ?? next,
+        currentReferences.length > 0 ? currentReferences : nextReferences,
+        current?.generatedPortraitUrl ?? next?.generatedPortraitUrl ?? null,
+      ),
       generatedPortraitUrl: current?.generatedPortraitUrl ?? next?.generatedPortraitUrl ?? null,
       portraitBlobKey: current?.portraitBlobKey ?? next?.portraitBlobKey ?? null,
       appearancePrompt: current?.appearancePrompt ?? next?.appearancePrompt ?? "",
@@ -126,6 +154,11 @@ function mergeLocations(existing: LocationEntry[], parsed: LocationEntry[]): Loc
       timeOfDay: next?.timeOfDay ?? current?.timeOfDay ?? "",
       description: current?.description ?? next?.description ?? "",
       referenceImages: currentReferences.length > 0 ? currentReferences : nextReferences,
+      canonicalImageId: resolveCanonicalImageId(
+        current ?? next,
+        currentReferences.length > 0 ? currentReferences : nextReferences,
+        current?.generatedImageUrl ?? next?.generatedImageUrl ?? null,
+      ),
       generatedImageUrl: current?.generatedImageUrl ?? next?.generatedImageUrl ?? null,
       imageBlobKey: current?.imageBlobKey ?? next?.imageBlobKey ?? null,
       appearancePrompt: current?.appearancePrompt ?? next?.appearancePrompt ?? "",

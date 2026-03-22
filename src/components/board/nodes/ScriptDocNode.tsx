@@ -1,8 +1,8 @@
 "use client"
 
-import { useEffect, useRef, useState } from "react"
+import { useRef } from "react"
 import { type NodeProps } from "@xyflow/react"
-import { FileText, Plus, Upload } from "lucide-react"
+import { Plus, Upload } from "lucide-react"
 import { SCRIPT_DOC_HEIGHT, SCRIPT_DOC_WIDTH } from "./scriptDocConstants"
 
 type NodeScreenRect = {
@@ -74,7 +74,7 @@ export default function ScriptDocNode({ id, data }: NodeProps) {
       {hasSavedTitle && (
         <button
           type="button"
-          className="absolute inset-0 z-[4] cursor-pointer bg-transparent"
+          className="absolute inset-0 z-4 cursor-pointer bg-transparent"
           aria-label="Open script"
           onPointerDown={(event) => {
             event.preventDefault()
@@ -87,7 +87,7 @@ export default function ScriptDocNode({ id, data }: NodeProps) {
       {!hasSavedTitle && (
         <button
           type="button"
-          className="absolute inset-0 z-[3] cursor-pointer bg-transparent"
+          className="absolute inset-0 z-3 cursor-pointer bg-transparent"
           aria-label="Open script"
           onPointerDown={(event) => {
             event.preventDefault()
@@ -98,8 +98,8 @@ export default function ScriptDocNode({ id, data }: NodeProps) {
       )}
 
       {hasSavedTitle && (
-        <div className="pointer-events-none absolute inset-0 z-[2] flex items-center justify-center p-8">
-          <div className="w-full max-w-[340px] text-center">
+        <div className="pointer-events-none absolute inset-0 z-2 flex items-center justify-center p-8">
+          <div className="w-full max-w-85 text-center">
             <p
               className="text-[20px] leading-tight text-[#2D2A26]"
               style={{ fontFamily: '"PT Serif", "Times New Roman", serif' }}
@@ -140,7 +140,7 @@ export default function ScriptDocNode({ id, data }: NodeProps) {
         </div>
       )}
 
-      <div className="absolute inset-0 z-[4] flex items-center justify-center">
+      <div className="absolute inset-0 z-4 flex items-center justify-center">
         {hasSavedTitle ? null : (
           <div className="flex flex-col items-center gap-2">
             <button

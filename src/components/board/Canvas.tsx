@@ -46,6 +46,7 @@ const nodes: Node[] = [
     data: { title: 'Untitled' },
   },
 ]
+
 const edges: Edge[] = []
 
 interface CanvasProps {
@@ -89,7 +90,6 @@ export default function Canvas({ onBack }: CanvasProps) {
     setEditorMode({ active: false, nodeId: null, type: null, initialRect: null })
   }, [])
 
-  // Timeline → Board: when selectedShotId changes, find matching node and fitView
   useEffect(() => {
     let prev = useTimelineStore.getState().selectedShotId
     return useTimelineStore.subscribe((state) => {

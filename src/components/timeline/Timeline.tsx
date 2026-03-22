@@ -26,6 +26,7 @@ import {
 import { prefetchAhead } from "@/lib/timelineCache"
 import { generateDemoShots } from "@/lib/timelineDemoData"
 import { audioEngine } from "@/lib/audioEngine"
+import { loadBlob } from "@/lib/fileStorage"
 
 /* ─── constants ─── */
 
@@ -459,6 +460,158 @@ function Ruler({
   )
 }
 
+function PreviewPanel({
+  shots,
+  currentTime,
+  currentShot,
+  selectedShotId,
+  isPlaying,
+}: {
+  shots: TimelineShot[]
+  currentTime: number
+  currentShot: TimelineShot | null
+  selectedShotId: string | null
+  isPlaying: boolean
+}) {
+  const videoRef = useRef<HTMLVideoElement>(null)
+  const [loadedVideo, setLoadedVideo] = useState<{ shotId: string; url: string } | null>(null)
+
+  const previewShot = useMemo(() => {
+    if (isPlaying) return currentShot
+    if (selectedShotId) return shots.find((shot) => shot.id === selectedShotId) ?? currentShot
+    return currentShot
+  }, [currentShot, isPlaying, selectedShotId, shots])
+
+  const previewShotIndex = useMemo(() => {
+    if (!previewShot) return -1
+    return shots.findIndex((shot) => shot.id === previewShot.id)
+  }, [previewShot, shots])
+
+  const shotStartTime = useMemo(() => {
+    if (previewShotIndex < 0) return 0
+    return getShotStartTime(shots, previewShotIndex)
+  }, [previewShotIndex, shots])
+
+  const videoSrc = useMemo(() => {
+    if (previewShot?.type !== "video") return null
+    if (previewShot.originalUrl) return previewShot.originalUrl
+    if (loadedVideo?.shotId === previewShot.id) return loadedVideo.url
+    return null
+  }, [loadedVideo, previewShot])
+
+  useEffect(() => {
+    let cancelled = false
+
+    if (previewShot?.type !== "video") return
+
+    const blobKey = previewShot.originalBlobKey
+
+    if (!blobKey || previewShot.originalUrl) return
+
+    const previousBlobUrl = loadedVideo?.url?.startsWith("blob:") ? loadedVideo.url : null
+
+    loadBlob(blobKey)
+      .then((url) => {
+        if (!cancelled && url) {
+          if (previousBlobUrl && previousBlobUrl !== url) {
+            URL.revokeObjectURL(previousBlobUrl)
+          }
+          setLoadedVideo({ shotId: previewShot.id, url })
+        }
+      })
+      .catch(() => {
+        // Ignore missing blob storage entries and keep thumbnail fallback.
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [loadedVideo?.url, previewShot?.id, previewShot?.originalBlobKey, previewShot?.originalUrl, previewShot?.type])
+
+  useEffect(() => {
+    return () => {
+      if (loadedVideo?.url?.startsWith("blob:")) {
+        URL.revokeObjectURL(loadedVideo.url)
+      }
+    }
+  }, [loadedVideo])
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || !videoSrc || previewShot?.type !== "video") return
+
+    video.playbackRate = 1
+
+    if (isPlaying) {
+      video.play().catch(() => {
+        // Autoplay can be blocked briefly while source changes.
+      })
+      return
+    }
+
+    video.pause()
+  }, [isPlaying, previewShot?.type, videoSrc])
+
+  useEffect(() => {
+    const video = videoRef.current
+    if (!video || !videoSrc || previewShot?.type !== "video") return
+
+    const localTime = Math.max(0, (currentTime - shotStartTime) / 1000)
+    if (Math.abs(video.currentTime - localTime) > 0.25) {
+      video.currentTime = localTime
+    }
+  }, [currentTime, previewShot?.type, shotStartTime, videoSrc])
+
+  if (!previewShot) return null
+
+  const localTimeMs = Math.max(0, currentTime - shotStartTime)
+  const shotDurationMs = previewShot.duration
+  const hasVideo = previewShot.type === "video" && Boolean(videoSrc)
+  const hasImage = Boolean(previewShot.thumbnailUrl)
+
+  return (
+    <div className="relative border-b border-white/8 bg-[#0A0908]" style={{ height: 180 }}>
+      <div className="flex h-full items-center justify-center p-3">
+        <div className="relative aspect-video h-full overflow-hidden rounded-lg bg-black/60">
+          {hasVideo ? (
+            <video
+              ref={videoRef}
+              src={videoSrc ?? undefined}
+              muted
+              playsInline
+              preload="metadata"
+              poster={previewShot.thumbnailUrl ?? undefined}
+              className="h-full w-full object-cover"
+            />
+          ) : hasImage ? (
+            <img
+              src={previewShot.thumbnailUrl ?? undefined}
+              alt={previewShot.label}
+              className="h-full w-full object-cover"
+              draggable={false}
+            />
+          ) : (
+            <div className="flex h-full w-full flex-col items-center justify-center gap-2">
+              <Film size={32} className="text-white/15" />
+              <span className="text-[13px] font-medium text-white/25">{previewShot.label}</span>
+            </div>
+          )}
+
+          <div className="absolute left-2 top-2 rounded bg-black/60 px-1.5 py-0.5 text-[10px] uppercase tracking-[0.14em] text-white/65 backdrop-blur-sm">
+            Shot {previewShotIndex + 1}
+          </div>
+          <div className="absolute bottom-2 left-2 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white/70 backdrop-blur-sm">
+            {previewShot.label}
+          </div>
+          <div className="absolute bottom-2 right-2 rounded bg-black/60 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-white/60 backdrop-blur-sm">
+            {formatTime(localTimeMs)} / {formatTime(shotDurationMs)}
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /* ─── Main Timeline ─── */
 
 export default function Timeline() {
@@ -519,8 +672,7 @@ export default function Timeline() {
   const totalDuration = useMemo(() => getTotalDuration(shots), [shots])
   const currentShotIndex = useMemo(() => getShotIndexAtTime(shots, currentTime), [shots, currentTime])
   const currentShot = shots[currentShotIndex] ?? null
-  const previewShot = selectedShotId ? shots.find((s) => s.id === selectedShotId) ?? currentShot : currentShot
-  const showPreviewCanvas = showPreview && shots.length > 0 && (isPlaying || selectedShotId !== null)
+  const showPreviewCanvas = showPreview && shots.length > 0
 
   // Container width measurement
   useEffect(() => {
@@ -804,34 +956,15 @@ export default function Timeline() {
       </div>
 
       {/* ─── Preview Canvas ─── */}
-      {showPreviewCanvas && previewShot && (
-        <div className="relative border-b border-white/8 bg-[#0A0908]" style={{ height: 180 }}>
-          <div className="flex h-full items-center justify-center p-3">
-            <div className="relative aspect-video h-full overflow-hidden rounded-lg bg-black/60">
-              {previewShot.thumbnailUrl ? (
-                <img
-                  src={previewShot.thumbnailUrl}
-                  alt={previewShot.label}
-                  className="h-full w-full object-cover"
-                  draggable={false}
-                />
-              ) : (
-                <div className="flex h-full w-full flex-col items-center justify-center gap-2">
-                  <Film size={32} className="text-white/15" />
-                  <span className="text-[13px] font-medium text-white/25">{previewShot.label}</span>
-                </div>
-              )}
-              {/* Label bottom-left */}
-              <div className="absolute bottom-2 left-2 rounded bg-black/60 px-1.5 py-0.5 text-[10px] text-white/70 backdrop-blur-sm">
-                {previewShot.label}
-              </div>
-              {/* Time bottom-right */}
-              <div className="absolute bottom-2 right-2 rounded bg-black/60 px-1.5 py-0.5 font-mono text-[10px] tabular-nums text-white/60 backdrop-blur-sm">
-                {formatTime(currentTime)}
-              </div>
-            </div>
-          </div>
-          {/* Close button */}
+      {showPreviewCanvas && (
+        <div className="relative">
+          <PreviewPanel
+            shots={shots}
+            currentTime={currentTime}
+            currentShot={currentShot}
+            selectedShotId={selectedShotId}
+            isPlaying={isPlaying}
+          />
           <button
             type="button"
             onClick={() => setShowPreview(false)}
@@ -893,7 +1026,7 @@ export default function Timeline() {
               setDropIndicatorIdx(null)
             }}
           >
-            {visibleShots.map(({ shot, x, w }, i) => {
+            {visibleShots.map(({ shot, x, w }) => {
               const shotIdx = shotPositions.findIndex((sp) => sp.shot.id === shot.id)
               return (
                 <ShotThumb
@@ -1018,7 +1151,7 @@ export default function Timeline() {
       {/* ─── Context Menu ─── */}
       {ctxMenu && (
         <div
-          className="fixed z-50 min-w-[140px] rounded border border-white/10 bg-[#1A1916] py-1 shadow-xl"
+          className="fixed z-50 min-w-35 rounded border border-white/10 bg-[#1A1916] py-1 shadow-xl"
           style={{ left: ctxMenu.x, top: ctxMenu.y }}
           onClick={(e) => e.stopPropagation()}
         >

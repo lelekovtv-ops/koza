@@ -9,6 +9,27 @@ type CandidatePart = {
   text?: string
 }
 
+type ReferencePart = {
+  inlineData: {
+    mimeType: string
+    data: string
+  }
+}
+
+function parseDataUrl(dataUrl: string): ReferencePart | null {
+  const match = dataUrl.match(/^data:(.+?);base64,(.+)$/)
+  if (!match) {
+    return null
+  }
+
+  return {
+    inlineData: {
+      mimeType: match[1],
+      data: match[2],
+    },
+  }
+}
+
 const getErrorMessage = (error: unknown) => {
   if (error instanceof Error) {
     return error.message
@@ -19,7 +40,7 @@ const getErrorMessage = (error: unknown) => {
 
 export async function POST(req: Request) {
   try {
-    const { prompt, model } = await req.json()
+    const { prompt, model, referenceImages } = await req.json()
 
     if (!prompt || typeof prompt !== "string") {
       return NextResponse.json({ error: "prompt is required" }, { status: 400 })
@@ -37,11 +58,30 @@ export async function POST(req: Request) {
     else if (model === "nano-banana-pro") modelId = "gemini-3-pro-image-preview"
     else if (model === "nano-banana") modelId = "gemini-2.5-flash-image"
 
+    const maxReferenceCount = modelId === "gemini-2.5-flash-image" ? 3 : 5
+
+    const imageReferenceParts = Array.isArray(referenceImages)
+      ? referenceImages
+        .filter((entry): entry is string => typeof entry === "string" && entry.startsWith("data:"))
+        .slice(0, maxReferenceCount)
+        .map(parseDataUrl)
+        .filter((entry): entry is ReferencePart => Boolean(entry))
+      : []
+
+    const contents = [
+      prompt,
+      ...imageReferenceParts,
+    ]
+
     const response = await ai.models.generateContent({
       model: modelId,
-      contents: prompt,
+      contents,
       config: {
-        responseModalities: ["image", "text"],
+        responseModalities: ["image"],
+        imageConfig: {
+          aspectRatio: "16:9",
+          ...(modelId === "gemini-2.5-flash-image" ? {} : { imageSize: "2K" }),
+        },
       },
     })
 
