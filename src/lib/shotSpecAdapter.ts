@@ -1,0 +1,1 @@
+export { shotSpecToTimelineShot, mapShotSpecsToTimelineShots } from "@/lib/cinematicAdapter"

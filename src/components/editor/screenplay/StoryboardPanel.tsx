@@ -4,7 +4,7 @@ import Image from "next/image"
 import { useRouter } from "next/navigation"
 import { BookOpen, Camera, Clapperboard, Film, Grid, Image as ImageIcon, List, Loader2, MoreHorizontal, Plus, RefreshCw, Wand2 } from "lucide-react"
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { useTimelineStore } from "@/store/timeline"
+import { createTimelineShot, useTimelineStore } from "@/store/timeline"
 import type { TimelineShot } from "@/store/timeline"
 import { timelineShotToStoryboardView, createShotFromStoryboardDefaults } from "@/lib/storyboardBridge"
 import { useScriptStore } from "@/store/script"
@@ -261,6 +261,7 @@ export function StoryboardPanel({
   const addShot = useTimelineStore((state) => state.addShot)
   const updateShot = useTimelineStore((state) => state.updateShot)
   const reorderShot = useTimelineStore((state) => state.reorderShot)
+  const reorderShots = useTimelineStore((state) => state.reorderShots)
   const [recentInsertedFrameId, setRecentInsertedFrameId] = useState<string | null>(null)
   const [draggedFrameId, setDraggedFrameId] = useState<string | null>(null)
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null)
@@ -269,6 +270,7 @@ export function StoryboardPanel({
   const [editingShotField, setEditingShotField] = useState<{ shotId: string; field: EditableShotField } | null>(null)
   const [editingShotDraft, setEditingShotDraft] = useState("")
   const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set())
+  const [breakdownWarning, setBreakdownWarning] = useState<string | null>(null)
   const scenes = useScenesStore((s) => s.scenes)
   const selectedSceneId = useScenesStore((s) => s.selectedSceneId)
   const selectScene = useScenesStore((s) => s.selectScene)
@@ -309,6 +311,55 @@ export function StoryboardPanel({
     setEditingShotDraft("")
   }, [editingShotDraft, updateShot])
 
+  const replaceSceneShots = useCallback((
+    sceneId: string,
+    sceneText: string,
+    sceneBlockIds: string[],
+    jenkinsShots: Array<{
+      label: string
+      type: "image"
+      duration: number
+      notes: string
+      shotSize?: string
+      cameraMotion?: string
+      caption?: string
+      directorNote?: string
+      cameraNote?: string
+      videoPrompt?: string
+      imagePrompt?: string
+      visualDescription?: string
+    }>,
+  ) => {
+    const firstBlockId = sceneBlockIds[0] ?? ""
+    const lastBlockId = sceneBlockIds[sceneBlockIds.length - 1] ?? ""
+    const preservedShots = useTimelineStore.getState().shots.filter((shot) => shot.sceneId !== sceneId)
+    const replacementShots = jenkinsShots.map((shot) => createTimelineShot({
+      label: shot.label,
+      shotSize: shot.shotSize ?? "",
+      cameraMotion: shot.cameraMotion ?? "",
+      duration: shot.duration,
+      caption: shot.caption ?? "",
+      directorNote: shot.directorNote ?? "",
+      cameraNote: shot.cameraNote ?? "",
+      imagePrompt: shot.imagePrompt ?? "",
+      videoPrompt: shot.videoPrompt ?? "",
+      visualDescription: shot.visualDescription ?? "",
+      notes: shot.notes,
+      type: shot.type,
+      sceneId,
+      blockRange: firstBlockId && lastBlockId ? [firstBlockId, lastBlockId] : null,
+      locked: true,
+      sourceText: sceneText,
+    }))
+
+    reorderShots([...preservedShots, ...replacementShots])
+    selectScene(sceneId)
+    setViewMode("board")
+    setExpandedShotId(replacementShots[0]?.id ?? null)
+
+    return replacementShots.length
+  }, [reorderShots, selectScene])
+
   const handleJenkinsBreakdown = useCallback(async () => {
     const text = scenario.trim()
     if (!text || jenkinsLoading) return
@@ -327,7 +378,15 @@ export function StoryboardPanel({
           intExt: location.intExt,
         })),
       }
-      const { shots: jenkinsShots } = await breakdownScene(text, { bible, style: projectStyle })
+      const { shots: jenkinsShots, diagnostics } = await breakdownScene(text, { bible, style: projectStyle })
+
+      if (diagnostics.usedFallback && shots.length > 0) {
+        const warning = "Breakdown switched to fallback mode. Existing storyboard shots were preserved to avoid overwriting the stronger result."
+        setBreakdownWarning(warning)
+        devlog.warn("Storyboard preserved existing shots", warning, diagnostics)
+        return
+      }
+
       for (const shot of jenkinsShots) {
         addShot({
           label: shot.label,
@@ -344,12 +403,19 @@ export function StoryboardPanel({
           type: shot.type,
         })
       }
+      setBreakdownWarning(
+        diagnostics.usedFallback
+          ? "Breakdown completed in fallback mode. Result was added, but wording may be flatter than a full AI pass."
+          : null,
+      )
+      setViewMode("board")
+      setExpandedShotId(jenkinsShots[0] ? useTimelineStore.getState().shots.at(-jenkinsShots.length)?.id ?? null : null)
     } catch (error) {
       console.error("Jenkins breakdown error:", error)
     } finally {
       setJenkinsLoading(false)
     }
-  }, [scenario, jenkinsLoading, addShot, characters, locations, projectStyle])
+  }, [scenario, jenkinsLoading, addShot, characters, locations, projectStyle, shots])
 
   const handleSceneBreakdown = useCallback(async (scene: { id: string; blockIds: string[]; title: string }) => {
     if (breakdownLoadingSceneId) return
@@ -373,40 +439,40 @@ export function StoryboardPanel({
           intExt: location.intExt,
         })),
       }
-      const { shots: jenkinsShots } = await breakdownScene(sceneText, {
+      const existingSceneShots = shots.filter((shot) => shot.sceneId === scene.id)
+      const { shots: jenkinsShots, diagnostics } = await breakdownScene(sceneText, {
         sceneId: scene.id,
         blockIds: scene.blockIds,
         bible,
         style: projectStyle,
       })
-      const firstBlockId = scene.blockIds[0] ?? ""
-      const lastBlockId = scene.blockIds[scene.blockIds.length - 1] ?? ""
-      for (const shot of jenkinsShots) {
-        addShot({
-          label: shot.label,
-          shotSize: shot.shotSize ?? "",
-          cameraMotion: shot.cameraMotion ?? "",
-          duration: shot.duration,
-          caption: shot.caption ?? "",
-          directorNote: shot.directorNote ?? "",
-          cameraNote: shot.cameraNote ?? "",
-          imagePrompt: shot.imagePrompt ?? "",
-          videoPrompt: shot.videoPrompt ?? "",
-          visualDescription: shot.visualDescription ?? "",
-          notes: shot.notes,
-          type: shot.type,
+
+      if (diagnostics.usedFallback && existingSceneShots.length > 0) {
+        const warning = `Scene ${scene.title} used fallback mode. Existing scene shots were preserved to avoid replacing a better storyboard result.`
+        setBreakdownWarning(warning)
+        devlog.warn("Scene breakdown preserved existing shots", warning, {
+          ...diagnostics,
           sceneId: scene.id,
-          blockRange: firstBlockId && lastBlockId ? [firstBlockId, lastBlockId] : null,
-          locked: true,
-          sourceText: sceneText,
+          existingShotCount: existingSceneShots.length,
         })
+        selectScene(scene.id)
+        setViewMode("board")
+        setExpandedShotId(existingSceneShots[0]?.id ?? null)
+        return
       }
+
+      replaceSceneShots(scene.id, sceneText, scene.blockIds, jenkinsShots)
+      setBreakdownWarning(
+        diagnostics.usedFallback
+          ? `Scene ${scene.title} completed in fallback mode. Existing shots were replaced because there was no prior scene result to protect.`
+          : null,
+      )
     } catch (error) {
       console.error("Scene breakdown error:", error)
     } finally {
       setBreakdownLoadingSceneId(null)
     }
-  }, [breakdownLoadingSceneId, scriptBlocks, characters, locations, addShot, projectStyle])
+  }, [breakdownLoadingSceneId, scriptBlocks, characters, locations, projectStyle, replaceSceneShots, shots, selectScene])
 
   const handleSceneClick = useCallback((scene: { id: string; headingBlockId: string }) => {
     selectScene(selectedSceneId === scene.id ? null : scene.id)
@@ -616,6 +682,12 @@ export function StoryboardPanel({
             </button>
           </div>
         </div>
+
+        {breakdownWarning ? (
+          <div className="border-b border-amber-500/20 bg-amber-500/8 px-4 py-3 text-[11px] text-[#E8D3A2]">
+            {breakdownWarning}
+          </div>
+        ) : null}
 
         <div className="flex-1 overflow-y-auto px-4 py-4" style={{ overscrollBehaviorY: "contain" }}>
           {viewMode === "scenes" ? (

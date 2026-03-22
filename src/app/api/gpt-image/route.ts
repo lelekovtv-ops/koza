@@ -1,12 +1,57 @@
 import OpenAI from "openai"
-import type {
-  ResponseInput,
-  ResponseInputImage,
-  ResponseInputMessageContentList,
-  ResponseInputText,
-  Tool,
-} from "openai/resources/responses/responses"
 import { NextResponse } from "next/server"
+
+const DEFAULT_IMAGE_MODEL = "gpt-image-1"
+
+function dataUrlToFile(dataUrl: string, index: number): File {
+  const match = dataUrl.match(/^data:(.+?);base64,(.+)$/)
+
+  if (!match) {
+    throw new Error("Invalid reference image format")
+  }
+
+  const [, mimeType, base64Payload] = match
+  const buffer = Buffer.from(base64Payload, "base64")
+  const extension = mimeType.split("/")[1] ?? "png"
+
+  return new File([buffer], `reference-${index}.${extension}`, { type: mimeType })
+}
+
+function extractImageResponse(result: { data?: Array<{ url?: string; b64_json?: string }> }) {
+  const imageUrl = result.data?.[0]?.url
+  const b64 = result.data?.[0]?.b64_json
+
+  return { imageUrl, b64 }
+}
+
+async function buildImageResponse(result: { data?: Array<{ url?: string; b64_json?: string }> }) {
+  const { imageUrl, b64 } = extractImageResponse(result)
+
+  if (b64) {
+    return new Response(Buffer.from(b64, "base64"), {
+      headers: { "Content-Type": "image/png" },
+    })
+  }
+
+  if (imageUrl) {
+    const imgRes = await fetch(imageUrl)
+    return new Response(await imgRes.arrayBuffer(), {
+      headers: { "Content-Type": "image/png" },
+    })
+  }
+
+  return null
+}
+
+async function generateFromPrompt(openai: OpenAI, prompt: string) {
+  return openai.images.generate({
+    model: DEFAULT_IMAGE_MODEL,
+    prompt,
+    quality: "low",
+    size: "1536x1024",
+    n: 1,
+  })
+}
 
 export async function POST(req: Request) {
   try {
@@ -23,70 +68,33 @@ export async function POST(req: Request) {
       : []
 
     if (normalizedReferenceImages.length > 0) {
-      const content: ResponseInputMessageContentList = [
-        { type: "input_text", text: prompt } as ResponseInputText,
-      ]
-
-      normalizedReferenceImages.forEach((imageUrl) => {
-        content.push({
-          type: "input_image",
-          image_url: imageUrl,
-          detail: "high",
-        } as ResponseInputImage)
-      })
-
-      const input = [{
-        role: "user",
-        content,
-      }] as ResponseInput
-      const tools: Tool[] = [{
-        type: "image_generation",
-        action: "edit",
-        input_fidelity: "high",
-        quality: "medium",
-        size: "1536x1024",
-      }]
-
-      const response = await openai.responses.create({
-        model: "gpt-4.1",
-        input: input as any,
-        tools,
-      })
-
-      const imageCall = response.output.find((entry: any) => entry.type === "image_generation_call" && entry.result) as any
-      const imageResult = imageCall?.result as string | undefined
-
-      if (imageResult) {
-        return new Response(Buffer.from(imageResult, "base64"), {
-          headers: { "Content-Type": "image/png" },
+      try {
+        const referenceFiles = normalizedReferenceImages.map((imageUrl, index) => dataUrlToFile(imageUrl, index))
+        const editedImage = await openai.images.edit({
+          model: DEFAULT_IMAGE_MODEL,
+          image: referenceFiles,
+          prompt,
+          input_fidelity: "high",
+          quality: "medium",
+          size: "1536x1024",
+          n: 1,
         })
+
+        const response = await buildImageResponse(editedImage)
+
+        if (response) {
+          return response
+        }
+      } catch (referenceError) {
+        console.error("GPT Image reference edit failed, falling back to prompt-only generation:", referenceError)
       }
-
-      return NextResponse.json({ error: "No image" }, { status: 500 })
     }
 
-    const result = await openai.images.generate({
-      model: "gpt-image-1",
-      prompt,
-      quality: "low",
-      size: "1536x1024",
-      n: 1,
-    })
+    const result = await generateFromPrompt(openai, prompt)
+    const response = await buildImageResponse(result)
 
-    const imageUrl = result.data?.[0]?.url
-    const b64 = result.data?.[0]?.b64_json
-
-    if (b64) {
-      return new Response(Buffer.from(b64, "base64"), {
-        headers: { "Content-Type": "image/png" },
-      })
-    }
-
-    if (imageUrl) {
-      const imgRes = await fetch(imageUrl)
-      return new Response(await imgRes.arrayBuffer(), {
-        headers: { "Content-Type": "image/png" },
-      })
+    if (response) {
+      return response
     }
 
     return NextResponse.json({ error: "No image" }, { status: 500 })

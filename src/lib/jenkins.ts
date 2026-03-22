@@ -1,7 +1,28 @@
+import { superviseShotContinuity } from "@/lib/cinematic/continuitySupervisor"
+import {
+  buildPromptComposerSystemPrompt,
+  buildPromptComposerUserMessage,
+  composePromptPackagesLocally,
+  parsePromptComposerResponse,
+  type PromptComposerShot,
+} from "@/lib/cinematic/promptComposer"
+import {
+  buildSceneAnalystSystemPrompt,
+  buildSceneAnalystUserMessage,
+  parseSceneAnalysisResponse,
+  type SceneAnalysis,
+} from "@/lib/cinematic/sceneAnalyst"
+import {
+  buildShotPlannerSystemPrompt,
+  buildShotPlannerUserMessage,
+  composeShotSpecsLocally,
+  parseShotPlannerResponse,
+} from "@/lib/cinematic/shotPlanner"
+import { getErrorMessage, type CinematicStyleContext } from "@/lib/cinematic/stageUtils"
 import { DEFAULT_TEXT_MODEL_ID } from "@/lib/models"
-import { DEAKINS_RULES, SHOT_TRANSITION_RULES } from "@/lib/cinematographyRules"
-import { DEFAULT_PROJECT_STYLE } from "@/lib/projectStyle"
+import { shotSpecToTimelineShot } from "@/lib/shotSpecAdapter"
 import { devlog } from "@/store/devlog"
+import type { ShotSpec } from "@/types/cinematic"
 
 export interface JenkinsShot {
   label: string
@@ -18,6 +39,17 @@ export interface JenkinsShot {
   visualDescription?: string
 }
 
+export interface BreakdownDiagnostics {
+  usedFallback: boolean
+  shotPlannerFallback: boolean
+  promptComposerFallback: boolean
+}
+
+export interface BreakdownResult {
+  shots: JenkinsShot[]
+  diagnostics: BreakdownDiagnostics
+}
+
 export interface BibleContext {
   characters: Array<{ name: string; description: string; appearancePrompt: string }>
   locations: Array<{ name: string; description: string; appearancePrompt: string; intExt: string }>
@@ -28,298 +60,320 @@ interface BreakdownOptions {
   blockIds?: string[]
   modelId?: string
   bible?: BibleContext
-  style?: string
+  style?: CinematicStyleContext
 }
 
-function buildBibleContextPrompt(bible?: BibleContext): string {
-  if (!bible) {
-    return ""
+type StageResultLogType = "breakdown_scene_analysis" | "breakdown_shot_plan" | "breakdown_prompt_compose"
+
+interface StageConfig<T> {
+  stageLabel: "Scene Analyst" | "Shot Planner" | "Prompt Composer"
+  stageLogType: StageResultLogType
+  systemPrompt: string
+  userMessage: string
+  modelId: string
+  group: string
+  parse: (rawText: string) => T
+  buildLogEntry: (parsed: T) => { title: string; details: string; meta?: Record<string, unknown> }
+}
+
+function isRetriableStageError(error: unknown): boolean {
+  const message = getErrorMessage(error).toLowerCase()
+
+  return message.includes("load failed")
+    || message.includes("econnreset")
+    || message.includes("terminated")
+    || message.includes("failed to pipe response")
+}
+
+function readStreamAsText(response: Response): Promise<string> {
+  const reader = response.body?.getReader()
+
+  if (!reader) {
+    throw new Error("No response body")
   }
 
-  const characters = bible.characters.length > 0
-    ? bible.characters.map((character) => (
-      `- ${character.name}: ${character.description || "No description yet"}${character.appearancePrompt ? ` [Visual: ${character.appearancePrompt}]` : ""}`
-    )).join("\n")
-    : "No characters defined yet."
+  const decoder = new TextDecoder()
+  let fullText = ""
 
-  const locations = bible.locations.length > 0
-    ? bible.locations.map((location) => (
-      `- ${location.name} (${location.intExt}): ${location.description || "No description yet"}${location.appearancePrompt ? ` [Visual: ${location.appearancePrompt}]` : ""}`
-    )).join("\n")
-    : "No locations defined yet."
+  return reader.read().then(function processChunk({ done, value }): Promise<string> {
+    if (done) {
+      fullText += decoder.decode()
+      return Promise.resolve(fullText)
+    }
 
-  return `
-
-PROJECT BIBLE — use this information for accurate descriptions:
-
-CHARACTERS:
-${characters}
-
-LOCATIONS:
-${locations}
-
-Use character descriptions and visual details from the bible when describing what's in each frame.
-Reference characters by name and describe them as specified in the bible.
-Reference locations with their visual details from the bible.
-`
+    fullText += decoder.decode(value, { stream: true })
+    return reader.read().then(processChunk)
+  })
 }
 
-function buildJenkinsSystemPrompt(options?: BreakdownOptions): string {
-  const style = options?.style || DEFAULT_PROJECT_STYLE
+async function executeStage<T>(config: StageConfig<T>): Promise<T> {
+  devlog.breakdown("breakdown_prompt", `${config.stageLabel} system prompt`, config.systemPrompt, {
+    stage: config.stageLabel,
+  }, config.group)
+  devlog.breakdown("breakdown_request", `${config.stageLabel} request`, config.userMessage, {
+    stage: config.stageLabel,
+  }, config.group)
 
-  return `You are JENKINS — a veteran cinematographer and 1st AD with 30 years of experience.
-You think like Roger Deakins shoots: every frame has purpose, every cut has rhythm.
+  let attempt = 0
+  let lastError: unknown
 
-Your job: break down screenplay text into a DETAILED shot-by-shot sequence.
+  while (attempt < 2) {
+    try {
+      const response = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [{ role: "user", content: config.userMessage }],
+          modelId: config.modelId,
+          system: config.systemPrompt,
+        }),
+      })
 
-RULES:
-1. EVERY physical action = separate shot. "Boris stands up and walks to the window" = at minimum 2 shots (standing up + walking to window), possibly 3 (+ looking through window).
-2. EVERY dialogue line = its own shot (speaker), plus reaction shot of the listener if dramatically important.
-3. Establish geography FIRST. Every new location starts with a wide establishing shot.
-4. Think in SEQUENCES: establish → develop → climax → resolve. Vary your shot sizes rhythmically.
-5. Be SPECIFIC about framing: not just "close-up" but "EXTREME CLOSE-UP on Boris's trembling hands shuffling documents."
-6. Describe what's IN THE FRAME, not the action abstractly. Camera sees, camera shows.
-7. Include camera MOTIVATION: why this angle? Why this movement? (brief note)
-8. Consider SOUND design hints in notes.
-9. Duration should reflect the real screen time of the action.
-10. LANGUAGE: The screenplay text may be in Russian or any language.
-11. Write label, caption, and directorNote in the SAME language as the screenplay.
-12. Write cameraNote with technical film terminology in English where needed.
-13. Write imagePrompt and videoPrompt in English only.
-14. Write notes (technical camera/lens/sound directions) in English.
-15. Keep each layer internally consistent: caption for story, directorNote for rhythm, cameraNote for craft, imagePrompt for still frame, videoPrompt for motion.
+      if (!response.ok) {
+        const errorText = await response.text()
+        throw new Error(errorText || `HTTP ${response.status}`)
+      }
 
-SHOT SIZE vocabulary:
-- EXTREME WIDE (EWS): landscape, city, building exterior
-- WIDE (WS): full room, full body in environment
-- MEDIUM WIDE (MWS): knee-up, shows body language + environment
-- MEDIUM (MS): waist-up, conversational
-- MEDIUM CLOSE-UP (MCU): chest-up, emotional read
-- CLOSE-UP (CU): face fills frame, pure emotion
-- EXTREME CLOSE-UP (ECU): eyes, hands, objects, details
-- OVER SHOULDER (OTS): conversation framing
-- POV: subjective camera
-- INSERT: object detail, document, phone screen
-- TWO SHOT: two characters in frame
-- LOW ANGLE: power, menace
-- HIGH ANGLE: vulnerability, surveillance
-- DUTCH ANGLE: unease, tension
+      const fullText = await readStreamAsText(response)
 
-CAMERA MOVEMENT vocabulary:
-- Static: locked tripod, stability or tension
-- Pan Left/Right: follow action or reveal
-- Tilt Up/Down: reveal height or shift focus
-- Push In: increasing tension or intimacy
-- Pull Out: reveal context or isolation
-- Track Left/Right: follow walking character
-- Track In/Out: dolly move toward/away
-- Crane Up/Down: dramatic reveal or descent
-- Handheld: urgency, documentary feel, anxiety
-- Steadicam: fluid following, dreamlike
-- Whip Pan: sudden attention shift
+      devlog.breakdown("breakdown_response", `${config.stageLabel} raw response`, fullText, {
+        stage: config.stageLabel,
+        responseLength: fullText.length,
+        attempt: attempt + 1,
+      }, config.group)
 
-${buildBibleContextPrompt(options?.bible)}
+      const parsed = config.parse(fullText)
+      const logEntry = config.buildLogEntry(parsed)
 
-${DEAKINS_RULES}
+      devlog.breakdown(config.stageLogType, logEntry.title, logEntry.details, logEntry.meta, config.group)
+      return parsed
+    } catch (error) {
+      lastError = error
 
-${SHOT_TRANSITION_RULES}
+      if (attempt === 0 && isRetriableStageError(error)) {
+        devlog.breakdown("breakdown_request", `${config.stageLabel} retry`, getErrorMessage(error), {
+          stage: config.stageLabel,
+          attempt: attempt + 2,
+          reason: getErrorMessage(error),
+        }, config.group)
+        attempt += 1
+        continue
+      }
 
-IMPORTANT: When creating your shot sequence, verify each shot transition 
-follows the rules above. Check that no two adjacent shots break the 
-continuity guidelines. Your sequence should have a clear visual rhythm.
-
-PROJECT VISUAL STYLE: ${style}
-All imagePrompt values MUST incorporate this visual style.
-All videoPrompt values MUST reference this style.
-Do NOT hardcode "film noir" — use the style above.
-
-RESPOND ONLY with valid JSON array. No markdown, no backticks, no explanation.
-Each object in the array:
-{
-  "label": "КРП — Дрожащие руки Бориса",
-  "shotSize": "EXTREME CLOSE-UP",
-  "cameraMotion": "Static",
-  "duration": 2500,
-  "caption": "Крупно на руки Бориса, перебирающего документы. Пальцы дрожат, фотография выскальзывает из стопки.",
-  "directorNote": "CU, акцент на деталях, держим 2-3 сек. Этот кадр устанавливает тревожность до того как мы увидим лицо.",
-  "cameraNote": "85mm, f1.8, shoulder rig, micro movement допустим. Focus breathing лёгкий. Key light — TV glow screen-left (60%), bounce fill минимальный. ISO 2000, WB 3200K.",
-  "imagePrompt": "extreme close-up weathered male hands over scattered papers on dark wooden desk, cigarette ash on documents, faded photograph half exposed from pile, single TV glow from screen-left casting harsh shadows across knuckles, shallow DOF at 85mm f1.8, dust in light beam, background falling into deep black bokeh, ${style}, 16:9",
-  "videoPrompt": "extreme close-up trembling hands holding papers, ash falling from cigarette, slow subtle handheld micro-movement, shallow depth of field, TV flicker light source from left, suspense mood, film grain, 24fps, 2.5 seconds, visual style ${style}",
-  "notes": "Lens: 85mm f1.8. Sound: paper rustling, clock ticking. Motivated by: establishing anxiety before face reveal.",
-  "type": "image"
-}
-
-FOR EACH SHOT, PROVIDE 5 LAYERS:
-
-1. "caption" — LITERARY (screenplay language, Russian if screenplay is Russian)
-   What happens in the story. For the director to understand the dramatic beat.
-
-2. "directorNote" — DIRECTOR (screenplay language)
-   Shot rhythm, hold time, dramatic purpose, editorial intent.
-   Example: "WS establishing, hold 4-5 sec, isolation feel. Cut on the flinch."
-
-3. "cameraNote" — CINEMATOGRAPHER (mixed, technical terms in English)
-   Exact lens, aperture, ISO, white balance, camera height, rig type.
-   Light sources: key %, fill %, what creates them (TV, window, lamp).
-   Camera movement speed, stabilization method.
-   Example: "85mm f1.8, shoulder rig. TV key light 60% screen-left, WB 3200K. ISO 2000."
-
-4. "imagePrompt" — PHOTO PROMPT (English only)
-   Built FROM the cameraNote. Describes the FROZEN FRAME as a photograph.
-   Include: subject, foreground, midground, background, light direction and quality,
-   depth of field, film stock look, aspect ratio.
-  Must end with the project visual style directive provided above.
-   NO action verbs (no "walking", "running"). Only static description.
-
-5. "videoPrompt" — VIDEO PROMPT (English only)
-   Built FROM imagePrompt + adds MOTION: camera movement, subject movement,
-   duration, frame rate, pacing.
-   Example: "slow push-in, man walks to window, 3 seconds, subtle handheld, 24fps"
-
-CRITICAL RULES FOR imagePrompt:
-- ALWAYS describe light SOURCE and DIRECTION (screen-left, screen-right, above, behind)
-- ALWAYS describe what is IN FOCUS and what is BOKEH
-- ALWAYS mention lens focal length look (wide distortion / telephoto compression)
-- NEVER use the word "cinematic" alone — be specific about WHY it looks cinematic
-- Describe the frame as a PHOTOGRAPH, not an action
-- Bad: "man walks to window dramatically"
-- Good: "silhouette of man framed against bright window, back to camera, hand reaching for curtain, strong backlight creating rim light on shoulders, deep shadow on face, 35mm wide distortion, shallow focus on hand"
-
-Give 6-12 shots per scene depending on complexity.
-For action-heavy scenes: 8-12 shots.
-For dialogue scenes: 6-10 shots (including reactions).
-For transitional/atmospheric scenes: 4-6 shots.
-
-Think about PACING: start slow (wide, static), build tension (tighter, movement), climax (ECU, handheld), resolve (pull back).`
-}
-
-function buildBreakdownUserMessage(sceneText: string): string {
-  return `Break down this scene into shots:\n\n${sceneText.trim()}`
-}
-
-function extractJsonArray(rawText: string): string {
-  const trimmed = rawText.trim()
-
-  if (trimmed.startsWith("[")) {
-    return trimmed
+      break
+    }
   }
 
-  const startIndex = trimmed.indexOf("[")
-  const endIndex = trimmed.lastIndexOf("]")
-
-  if (startIndex === -1 || endIndex === -1 || endIndex <= startIndex) {
-    throw new Error("Jenkins returned invalid JSON array")
-  }
-
-  return trimmed.slice(startIndex, endIndex + 1)
+  throw new Error(`${config.stageLabel} failed: ${getErrorMessage(lastError)}`)
 }
 
-function normalizeShot(item: unknown, index: number): JenkinsShot {
-  const shot = typeof item === "object" && item !== null ? item as Record<string, unknown> : {}
+function composeJenkinsShot(spec: ShotSpec, composed: PromptComposerShot | undefined, index: number): JenkinsShot {
+  const legacy = shotSpecToTimelineShot(spec, {
+    duration: composed?.duration,
+    type: "image",
+  })
 
   return {
-    label: typeof shot.label === "string" && shot.label.trim()
-      ? shot.label
-      : `Shot ${index + 1}`,
+    label: composed?.label || legacy.label || `Shot ${index + 1}`,
     type: "image",
-    duration: typeof shot.duration === "number" && Number.isFinite(shot.duration)
-      ? shot.duration
-      : 3000,
-    notes: typeof shot.notes === "string" ? shot.notes : "",
-    shotSize: typeof shot.shotSize === "string" ? shot.shotSize : undefined,
-    cameraMotion: typeof shot.cameraMotion === "string" ? shot.cameraMotion : undefined,
-    caption: typeof shot.caption === "string" ? shot.caption : undefined,
-    directorNote: typeof shot.directorNote === "string" ? shot.directorNote : undefined,
-    cameraNote: typeof shot.cameraNote === "string" ? shot.cameraNote : undefined,
-    videoPrompt: typeof shot.videoPrompt === "string" ? shot.videoPrompt : undefined,
-    imagePrompt: typeof shot.imagePrompt === "string" ? shot.imagePrompt : undefined,
-    visualDescription: typeof shot.visualDescription === "string" ? shot.visualDescription : undefined,
+    duration: composed?.duration ?? legacy.duration,
+    notes: composed?.notes || legacy.notes,
+    shotSize: composed?.shotSize || legacy.shotSize || undefined,
+    cameraMotion: composed?.cameraMotion || legacy.cameraMotion || undefined,
+    caption: composed?.caption || legacy.caption || undefined,
+    directorNote: composed?.directorNote || legacy.directorNote || undefined,
+    cameraNote: composed?.cameraNote || legacy.cameraNote || undefined,
+    videoPrompt: composed?.videoPrompt || legacy.videoPrompt || undefined,
+    imagePrompt: composed?.imagePrompt || legacy.imagePrompt || undefined,
+    visualDescription: composed?.visualDescription || legacy.visualDescription || undefined,
   }
 }
 
 export async function breakdownScene(
   sceneText: string,
   optionsOrModelId?: BreakdownOptions | string,
-): Promise<{ shots: JenkinsShot[] }> {
+): Promise<BreakdownResult> {
   const normalizedSceneText = sceneText.trim()
 
   if (!normalizedSceneText) {
-    return { shots: [] }
+    return {
+      shots: [],
+      diagnostics: {
+        usedFallback: false,
+        shotPlannerFallback: false,
+        promptComposerFallback: false,
+      },
+    }
   }
 
   const opts: BreakdownOptions = typeof optionsOrModelId === "string"
     ? { modelId: optionsOrModelId }
     : optionsOrModelId ?? {}
   const modelId = opts.modelId ?? DEFAULT_TEXT_MODEL_ID
-  const group = `breakdown-${opts.sceneId || Date.now()}`
-  const systemPrompt = buildJenkinsSystemPrompt(opts)
-  const userMessage = buildBreakdownUserMessage(normalizedSceneText)
+  const sceneId = opts.sceneId ?? `scene-${Date.now()}`
+  const group = `breakdown-${sceneId}`
+  let usedShotPlannerFallback = false
+  let usedPromptComposerFallback = false
 
   devlog.breakdown("breakdown_start", `Breakdown: ${normalizedSceneText.slice(0, 60)}...`, "", {
-    sceneId: opts.sceneId,
+    sceneId,
     modelId,
     textLength: normalizedSceneText.length,
   }, group)
 
-  devlog.breakdown("breakdown_prompt", "System prompt", systemPrompt, {
-    hasBible: !!opts.bible,
-    characterCount: opts.bible?.characters.length || 0,
-    locationCount: opts.bible?.locations.length || 0,
-  }, group)
-
-  devlog.breakdown("breakdown_request", "User message", userMessage, {}, group)
-
   try {
-    const response = await fetch("/api/chat", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        messages: [{ role: "user", content: userMessage }],
-        modelId,
-        system: systemPrompt,
+    const analysis = await executeStage<SceneAnalysis>({
+      stageLabel: "Scene Analyst",
+      stageLogType: "breakdown_scene_analysis",
+      systemPrompt: buildSceneAnalystSystemPrompt({ sceneId, bible: opts.bible, style: opts.style }),
+      userMessage: buildSceneAnalystUserMessage(normalizedSceneText),
+      modelId,
+      group,
+      parse: (rawText) => parseSceneAnalysisResponse(rawText, { sceneId, bible: opts.bible, style: opts.style }),
+      buildLogEntry: (parsed) => ({
+        title: `Scene Analyst produced ${parsed.dramaticBeats.length} beats`,
+        details: JSON.stringify(parsed, null, 2),
+        meta: {
+          sceneId,
+          beatCount: parsed.dramaticBeats.length,
+          recommendedShotCount: parsed.recommendedShotCount,
+        },
       }),
     })
 
-    if (!response.ok) {
-      const errorText = await response.text()
-      throw new Error(`Jenkins breakdown failed: ${errorText}`)
+    let shotSpecs: ShotSpec[]
+
+    try {
+      shotSpecs = await executeStage<ShotSpec[]>({
+        stageLabel: "Shot Planner",
+        stageLogType: "breakdown_shot_plan",
+        systemPrompt: buildShotPlannerSystemPrompt({ sceneId, bible: opts.bible, style: opts.style }),
+        userMessage: buildShotPlannerUserMessage({ sceneId, analysis, sceneText: normalizedSceneText, bible: opts.bible, style: opts.style }),
+        modelId,
+        group,
+        parse: (rawText) => parseShotPlannerResponse(rawText, sceneId),
+        buildLogEntry: (parsed) => ({
+          title: `Shot Planner produced ${parsed.length} shots`,
+          details: JSON.stringify(parsed, null, 2),
+          meta: {
+            sceneId,
+            shotCount: parsed.length,
+            shotIds: parsed.map((shot) => shot.id),
+          },
+        }),
+      })
+    } catch (error) {
+      usedShotPlannerFallback = true
+      shotSpecs = composeShotSpecsLocally({
+        sceneId,
+        analysis,
+        sceneText: normalizedSceneText,
+        bible: opts.bible,
+        style: opts.style,
+      })
+
+      devlog.breakdown("breakdown_shot_plan", "Shot Planner fallback used", JSON.stringify(shotSpecs, null, 2), {
+        sceneId,
+        reason: getErrorMessage(error),
+        shotCount: shotSpecs.length,
+        fallback: "local-shot-planner",
+      }, group)
     }
 
-    const reader = response.body?.getReader()
-    if (!reader) throw new Error("No response body")
+    const continuity = superviseShotContinuity(shotSpecs)
 
-    const decoder = new TextDecoder()
-    let fullText = ""
-
-    for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
-      fullText += decoder.decode(value, { stream: true })
-    }
-
-    fullText += decoder.decode()
-
-    devlog.breakdown("breakdown_response", "Raw AI response", fullText, {
-      responseLength: fullText.length,
+    devlog.breakdown("breakdown_continuity_memory", `Continuity memory created for ${continuity.memories.length} shots`, JSON.stringify(continuity.memories, null, 2), {
+      sceneId,
+      memoryCount: continuity.memories.length,
     }, group)
 
-    const parsed: unknown = JSON.parse(extractJsonArray(fullText))
+    devlog.breakdown("breakdown_continuity_risks", `Continuity supervisor found ${continuity.risks.length} risks`, JSON.stringify(continuity.risks, null, 2), {
+      sceneId,
+      riskCount: continuity.risks.length,
+    }, group)
 
-    if (!Array.isArray(parsed)) {
-      throw new Error("Jenkins returned non-array response")
+    devlog.breakdown("breakdown_continuity_enriched", `Continuity enriched ${continuity.shots.length} shots`, JSON.stringify(continuity.shots, null, 2), {
+      sceneId,
+      shotCount: continuity.shots.length,
+    }, group)
+
+    devlog.breakdown("breakdown_shot_relations", `Derived ${continuity.relations.length} shot relations`, JSON.stringify(continuity.relations, null, 2), {
+      sceneId,
+      relationCount: continuity.relations.length,
+      relationIntents: continuity.relations.map((relation) => relation.relationIntent),
+    }, group)
+
+    let composedShots: PromptComposerShot[]
+
+    try {
+      composedShots = await executeStage<PromptComposerShot[]>({
+        stageLabel: "Prompt Composer",
+        stageLogType: "breakdown_prompt_compose",
+        systemPrompt: buildPromptComposerSystemPrompt({ sceneId, bible: opts.bible, style: opts.style }),
+        userMessage: buildPromptComposerUserMessage({
+          sceneId,
+          analysis,
+          sceneText: normalizedSceneText,
+          shots: continuity.shots,
+          memories: continuity.memories,
+          relations: continuity.relations,
+          bible: opts.bible,
+          style: opts.style,
+        }),
+        modelId,
+        group,
+        parse: (rawText) => parsePromptComposerResponse(rawText, continuity.shots, continuity.memories, continuity.relations, opts.style),
+        buildLogEntry: (parsed) => ({
+          title: `Prompt Composer produced ${parsed.length} prompt packages`,
+          details: JSON.stringify(parsed, null, 2),
+          meta: {
+            sceneId,
+            shotCount: parsed.length,
+            promptShotIds: parsed.map((shot) => shot.shotId),
+          },
+        }),
+      })
+    } catch (error) {
+      usedPromptComposerFallback = true
+      composedShots = composePromptPackagesLocally({
+        sceneId,
+        analysis,
+        sceneText: normalizedSceneText,
+        shots: continuity.shots,
+        memories: continuity.memories,
+        relations: continuity.relations,
+        bible: opts.bible,
+        style: opts.style,
+      })
+
+      devlog.breakdown("breakdown_prompt_compose", "Prompt Composer fallback used", JSON.stringify(composedShots, null, 2), {
+        sceneId,
+        reason: getErrorMessage(error),
+        shotCount: composedShots.length,
+        fallback: "local-composer",
+      }, group)
     }
 
-    const shots = parsed.map(normalizeShot)
+    const composedById = new Map(composedShots.map((shot) => [shot.shotId, shot]))
+    const shots = continuity.shots.map((spec, index) => composeJenkinsShot(spec, composedById.get(spec.id), index))
 
     devlog.breakdown("breakdown_result", `Parsed ${shots.length} shots`, JSON.stringify(shots, null, 2), {
+      sceneId,
       shotCount: shots.length,
       labels: shots.map((shot) => shot.label),
     }, group)
 
-    return { shots }
+    return {
+      shots,
+      diagnostics: {
+        usedFallback: usedShotPlannerFallback || usedPromptComposerFallback,
+        shotPlannerFallback: usedShotPlannerFallback,
+        promptComposerFallback: usedPromptComposerFallback,
+      },
+    }
   } catch (error) {
-    devlog.breakdown("breakdown_error", "Breakdown failed", String(error), {
-      sceneId: opts.sceneId,
+    devlog.breakdown("breakdown_error", "Breakdown failed", getErrorMessage(error), {
+      sceneId,
     }, group)
     throw error
   }

@@ -45,7 +45,7 @@ import { useNavigationStore } from '@/store/navigation'
 import { useProjectsStore } from '@/store/projects'
 import { useScenesStore } from '@/store/scenes'
 import { useScriptStore } from '@/store/script'
-import { useTimelineStore } from '@/store/timeline'
+import { createTimelineShot, useTimelineStore } from '@/store/timeline'
 
 type NodeScreenRect = {
   x: number
@@ -258,40 +258,68 @@ export default function Canvas({ onBack }: CanvasProps) {
     setBreakdownStatusByScene((prev) => ({ ...prev, [sceneId]: 'running' }))
 
     try {
-      const { shots: jenkinsShots } = await breakdownScene(sceneText, {
+      const existingSceneShots = useTimelineStore.getState().shots.filter((shot) => shot.sceneId === scene.id)
+      const { shots: jenkinsShots, diagnostics } = await breakdownScene(sceneText, {
         sceneId: scene.id,
         blockIds: scene.blockIds,
         bible,
       })
 
-      const addShot = useTimelineStore.getState().addShot
+      if (diagnostics.usedFallback && existingSceneShots.length > 0) {
+        devlog.warn(
+          'Board scene breakdown preserved existing shots',
+          'Fallback mode was used, so the existing scene storyboard was kept instead of being overwritten.',
+          {
+            sceneId: scene.id,
+            existingShotCount: existingSceneShots.length,
+            ...diagnostics,
+          },
+        )
+        setBreakdownStatusByScene((prev) => ({ ...prev, [sceneId]: 'done' }))
+        setExpandedSceneIds(new Set([sceneId]))
+        setExpandedShotIds(new Set(existingSceneShots[0] ? [existingSceneShots[0].id] : []))
+        return
+      }
+
+      const reorderShots = useTimelineStore.getState().reorderShots
       const firstBlockId = scene.blockIds[0] ?? ''
       const lastBlockId = scene.blockIds[scene.blockIds.length - 1] ?? ''
+      const preservedShots = useTimelineStore.getState().shots.filter((shot) => shot.sceneId !== scene.id)
+      const replacementShots = jenkinsShots.map((shot) => createTimelineShot({
+        label: shot.label,
+        shotSize: shot.shotSize ?? '',
+        cameraMotion: shot.cameraMotion ?? '',
+        duration: shot.duration,
+        caption: shot.caption ?? '',
+        directorNote: shot.directorNote ?? '',
+        cameraNote: shot.cameraNote ?? '',
+        imagePrompt: shot.imagePrompt ?? '',
+        videoPrompt: shot.videoPrompt ?? '',
+        visualDescription: shot.visualDescription ?? '',
+        notes: shot.notes,
+        type: shot.type || 'image',
+        sceneId: scene.id,
+        blockRange: firstBlockId && lastBlockId ? [firstBlockId, lastBlockId] : null,
+        locked: true,
+        sourceText: sceneText,
+      }))
 
-      for (const shot of jenkinsShots) {
-        addShot({
-          label: shot.label,
-          shotSize: shot.shotSize ?? '',
-          cameraMotion: shot.cameraMotion ?? '',
-          duration: shot.duration,
-          caption: shot.caption ?? '',
-          directorNote: shot.directorNote ?? '',
-          cameraNote: shot.cameraNote ?? '',
-          imagePrompt: shot.imagePrompt ?? '',
-          videoPrompt: shot.videoPrompt ?? '',
-          visualDescription: shot.visualDescription ?? '',
-          notes: shot.notes,
-          type: shot.type || 'image',
-          sceneId: scene.id,
-          blockRange: firstBlockId && lastBlockId ? [firstBlockId, lastBlockId] : null,
-          locked: true,
-          sourceText: sceneText,
-        })
+      reorderShots([...preservedShots, ...replacementShots])
+      if (diagnostics.usedFallback) {
+        devlog.warn(
+          'Board scene breakdown used fallback',
+          'Fallback mode completed and replaced the scene because there was no prior scene result to protect.',
+          {
+            sceneId: scene.id,
+            shotCount: replacementShots.length,
+            ...diagnostics,
+          },
+        )
       }
 
       setBreakdownStatusByScene((prev) => ({ ...prev, [sceneId]: 'done' }))
       setExpandedSceneIds(new Set([sceneId]))
-      setExpandedShotIds(new Set())
+      setExpandedShotIds(new Set(replacementShots[0] ? [replacementShots[0].id] : []))
     } catch (error) {
       console.error('Pipeline breakdown error:', error)
       setBreakdownStatusByScene((prev) => ({ ...prev, [sceneId]: 'idle' }))
