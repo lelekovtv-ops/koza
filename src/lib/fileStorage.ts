@@ -41,6 +41,15 @@ export async function saveBlob(fileId: string, blob: Blob): Promise<void> {
   })
 }
 
+export async function trySaveBlob(fileId: string, blob: Blob): Promise<boolean> {
+  try {
+    await saveBlob(fileId, blob)
+    return true
+  } catch {
+    return false
+  }
+}
+
 export async function loadBlob(fileId: string): Promise<string | null> {
   const db = await openDb()
 

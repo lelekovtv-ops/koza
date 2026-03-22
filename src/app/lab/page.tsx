@@ -223,6 +223,16 @@ async function readStreamingText(response: Response): Promise<string> {
   return fullText
 }
 
+async function readApiError(response: Response): Promise<string> {
+  try {
+    const payload = await response.json() as { error?: string; details?: string; message?: string }
+    return payload.details || payload.error || payload.message || `Request failed: ${response.status}`
+  } catch {
+    const text = await response.text().catch(() => "")
+    return text || `Request failed: ${response.status}`
+  }
+}
+
 function buildBiblePromptSummary(characters: CharacterEntry[], locations: LocationEntry[]): string {
   const characterLines = characters.length > 0
     ? characters.map((character) => `- ${character.name}: ${character.description || "No description yet"}${character.appearancePrompt ? ` [Visual: ${character.appearancePrompt}]` : ""}`).join("\n")
@@ -466,6 +476,7 @@ function LabPageContent() {
 
   const [generationRunningShotId, setGenerationRunningShotId] = useState<string | null>(null)
   const [generationSnapshots, setGenerationSnapshots] = useState<Record<string, GenerationSnapshot>>({})
+  const [generationError, setGenerationError] = useState<string | null>(null)
   const [resultsGallery, setResultsGallery] = useState<GalleryItem[]>([])
 
   const [assistantOpen, setAssistantOpen] = useState(true)
@@ -811,11 +822,7 @@ function LabPageContent() {
     }))
 
     const prompt = finalPromptDrafts[shot.id] ?? buildImagePrompt(timelineShot, allShots, characters, locations, projectStyle)
-    const references = await convertReferenceImagesToDataUrls(getShotGenerationReferenceImages(timelineShot, characters, locations))
     const endpoint = selectedImageGenModel === "gpt-image" ? "/api/gpt-image" : "/api/nano-banana"
-    const body = selectedImageGenModel === "gpt-image"
-      ? { prompt, referenceImages: references }
-      : { prompt, model: selectedImageGenModel, referenceImages: references }
     const group = `lab-image-${shot.id}-${Date.now()}`
     const startedAt = Date.now()
 
@@ -829,8 +836,14 @@ function LabPageContent() {
 
     setSelectedShotId(shot.id)
     setGenerationRunningShotId(shot.id)
+    setGenerationError(null)
 
     try {
+      const references = await convertReferenceImagesToDataUrls(getShotGenerationReferenceImages(timelineShot, characters, locations))
+      const body = selectedImageGenModel === "gpt-image"
+        ? { prompt, referenceImages: references }
+        : { prompt, model: selectedImageGenModel, referenceImages: references }
+
       const response = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -838,8 +851,7 @@ function LabPageContent() {
       })
 
       if (!response.ok) {
-        const errorText = await response.text()
-        throw new Error(errorText || `Image generation failed: ${response.status}`)
+        throw new Error(await readApiError(response))
       }
 
       const blob = await response.blob()
@@ -854,6 +866,7 @@ function LabPageContent() {
       }
 
       setGenerationSnapshots((current) => ({ ...current, [shot.id]: snapshot }))
+      setGenerationError(null)
 
       devlog.image("image_result", `Pipeline Lab generated ${shot.label}`, "", {
         shotId: shot.id,
@@ -862,6 +875,7 @@ function LabPageContent() {
       }, group)
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
+      setGenerationError(message)
       devlog.image("image_error", `Pipeline Lab generation failed: ${shot.label}`, message, {
         shotId: shot.id,
         model: selectedImageGenModel,
@@ -873,7 +887,6 @@ function LabPageContent() {
 
   const handleGenerateAll = async () => {
     for (const shot of parsedShots) {
-      // eslint-disable-next-line no-await-in-loop
       await generateImageForShot(shot)
     }
   }
@@ -963,6 +976,7 @@ function LabPageContent() {
     setRawExpanded(false)
     setResultsGallery([])
     setGenerationSnapshots({})
+    setGenerationError(null)
     setFinalPromptDrafts({})
     setAssistantMessages([])
     setCustomSystemPrompt(defaultSystemPrompt)
@@ -1520,6 +1534,12 @@ function LabPageContent() {
               <PipelineBlock title="GENERATION" badge={currentGeneration ? currentGeneration.model : "Idle"} accent="#4A6F7C">
                 {currentGeneration ? (
                   <div className="space-y-3">
+                    {generationError ? (
+                      <div className="rounded-md border border-[#A84B4B]/35 bg-[#A84B4B]/10 p-3 text-sm text-[#F0B5B5]">
+                        {generationError}
+                      </div>
+                    ) : null}
+
                     <div className="flex flex-wrap items-center gap-3 text-sm text-white/65">
                       <span>endpoint: {currentGeneration.endpoint}</span>
                       <span>model: {currentGeneration.model}</span>
@@ -1543,6 +1563,8 @@ function LabPageContent() {
                       </button>
                     </div>
                   </div>
+                ) : generationError ? (
+                  <div className="rounded-md border border-[#A84B4B]/35 bg-[#A84B4B]/10 p-4 text-sm text-[#F0B5B5]">{generationError}</div>
                 ) : (
                   <div className="rounded-md border border-white/8 bg-white/3 p-4 text-sm text-white/45">Generate an image from a shot to inspect endpoint, model, timing, and preview here.</div>
                 )}

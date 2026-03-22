@@ -5,7 +5,7 @@ import Link from "next/link"
 import { useEffect, useMemo, useRef, useState } from "react"
 import { BookOpen, Loader2, MapPin, Plus, Upload, User, Wand2 } from "lucide-react"
 import { type BibleReferenceImage, type CharacterEntry, type LocationEntry } from "@/lib/bibleParser"
-import { deleteBlob, saveBlob } from "@/lib/fileStorage"
+import { deleteBlob, saveBlob, trySaveBlob } from "@/lib/fileStorage"
 import {
   convertReferenceImagesToDataUrls,
   getCharacterGenerationReferenceImages,
@@ -81,7 +81,12 @@ async function replaceBlobImage(currentUrl: string | null, currentBlobKey: strin
     URL.revokeObjectURL(currentUrl)
   }
 
-  await saveBlob(nextBlobKey, blob)
+  const persisted = await trySaveBlob(nextBlobKey, blob)
+
+  if (!persisted) {
+    console.warn("[KOZA] Bible image generated without IndexedDB persistence")
+  }
+
   return URL.createObjectURL(blob)
 }
 

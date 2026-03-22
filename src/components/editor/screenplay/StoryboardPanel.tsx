@@ -11,7 +11,7 @@ import { useScriptStore } from "@/store/script"
 import { useScenesStore } from "@/store/scenes"
 import { useNavigationStore } from "@/store/navigation"
 import { breakdownScene } from "@/lib/jenkins"
-import { saveBlob } from "@/lib/fileStorage"
+import { trySaveBlob } from "@/lib/fileStorage"
 import { convertReferenceImagesToDataUrls, getShotGenerationReferenceImages } from "@/lib/imageGenerationReferences"
 import { buildImagePrompt, buildVideoPrompt, getReferencedBibleEntries } from "@/lib/promptBuilder"
 import { ProjectStylePicker } from "@/components/ui/ProjectStylePicker"
@@ -130,7 +130,7 @@ function InlineText({ value, onChange, placeholder, multiline }: { value: string
 async function generateShotImage(
   shot: TimelineShot,
   allShots: TimelineShot[],
-): Promise<string> {
+): Promise<{ objectUrl: string; blobKey: string | null }> {
   const { characters, locations } = useBibleStore.getState()
   const { selectedImageGenModel, projectStyle } = useBoardStore.getState()
   const selectedModel = selectedImageGenModel || "nano-banana-2"
@@ -199,7 +199,7 @@ async function generateShotImage(
 
     const blob = await response.blob()
     const blobKey = `shot-thumb-${shot.id}`
-    await saveBlob(blobKey, blob)
+    const persisted = await trySaveBlob(blobKey, blob)
 
     const projectId = useProjectsStore.getState().activeProjectId || "global"
     const objectUrl = URL.createObjectURL(blob)
@@ -224,11 +224,19 @@ async function generateShotImage(
       timing: Date.now() - start,
       blobSize: blob.size,
       model: selectedModel,
+      persisted,
     }, group)
+
+    if (!persisted) {
+      devlog.warn("Image cache unavailable", "The image was generated, but local blob persistence failed. The preview will work until reload.", {
+        shotId: shot.id,
+        model: selectedModel,
+      })
+    }
 
     console.log(`[KOZA] Image generated in ${Date.now() - start}ms via ${selectedModel}`)
 
-    return objectUrl
+    return { objectUrl, blobKey: persisted ? blobKey : null }
   } catch (error) {
     devlog.image("image_error", "Generation failed", String(error), {
       shotId: shot.id,
@@ -487,11 +495,11 @@ export function StoryboardPanel({
     if (!shot || generatingIds.has(shotId)) return
     setGeneratingIds((prev) => new Set(prev).add(shotId))
     try {
-      const objectUrl = await generateShotImage(shot, shots)
+      const result = await generateShotImage(shot, shots)
 
       updateShot(shotId, {
-        thumbnailUrl: objectUrl,
-        thumbnailBlobKey: `shot-thumb-${shot.id}`,
+        thumbnailUrl: result.objectUrl,
+        thumbnailBlobKey: result.blobKey,
       })
     } catch (error) {
       console.error("Image generation error:", error)

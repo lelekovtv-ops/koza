@@ -34,7 +34,7 @@ import StyleNode from './nodes/StyleNode'
 import ScriptWriterOverlay from '@/components/editor/ScriptWriterOverlay'
 import { KozaLogo } from "@/components/ui/KozaLogo";
 import { buildProjectGraph } from '@/lib/boardGraphBuilder'
-import { saveBlob } from '@/lib/fileStorage'
+import { trySaveBlob } from '@/lib/fileStorage'
 import { breakdownScene } from '@/lib/jenkins'
 import { buildImagePrompt, getReferencedBibleEntries } from '@/lib/promptBuilder'
 import { useBibleStore } from '@/store/bible'
@@ -382,12 +382,12 @@ export default function Canvas({ onBack }: CanvasProps) {
 
       const blob = await response.blob()
       const blobKey = `shot-thumb-${shotId}`
-      await saveBlob(blobKey, blob)
+      const persisted = await trySaveBlob(blobKey, blob)
       const objectUrl = URL.createObjectURL(blob)
 
       useTimelineStore.getState().updateShot(shotId, {
         thumbnailUrl: objectUrl,
-        thumbnailBlobKey: blobKey,
+        thumbnailBlobKey: persisted ? blobKey : null,
       })
 
       const projectId = useProjectsStore.getState().activeProjectId || 'global'
@@ -411,7 +411,15 @@ export default function Canvas({ onBack }: CanvasProps) {
         timing: Date.now() - startTime,
         blobSize: blob.size,
         model: selectedModel,
+        persisted,
       }, group)
+
+      if (!persisted) {
+        devlog.warn('Image cache unavailable', 'The image was generated, but local blob persistence failed. The preview will work until reload.', {
+          shotId,
+          model: selectedModel,
+        })
+      }
 
       setImageGenStatusByShot((prev) => ({ ...prev, [shotId]: 'done' }))
     } catch (error) {
