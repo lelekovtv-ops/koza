@@ -20,7 +20,7 @@ import {
   type CinematicStyleContext,
   resolveStyleDirective,
 } from "@/lib/cinematic/stageUtils"
-import type { ShotContinuity, ShotSpec } from "@/types/cinematic"
+import type { ContinuityPromptBlocks, ShotContinuity, ShotSpec } from "@/types/cinematic"
 
 export interface ShotPlannerInput {
   sceneId: string
@@ -74,6 +74,17 @@ type ScreenplayCue = {
   weight: number
 }
 
+function normalizePromptBlocks(value: unknown): ContinuityPromptBlocks {
+  const blocks = typeof value === "object" && value !== null ? value as Record<string, unknown> : {}
+
+  return {
+    preserve: normalizeStringArray(blocks.preserve),
+    change: normalizeStringArray(blocks.change),
+    prepare: normalizeStringArray(blocks.prepare),
+    doNot: normalizeStringArray(blocks.doNot),
+  }
+}
+
 function normalizeContinuity(value: unknown): ShotContinuity {
   const continuity = typeof value === "object" && value !== null ? value as Record<string, unknown> : {}
 
@@ -90,6 +101,14 @@ function normalizeContinuity(value: unknown): ShotContinuity {
     setupForNext: normalizeString(continuity.setupForNext),
     lockedVisualAnchors: normalizeStringArray(continuity.lockedVisualAnchors),
     continuityWarnings: normalizeStringArray(continuity.continuityWarnings),
+    keyframeRole: normalizeString(continuity.keyframeRole) === "key"
+      ? "key"
+      : normalizeString(continuity.keyframeRole) === "insert"
+        ? "insert"
+        : "secondary",
+    keyframeReason: normalizeString(continuity.keyframeReason),
+    anchorShotId: normalizeString(continuity.anchorShotId) || null,
+    promptBlocks: normalizePromptBlocks(continuity.promptBlocks),
   }
 }
 
@@ -437,6 +456,15 @@ export function composeShotSpecsLocally(input: ShotPlannerInput): ShotSpec[] {
         setupForNext: index < targetCount - 1 ? transitionOut : "",
         lockedVisualAnchors: beat.visualAnchors,
         continuityWarnings: input.analysis.continuityRisks.slice(0, continuityWarningLimit),
+        keyframeRole: index === 0 ? "key" : shotSize === "insert" ? "insert" : "secondary",
+        keyframeReason: index === 0 ? "Opening anchor for the sequence." : "",
+        anchorShotId: index === 0 ? makeShotSpecId(input.sceneId, index) : null,
+        promptBlocks: {
+          preserve: [],
+          change: [],
+          prepare: [],
+          doNot: [],
+        },
       },
       transitionIn: index === 0 ? "open on established geography" : "continue from previous beat",
       transitionOut,

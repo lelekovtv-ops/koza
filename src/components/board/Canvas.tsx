@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, BookOpen, GitBranch } from 'lucide-react'
+import { ArrowLeft, BookOpen, GitBranch, WandSparkles } from 'lucide-react'
 import {
   Background,
   BackgroundVariant,
@@ -33,9 +33,9 @@ import ScriptDocNode from './nodes/ScriptDocNode'
 import StyleNode from './nodes/StyleNode'
 import ScriptWriterOverlay from '@/components/editor/ScriptWriterOverlay'
 import { KozaLogo } from "@/components/ui/KozaLogo";
+import { breakdownScene, buildBreakdownBibleContext, createSceneTimelineShotsFromBreakdown } from '@/features/breakdown'
 import { buildProjectGraph } from '@/lib/boardGraphBuilder'
 import { trySaveBlob } from '@/lib/fileStorage'
-import { breakdownScene } from '@/lib/jenkins'
 import { buildImagePrompt, getReferencedBibleEntries } from '@/lib/promptBuilder'
 import { useBibleStore } from '@/store/bible'
 import { useBoardStore } from '@/store/board'
@@ -45,7 +45,7 @@ import { useNavigationStore } from '@/store/navigation'
 import { useProjectsStore } from '@/store/projects'
 import { useScenesStore } from '@/store/scenes'
 import { useScriptStore } from '@/store/script'
-import { createTimelineShot, useTimelineStore } from '@/store/timeline'
+import { useTimelineStore } from '@/store/timeline'
 
 type NodeScreenRect = {
   x: number
@@ -241,19 +241,7 @@ export default function Canvas({ onBack }: CanvasProps) {
     if (!sceneText.trim()) return
 
     const { characters, locations } = useBibleStore.getState()
-    const bible = {
-      characters: characters.map((c) => ({
-        name: c.name,
-        description: c.description,
-        appearancePrompt: c.appearancePrompt,
-      })),
-      locations: locations.map((l) => ({
-        name: l.name,
-        description: l.description,
-        appearancePrompt: l.appearancePrompt,
-        intExt: l.intExt,
-      })),
-    }
+    const bible = buildBreakdownBibleContext(characters, locations)
 
     setBreakdownStatusByScene((prev) => ({ ...prev, [sceneId]: 'running' }))
 
@@ -282,27 +270,12 @@ export default function Canvas({ onBack }: CanvasProps) {
       }
 
       const reorderShots = useTimelineStore.getState().reorderShots
-      const firstBlockId = scene.blockIds[0] ?? ''
-      const lastBlockId = scene.blockIds[scene.blockIds.length - 1] ?? ''
       const preservedShots = useTimelineStore.getState().shots.filter((shot) => shot.sceneId !== scene.id)
-      const replacementShots = jenkinsShots.map((shot) => createTimelineShot({
-        label: shot.label,
-        shotSize: shot.shotSize ?? '',
-        cameraMotion: shot.cameraMotion ?? '',
-        duration: shot.duration,
-        caption: shot.caption ?? '',
-        directorNote: shot.directorNote ?? '',
-        cameraNote: shot.cameraNote ?? '',
-        imagePrompt: shot.imagePrompt ?? '',
-        videoPrompt: shot.videoPrompt ?? '',
-        visualDescription: shot.visualDescription ?? '',
-        notes: shot.notes,
-        type: shot.type || 'image',
+      const replacementShots = createSceneTimelineShotsFromBreakdown({
         sceneId: scene.id,
-        blockRange: firstBlockId && lastBlockId ? [firstBlockId, lastBlockId] : null,
-        locked: true,
-        sourceText: sceneText,
-      }))
+        sceneText,
+        sceneBlockIds: scene.blockIds,
+      }, jenkinsShots)
 
       reorderShots([...preservedShots, ...replacementShots])
       if (diagnostics.usedFallback) {
@@ -620,6 +593,13 @@ export default function Canvas({ onBack }: CanvasProps) {
         >
           <BookOpen className="h-4 w-4" />
           Bible
+        </button>
+        <button
+          onClick={() => router.push('/dev/breakdown-studio')}
+          className="flex items-center gap-2 rounded-lg bg-[#EAF4F6]/90 px-3 py-2 text-sm font-medium text-[#1D5C63] shadow-sm backdrop-blur transition-all hover:bg-white hover:shadow-md"
+        >
+          <WandSparkles className="h-4 w-4" />
+          Breakdown Studio
         </button>
         <button
           onClick={handleTogglePipeline}

@@ -393,7 +393,7 @@ export async function breakdownSceneDetailed(
       }, group)
     }
 
-    const continuity = superviseShotContinuity(shotSpecs)
+    const continuity = superviseShotContinuity(shotSpecs, opts.config)
 
     devlog.breakdown("breakdown_continuity_memory", `Continuity memory created for ${continuity.memories.length} shots`, JSON.stringify(continuity.memories, null, 2), {
       sceneId,

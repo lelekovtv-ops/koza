@@ -17,7 +17,7 @@ import {
   type CinematicStyleContext,
   resolveStyleDirective,
 } from "@/lib/cinematic/stageUtils"
-import type { ImagePromptPackage, ShotRelation, ShotSpec, VideoPromptPackage } from "@/types/cinematic"
+import type { ContinuityPromptBlocks, ImagePromptPackage, ShotRelation, ShotSpec, VideoPromptPackage } from "@/types/cinematic"
 
 export interface PromptComposerInput {
   sceneId: string
@@ -79,6 +79,10 @@ type PromptComposerShotPayload = {
     setupForNext: string
     lockedVisualAnchors: string[]
     continuityWarnings: string[]
+    keyframeRole: ShotSpec["continuity"]["keyframeRole"]
+    keyframeReason: string
+    anchorShotId: string | null
+    promptBlocks: ContinuityPromptBlocks
   }
 }
 
@@ -90,6 +94,9 @@ type PromptComposerMemoryPayload = {
   lightingState: string
   paletteState: string[]
   compositionSignature: string
+  keyframeRole: ShotMemory["keyframeRole"]
+  anchorShotId: string | null
+  promptBlocks: ContinuityPromptBlocks
 }
 
 type PromptComposerRelationPayload = {
@@ -171,6 +178,10 @@ function toPromptShotPayload(shot: ShotSpec): PromptComposerShotPayload {
       setupForNext: shot.continuity.setupForNext,
       lockedVisualAnchors: shot.continuity.lockedVisualAnchors,
       continuityWarnings: shot.continuity.continuityWarnings,
+      keyframeRole: shot.continuity.keyframeRole,
+      keyframeReason: shot.continuity.keyframeReason,
+      anchorShotId: shot.continuity.anchorShotId,
+      promptBlocks: shot.continuity.promptBlocks,
     },
   }
 }
@@ -184,6 +195,9 @@ function toPromptMemoryPayload(memory: ShotMemory): PromptComposerMemoryPayload 
     lightingState: memory.lightingState,
     paletteState: memory.paletteState,
     compositionSignature: memory.compositionSignature,
+    keyframeRole: memory.keyframeRole,
+    anchorShotId: memory.anchorShotId,
+    promptBlocks: memory.promptBlocks,
   }
 }
 
@@ -209,25 +223,55 @@ function cleanAnchors(values: string[]): string[] {
   return Array.from(new Set(values.map((value) => value.trim()).filter(Boolean)))
 }
 
+function formatPromptBlock(title: string, values: string[]): string {
+  const cleaned = cleanAnchors(values)
+  const body = cleaned.length > 0
+    ? cleaned.map((value) => `- ${value}`).join("\n")
+    : "- None."
+
+  return `${title}:\n${body}`
+}
+
+function joinPromptSections(values: Array<string | null | undefined>): string {
+  return values.map((value) => value?.trim() ?? "").filter(Boolean).join("\n")
+}
+
 function buildContinuityConstraintText(shot: ShotSpec, memory?: ShotMemory, nextMemory?: ShotMemory): string {
-  const lockedAnchors = cleanAnchors([...(memory?.lockedAnchors ?? []), ...shot.continuity.lockedVisualAnchors])
-  const preserveSentence = lockedAnchors.length > 0
-    ? `Preserve ${formatNaturalList(lockedAnchors)} from the previous shot continuity.`
-    : "Preserve the established visual continuity from the previous shot."
+  const promptBlocks = shot.continuity.promptBlocks
+  const fallbackPreserve = cleanAnchors([...(memory?.lockedAnchors ?? []), ...shot.continuity.lockedVisualAnchors])
+  const preserve = promptBlocks.preserve.length > 0
+    ? promptBlocks.preserve
+    : fallbackPreserve.length > 0
+      ? fallbackPreserve.map((value) => `Preserve ${value}.`)
+      : ["Preserve the established visual continuity from the previous shot."]
 
-  const mayChangeSentence = shot.continuity.continuityWarnings.length > 0
-    ? `Only allow changes that are intentional, because continuity risks include ${formatNaturalList(shot.continuity.continuityWarnings)}.`
-    : "Allow framing scale, lens emphasis, and blocking nuance to change only where the locked continuity anchors stay intact."
+  const change = promptBlocks.change.length > 0
+    ? promptBlocks.change
+    : shot.continuity.continuityWarnings.length > 0
+      ? [`Only allow intentional changes because known risks include ${formatNaturalList(shot.continuity.continuityWarnings)}.`]
+      : ["Change framing scale, lens emphasis, and blocking only where the locked continuity anchors stay intact."]
 
-  const prepareSentence = memory?.setupForNext || nextMemory?.setupForNext || shot.continuity.setupForNext
-    ? `Prepare visual continuity for the next shot: ${memory?.setupForNext || nextMemory?.setupForNext || shot.continuity.setupForNext}`
-    : "Prepare the next shot without breaking the established scene geography."
+  const prepare = promptBlocks.prepare.length > 0
+    ? promptBlocks.prepare
+    : [memory?.setupForNext || nextMemory?.setupForNext || shot.continuity.setupForNext || "Prepare the next shot without breaking the established scene geography."]
 
-  const carrySentence = memory?.carryOverInstructions || shot.continuity.carryOverFromPrevious
-    ? `Carry over from the previous shot: ${memory?.carryOverInstructions || shot.continuity.carryOverFromPrevious}`
-    : "Carry forward the same essential scene state from the previous shot."
+  const doNot = promptBlocks.doNot.length > 0
+    ? promptBlocks.doNot
+    : [memory?.carryOverInstructions || shot.continuity.carryOverFromPrevious || "Do not let the model freely alter the established world state."]
 
-  return [preserveSentence, mayChangeSentence, carrySentence, prepareSentence].join(" ")
+  const roleHeader = shot.continuity.keyframeRole === "key"
+    ? `KEY SHOT: ${shot.continuity.keyframeReason}`
+    : shot.continuity.anchorShotId
+      ? `ANCHOR SHOT: ${shot.continuity.anchorShotId}`
+      : ""
+
+  return joinPromptSections([
+    roleHeader,
+    formatPromptBlock("PRESERVE", preserve),
+    formatPromptBlock("CHANGE", change),
+    formatPromptBlock("PREPARE", prepare),
+    formatPromptBlock("DO NOT", doNot),
+  ])
 }
 
 function buildRelationTransitionText(relation?: ShotRelation): string {
@@ -295,7 +339,7 @@ function mergePromptWithContinuity(prompt: string, continuityConstraint: string)
   }
 
   const suffix = trimmedPrompt.endsWith(".") ? "" : "."
-  return `${trimmedPrompt}${suffix} ${continuityConstraint}`
+  return `${trimmedPrompt}${suffix}\n${continuityConstraint}`
 }
 
 function buildFallbackImagePackage(
@@ -305,7 +349,7 @@ function buildFallbackImagePackage(
 ): ImagePromptPackage {
   const continuityPrompt = continuityConstraint
 
-  const finalPrompt = [
+  const finalPrompt = joinPromptSections([
     shot.imagePromptBase,
     shot.subject,
     shot.environment,
@@ -313,7 +357,7 @@ function buildFallbackImagePackage(
     shot.palette.length > 0 ? `palette ${shot.palette.join(", ")}` : "",
     continuityPrompt,
     styleDirective,
-  ].map((value) => value.trim()).filter(Boolean).join(", ")
+  ])
 
   return {
     shotId: shot.id,
@@ -337,14 +381,14 @@ function buildFallbackVideoPackage(
 ): VideoPromptPackage {
   const continuityPrompt = continuityConstraint
   const transitionPrompt = compactText([relationTransition, shot.transitionIn, shot.transitionOut])
-  const finalPrompt = [
+  const finalPrompt = joinPromptSections([
     shot.videoPromptBase,
     shot.blocking,
     shot.camera,
     continuityPrompt,
     transitionPrompt,
     styleDirective,
-  ].map((value) => value.trim()).filter(Boolean).join(", ")
+  ])
 
   return {
     shotId: shot.id,
@@ -520,6 +564,8 @@ Rules:
 - Use the provided continuity memory to state what must remain identical, what may change, and what must prepare the next shot.
 - Use the provided shot relations to express transition logic in the video prompt.
 - Preserve continuity details from the ShotSpec continuity block.
+- continuityPrompt must preserve the exact section headers PRESERVE, CHANGE, PREPARE, and DO NOT.
+- If continuity.keyframeRole is key, treat that shot as canonical and avoid redefining it later unless CHANGE explicitly allows it.
 - Visual style directive: ${styleDirective}
 ${buildBreakdownConfigPrompt(input.config)}
 ${buildBibleContextPrompt(input.bible)}

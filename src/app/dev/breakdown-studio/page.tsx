@@ -5,6 +5,8 @@ import {
   ChevronDown,
   ChevronRight,
   FolderOpen,
+  ImageIcon,
+  Loader2,
   Play,
   RefreshCcw,
   Save,
@@ -14,14 +16,20 @@ import {
 } from "lucide-react"
 import { useEffect, useMemo, useState, type ReactNode } from "react"
 import {
-  DEFAULT_BREAKDOWN_ENGINE_CONFIG,
-  type BreakdownEngineConfig,
-} from "@/lib/cinematic/config"
-import {
   breakdownSceneDetailed,
+  buildBreakdownBibleContext,
+  DEFAULT_BREAKDOWN_ENGINE_CONFIG,
   type BreakdownDetailedResult,
-} from "@/lib/jenkins"
-import { useBibleStore } from "@/store/bible"
+  type BreakdownEngineConfig,
+} from "@/features/breakdown"
+import {
+  getCharacterGenerationReferenceImages,
+  getLocationGenerationReferenceImages,
+  convertReferenceImagesToDataUrls,
+} from "@/lib/imageGenerationReferences"
+import { buildImagePrompt } from "@/lib/promptBuilder"
+import { useBibleStore, GENERATED_CANONICAL_IMAGE_ID } from "@/store/bible"
+import { useBoardStore } from "@/store/board"
 import { useProjectsStore } from "@/store/projects"
 
 type AssistantTarget = "analysis" | "actionSplit" | "shotPlan" | "continuity" | "prompts" | "all"
@@ -462,6 +470,17 @@ export default function BreakdownStudioPage() {
   const [assistantMessages, setAssistantMessages] = useState<AssistantMessage[]>([])
   const [rawOpenByStep, setRawOpenByStep] = useState<Record<string, boolean>>({})
 
+  // Image generator state
+  const selectedImageGenModel = useBoardStore((state) => state.selectedImageGenModel)
+  const setSelectedImageGenModel = useBoardStore((state) => state.setSelectedImageGenModel)
+  const [selectedGenShotId, setSelectedGenShotId] = useState<string | null>(null)
+  const [selectedGenCharacterId, setSelectedGenCharacterId] = useState<string | null>(null)
+  const [selectedGenLocationId, setSelectedGenLocationId] = useState<string | null>(null)
+  const [genImageUrl, setGenImageUrl] = useState<string | null>(null)
+  const [genLoading, setGenLoading] = useState(false)
+  const [genError, setGenError] = useState<string | null>(null)
+  const [genPromptOverride, setGenPromptOverride] = useState("")
+
   const projectOptions = useMemo(() => [
     { id: PROJECT_BIBLE_ID, name: "Текущая библия сценария" },
     ...projects.map((project) => ({ id: project.id, name: project.name })),
@@ -475,25 +494,105 @@ export default function BreakdownStudioPage() {
     [assistantGuidance, language, stylePrompt],
   )
 
-  const bibleContext = useMemo(() => ({
-    characters: characters.map((character) => ({
-      name: character.name,
-      description: character.description,
-      appearancePrompt: character.appearancePrompt,
-    })),
-    locations: locations.map((location) => ({
-      name: location.name,
-      description: location.description,
-      appearancePrompt: location.appearancePrompt,
-      intExt: location.intExt,
-    })),
-  }), [characters, locations])
+  const bibleContext = useMemo(() => buildBreakdownBibleContext(characters, locations), [characters, locations])
 
   const diagnosticsText = useMemo(() => summarizeDiagnostics(result), [result])
   const selectedProjectDefaults = useMemo(
     () => projectDefaults.find((entry) => entry.projectId === selectedProjectId) ?? null,
     [projectDefaults, selectedProjectId],
   )
+
+  const genCharacter = useMemo(
+    () => characters.find((c) => c.id === selectedGenCharacterId) ?? null,
+    [characters, selectedGenCharacterId],
+  )
+
+  const genLocation = useMemo(
+    () => locations.find((l) => l.id === selectedGenLocationId) ?? null,
+    [locations, selectedGenLocationId],
+  )
+
+  const genShotPackage = useMemo(
+    () => result?.promptPackages.find((p) => p.shotId === selectedGenShotId) ?? null,
+    [result, selectedGenShotId],
+  )
+
+  const genBasePrompt = useMemo(() => {
+    if (!genShotPackage) return ""
+    // Build a minimal stub TimelineShot so buildImagePrompt can be called
+    const stub = {
+      id: genShotPackage.shotId,
+      sceneId: "",
+      label: genShotPackage.label ?? "",
+      imagePrompt: genShotPackage.imagePrompt ?? "",
+      videoPrompt: genShotPackage.videoPrompt ?? "",
+      directorNote: genShotPackage.directorNote ?? "",
+      cameraNote: genShotPackage.cameraNote ?? "",
+      caption: genShotPackage.label ?? "",
+      shotSize: "",
+      cameraMotion: "",
+      notes: "",
+      visualDescription: "",
+      characterIds: genCharacter ? [genCharacter.id] : [],
+      locationId: genLocation?.id ?? null,
+    }
+    return buildImagePrompt(
+      stub as Parameters<typeof buildImagePrompt>[0],
+      [],
+      genCharacter ? [genCharacter] : [],
+      genLocation ? [genLocation] : [],
+      stylePrompt || undefined,
+    )
+  }, [genShotPackage, genCharacter, genLocation, stylePrompt])
+
+  const genPrompt = genPromptOverride || genBasePrompt
+
+  const generateImage = async () => {
+    const promptText = genPrompt.trim()
+    if (!promptText) {
+      setGenError("Сначала выберите кадр с промптом.")
+      return
+    }
+
+    setGenLoading(true)
+    setGenError(null)
+    setGenImageUrl(null)
+
+    try {
+      const charRefs = genCharacter
+        ? await convertReferenceImagesToDataUrls(getCharacterGenerationReferenceImages(genCharacter))
+        : []
+      const locRefs = genLocation
+        ? await convertReferenceImagesToDataUrls(getLocationGenerationReferenceImages(genLocation))
+        : []
+      const referenceImages = [...charRefs, ...locRefs]
+
+      const endpoint = selectedImageGenModel === "gpt-image" ? "/api/gpt-image" : "/api/nano-banana"
+
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: promptText,
+          model: selectedImageGenModel,
+          referenceImages: referenceImages.map((ref) => ({ url: ref.url, label: ref.label })),
+        }),
+      })
+
+      if (!response.ok) {
+        const errBody = await response.text()
+        throw new Error(`Ошибка генерации: ${response.status} — ${errBody}`)
+      }
+
+      const blob = await response.blob()
+      const url = URL.createObjectURL(blob)
+      setGenImageUrl(url)
+    } catch (err) {
+      setGenError(err instanceof Error ? err.message : String(err))
+    } finally {
+      setGenLoading(false)
+    }
+  }
 
   const steps = useMemo<StepCardData[]>(() => [
     {
@@ -1256,6 +1355,236 @@ export default function BreakdownStudioPage() {
                         )) : <div className="text-sm text-white/70">Изменений от ассистента пока не было.</div>}
                       </div>
                     </div>
+                  </div>
+                </section>
+              </div>
+
+              {/* ─── IMAGE GENERATOR ─── */}
+              <div className="space-y-5">
+                {/* Character panel */}
+                <section className="rounded-[28px] border border-[#1D5C63]/10 bg-white/78 p-5">
+                  <h3 className="text-lg font-semibold font-[Georgia,ui-serif,serif]">Персонаж</h3>
+                  <p className="mt-2 text-sm leading-6 text-[#40616A]">Выберите персонажа из библии — его внешность будет основой для генерации.</p>
+
+                  <div className="mt-4">
+                    <select
+                      value={selectedGenCharacterId ?? ""}
+                      onChange={(event) => setSelectedGenCharacterId(event.target.value || null)}
+                      className={fieldClassName}
+                    >
+                      <option value="">— без персонажа —</option>
+                      {characters.map((c) => (
+                        <option key={c.id} value={c.id}>{c.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {genCharacter ? (
+                    <div className="mt-4 space-y-3">
+                      {genCharacter.appearancePrompt ? (
+                        <div className="rounded-2xl bg-[#F6F1E9] p-3 text-sm leading-6 text-[#40616A]">
+                          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[#1D5C63]/55">Внешность</div>
+                          <p className="mt-2">{genCharacter.appearancePrompt}</p>
+                        </div>
+                      ) : null}
+
+                      {(() => {
+                        const refs = getCharacterGenerationReferenceImages(genCharacter)
+                        if (refs.length === 0) return null
+                        return (
+                          <div>
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#1D5C63]/55">Референсы ({refs.length})</div>
+                            <div className="flex flex-wrap gap-2">
+                              {refs.map((ref) => (
+                                <div key={ref.id} className="relative h-16 w-16 overflow-hidden rounded-xl border border-[#1D5C63]/15">
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img src={ref.url} alt={ref.label} className="h-full w-full object-cover" />
+                                  {ref.id === GENERATED_CANONICAL_IMAGE_ID ? (
+                                    <div className="absolute bottom-0 left-0 right-0 bg-[#1D5C63]/80 px-1 py-0.5 text-center text-[9px] text-white">AI</div>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )
+                      })()}
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-xs text-[#5E7A82]">
+                      {characters.length === 0 ? "В библии персонажей пока нет." : "Персонаж не выбран."}
+                    </p>
+                  )}
+                </section>
+
+                {/* Location panel */}
+                <section className="rounded-[28px] border border-[#1D5C63]/10 bg-white/78 p-5">
+                  <h3 className="text-lg font-semibold font-[Georgia,ui-serif,serif]">Локация</h3>
+                  <p className="mt-2 text-sm leading-6 text-[#40616A]">Выберите локацию — так система покажет, как она подвязывает место к генерации.</p>
+
+                  <div className="mt-4">
+                    <select
+                      value={selectedGenLocationId ?? ""}
+                      onChange={(event) => setSelectedGenLocationId(event.target.value || null)}
+                      className={fieldClassName}
+                    >
+                      <option value="">— без локации —</option>
+                      {locations.map((l) => (
+                        <option key={l.id} value={l.id}>{l.name}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {genLocation ? (
+                    <div className="mt-4 space-y-3">
+                      {genLocation.appearancePrompt ? (
+                        <div className="rounded-2xl bg-[#EEF5F3] p-3 text-sm leading-6 text-[#40616A]">
+                          <div className="text-xs font-semibold uppercase tracking-[0.18em] text-[#1D5C63]/55">Внешность локации</div>
+                          <p className="mt-2">{genLocation.appearancePrompt}</p>
+                        </div>
+                      ) : null}
+
+                      {(() => {
+                        const refs = getLocationGenerationReferenceImages(genLocation)
+                        if (refs.length === 0) return null
+                        return (
+                          <div>
+                            <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#1D5C63]/55">Референсы ({refs.length})</div>
+                            <div className="flex flex-wrap gap-2">
+                              {refs.map((ref) => (
+                                <div key={ref.id} className="relative h-16 w-16 overflow-hidden rounded-xl border border-[#1D5C63]/15">
+                                  {/* eslint-disable-next-line @next/next/no-img-element */}
+                                  <img src={ref.url} alt={ref.label} className="h-full w-full object-cover" />
+                                  {ref.id === GENERATED_CANONICAL_IMAGE_ID ? (
+                                    <div className="absolute bottom-0 left-0 right-0 bg-[#1D5C63]/80 px-1 py-0.5 text-center text-[9px] text-white">AI</div>
+                                  ) : null}
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )
+                      })()}
+                    </div>
+                  ) : (
+                    <p className="mt-3 text-xs text-[#5E7A82]">
+                      {locations.length === 0 ? "В библии локаций пока нет." : "Локация не выбрана."}
+                    </p>
+                  )}
+                </section>
+
+                {/* Generator panel */}
+                <section className="rounded-[28px] border border-[#CF7B4E]/20 bg-white/78 p-5">
+                  <div className="flex items-center gap-2">
+                    <ImageIcon size={18} className="text-[#CF7B4E]" />
+                    <h3 className="text-lg font-semibold font-[Georgia,ui-serif,serif]">Генератор изображений</h3>
+                  </div>
+                  <p className="mt-2 text-sm leading-6 text-[#40616A]">Выберите кадр из разбора, посмотрите финальный промпт и запустите генерацию.</p>
+
+                  <div className="mt-4 space-y-4">
+                    <div>
+                      <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[#1D5C63]/55">Кадр</label>
+                      <select
+                        value={selectedGenShotId ?? ""}
+                        onChange={(event) => {
+                          setSelectedGenShotId(event.target.value || null)
+                          setGenPromptOverride("")
+                          setGenImageUrl(null)
+                        }}
+                        className={fieldClassName}
+                      >
+                        <option value="">— выберите кадр —</option>
+                        {(result?.promptPackages ?? []).map((pkg) => (
+                          <option key={pkg.shotId} value={pkg.shotId}>{pkg.label || pkg.shotId}</option>
+                        ))}
+                      </select>
+                      {!result && <p className="mt-2 text-xs text-[#5E7A82]">Сначала запустите разбор.</p>}
+                    </div>
+
+                    {genBasePrompt ? (
+                      <div>
+                        <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[#1D5C63]/55">
+                          Финальный промпт {genPromptOverride ? "(изменён вручную)" : "(автоматический)"}
+                        </label>
+                        <textarea
+                          value={genPromptOverride || genBasePrompt}
+                          onChange={(event) => setGenPromptOverride(event.target.value)}
+                          rows={6}
+                          className={`${fieldClassName} text-xs leading-5`}
+                          placeholder="Промпт появится после выбора кадра"
+                        />
+                        {genPromptOverride && (
+                          <button
+                            type="button"
+                            onClick={() => setGenPromptOverride("")}
+                            className="mt-1 text-xs text-[#CF7B4E] hover:underline"
+                          >
+                            Сбросить изменения
+                          </button>
+                        )}
+                      </div>
+                    ) : null}
+
+                    {(genCharacter || genLocation) && genShotPackage ? (
+                      <div>
+                        <div className="mb-2 text-xs font-semibold uppercase tracking-[0.18em] text-[#1D5C63]/55">Референсы для генерации</div>
+                        <div className="flex flex-wrap gap-2">
+                          {genCharacter ? getCharacterGenerationReferenceImages(genCharacter).map((ref) => (
+                            <div key={`char-${ref.id}`} className="relative h-12 w-12 overflow-hidden rounded-lg border border-[#1D5C63]/15">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={ref.url} alt={ref.label} className="h-full w-full object-cover" />
+                            </div>
+                          )) : null}
+                          {genLocation ? getLocationGenerationReferenceImages(genLocation).map((ref) => (
+                            <div key={`loc-${ref.id}`} className="relative h-12 w-12 overflow-hidden rounded-lg border border-[#CF7B4E]/20">
+                              {/* eslint-disable-next-line @next/next/no-img-element */}
+                              <img src={ref.url} alt={ref.label} className="h-full w-full object-cover" />
+                            </div>
+                          )) : null}
+                        </div>
+                      </div>
+                    ) : null}
+
+                    <div>
+                      <label className="mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-[#1D5C63]/55">Модель</label>
+                      <select
+                        value={selectedImageGenModel ?? "nano-banana-2"}
+                        onChange={(event) => setSelectedImageGenModel(event.target.value)}
+                        className={fieldClassName}
+                      >
+                        <option value="gpt-image">GPT Image</option>
+                        <option value="nano-banana">Nano Banana</option>
+                        <option value="nano-banana-2">Nano Banana 2</option>
+                        <option value="nano-banana-pro">Nano Banana Pro</option>
+                      </select>
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => void generateImage()}
+                      disabled={genLoading || !genPrompt.trim()}
+                      className={buttonClassName}
+                    >
+                      {genLoading
+                        ? <><Loader2 size={16} className="animate-spin" />Генерирую…</>
+                        : <><WandSparkles size={16} />Сгенерировать</>
+                      }
+                    </button>
+
+                    {genError ? (
+                      <div className="rounded-2xl border border-[#CF7B4E]/25 bg-[#FFF3EB] px-3 py-2 text-xs text-[#8A4B29]">
+                        {genError}
+                      </div>
+                    ) : null}
+
+                    {genImageUrl ? (
+                      <div className="overflow-hidden rounded-2xl border border-[#1D5C63]/15">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img
+                          src={genImageUrl}
+                          alt="Сгенерированное изображение"
+                          className="w-full object-cover"
+                        />
+                      </div>
+                    ) : null}
                   </div>
                 </section>
               </div>

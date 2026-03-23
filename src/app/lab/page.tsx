@@ -1,7 +1,7 @@
 "use client"
 
 import Image from "next/image"
-import { useRouter, useSearchParams } from "next/navigation"
+import { useRouter } from "next/navigation"
 import {
   Bot,
   ChevronDown,
@@ -28,6 +28,7 @@ import {
   useState,
   type ReactNode,
 } from "react"
+import { BREAKDOWN_MODELS, mapBoardModelToBreakdownModel, type BreakdownTextModelId } from "@/features/breakdown"
 import { type BibleReferenceImage, type CharacterEntry, type LocationEntry } from "@/lib/bibleParser"
 import { DEAKINS_RULES, SHOT_TRANSITION_RULES } from "@/lib/cinematographyRules"
 import { saveBlob } from "@/lib/fileStorage"
@@ -42,7 +43,6 @@ import { devlog } from "@/store/devlog"
 import { createTimelineShot, type TimelineShot } from "@/store/timeline"
 import { useScriptStore } from "@/store/script"
 
-type BreakdownModelId = "claude-sonnet-4-20250514" | "gpt-4o" | "gemini-1.5-pro"
 type ImageModelId = "gpt-image" | "nano-banana" | "nano-banana-2" | "nano-banana-pro"
 type StylePresetId = "noir" | "sketch" | "realistic" | "custom"
 
@@ -82,12 +82,6 @@ type GenerationSnapshot = {
   durationMs: number
   prompt: string
 }
-
-const BREAKDOWN_MODELS: Array<{ id: BreakdownModelId; label: string }> = [
-  { id: "claude-sonnet-4-20250514", label: "claude-sonnet" },
-  { id: "gpt-4o", label: "gpt-4o" },
-  { id: "gemini-1.5-pro", label: "gemini" },
-]
 
 const IMAGE_MODELS: Array<{ id: ImageModelId; label: string }> = [
   { id: "gpt-image", label: "GPT Image" },
@@ -133,12 +127,6 @@ function truncate(text: string, size: number): string {
 
 function getStylePresetId(style: string): StylePresetId {
   return STYLE_PRESETS.find((preset) => preset.prompt === style)?.id ?? "custom"
-}
-
-function mapBoardModelToBreakdownModel(modelId: string): BreakdownModelId {
-  if (modelId.startsWith("gpt")) return "gpt-4o"
-  if (modelId.startsWith("gemini")) return "gemini-1.5-pro"
-  return "claude-sonnet-4-20250514"
 }
 
 function getSceneText(scene: Scene | null | undefined, blocks: ReturnType<typeof useScriptStore.getState>["blocks"]): string {
@@ -424,7 +412,6 @@ function MarkdownMessage({ content }: { content: string }) {
 
 function LabPageContent() {
   const router = useRouter()
-  const searchParams = useSearchParams()
   const blocks = useScriptStore((state) => state.blocks)
   const characters = useBibleStore((state) => state.characters)
   const locations = useBibleStore((state) => state.locations)
@@ -453,7 +440,7 @@ function LabPageContent() {
 
   const [stylePresetId, setStylePresetId] = useState<StylePresetId>(getStylePresetId(projectStyle))
   const [customStylePrompt, setCustomStylePrompt] = useState<string>(getStylePresetId(projectStyle) === "custom" ? projectStyle : "")
-  const [selectedBreakdownModel, setSelectedBreakdownModel] = useState<BreakdownModelId>(mapBoardModelToBreakdownModel(selectedChatModel))
+  const [selectedBreakdownModel, setSelectedBreakdownModel] = useState<BreakdownTextModelId>(mapBoardModelToBreakdownModel(selectedChatModel))
   const [breakdownTemperature, setBreakdownTemperature] = useState(0.3)
 
   const defaultSystemPrompt = useMemo(
@@ -487,6 +474,13 @@ function LabPageContent() {
   useEffect(() => {
     updateFromScreenplay(blocks, scenes)
   }, [blocks, scenes, updateFromScreenplay])
+
+  useEffect(() => {
+    if (typeof window === "undefined") return
+    if (!window.location.search) return
+
+    router.replace("/lab")
+  }, [router])
 
   useEffect(() => {
     if (!selectedSceneId && firstScene?.id) {
@@ -991,7 +985,7 @@ function LabPageContent() {
           <div className="flex items-center gap-3">
             <button
               type="button"
-              onClick={() => router.push(searchParams.get("from") || "/")}
+              onClick={() => router.push("/")}
               className="rounded-md border border-white/8 bg-white/3 px-3 py-2 text-sm text-white/72 transition-colors hover:bg-white/5 hover:text-white"
             >
               ← Back
@@ -1003,6 +997,14 @@ function LabPageContent() {
           </div>
 
           <div className="flex items-center gap-2">
+            <button
+              type="button"
+              onClick={() => router.push("/dev/breakdown-studio")}
+              className="inline-flex items-center gap-2 rounded-md border border-[#7FAED8]/28 bg-[#7FAED8]/12 px-3 py-2 text-xs font-medium text-[#BFD9F0] transition-colors hover:bg-[#7FAED8]/18 hover:text-[#D8EAFA]"
+            >
+              <WandSparkles className="h-4 w-4" />
+              Breakdown Studio
+            </button>
             <button
               type="button"
               onClick={() => setAssistantOpen((current) => !current)}
@@ -1178,7 +1180,7 @@ function LabPageContent() {
                   <select
                     value={selectedBreakdownModel}
                     onChange={(event) => {
-                      const nextModel = event.target.value as BreakdownModelId
+                      const nextModel = event.target.value as BreakdownTextModelId
                       setSelectedBreakdownModel(nextModel)
                       setSelectedChatModel(nextModel)
                     }}

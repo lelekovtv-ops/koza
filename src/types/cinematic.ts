@@ -62,6 +62,15 @@ export interface SceneBreakdownBeat {
   transitionOut: string
 }
 
+export type ShotKeyframeRole = "key" | "secondary" | "insert"
+
+export interface ContinuityPromptBlocks {
+  preserve: string[]
+  change: string[]
+  prepare: string[]
+  doNot: string[]
+}
+
 export interface ShotContinuity {
   characterIds: string[]
   wardrobeState: Record<string, string>
@@ -75,6 +84,10 @@ export interface ShotContinuity {
   setupForNext: string
   lockedVisualAnchors: string[]
   continuityWarnings: string[]
+  keyframeRole: ShotKeyframeRole
+  keyframeReason: string
+  anchorShotId: string | null
+  promptBlocks: ContinuityPromptBlocks
 }
 
 export interface ShotSpec {

@@ -1,7 +1,6 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { useSearchParams } from "next/navigation"
 import { Maximize2, Minimize2, Upload } from "lucide-react"
 import { useAutosave } from "@/hooks/useAutosave"
 import SlateScreenplayEditor from "@/components/editor/SlateScreenplayEditor"
@@ -88,13 +87,6 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
   const [floatingFromRect, setFloatingFromRect] = useState<NodeScreenRect | null>(null)
   const [isStoryboardPanelOpen, setIsStoryboardPanelOpen] = useState(false)
   const [isStoryboardPanelExpanded, setIsStoryboardPanelExpanded] = useState(false)
-
-  const searchParams = useSearchParams()
-  useEffect(() => {
-    if (searchParams.get("storyboard") === "open") {
-      setIsStoryboardPanelOpen(true)
-    }
-  }, [searchParams])
 
   const titleInputRef = useRef<HTMLInputElement>(null)
   const uploadInputRef = useRef<HTMLInputElement>(null)
@@ -361,14 +353,7 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
     if (!active || phase !== "open" || !showSecondPage) {
       setIsStoryboardPanelOpen(false)
       setIsStoryboardPanelExpanded(false)
-      return
     }
-
-    const timer = window.setTimeout(() => {
-      setIsStoryboardPanelOpen(true)
-    }, 140)
-
-    return () => window.clearTimeout(timer)
   }, [active, phase, showSecondPage])
 
   const isCyrillicTitle = /[\u0400-\u04FF]/.test(title)
@@ -412,8 +397,14 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
   const overlayPageBottomGap = Math.max(10, Math.round(PAGE_HEIGHT * Math.max(0, overlayPageZoom - 1)))
 
   const handleToggleStoryboardFullscreen = () => {
+    if (isStoryboardPanelOpen && isStoryboardPanelExpanded) {
+      setIsStoryboardPanelOpen(false)
+      setIsStoryboardPanelExpanded(false)
+      return
+    }
+
     setIsStoryboardPanelOpen(true)
-    setIsStoryboardPanelExpanded((current) => !current)
+    setIsStoryboardPanelExpanded(true)
   }
 
   useEffect(() => {
@@ -491,38 +482,16 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
 
       <div ref={scrollContainerRef} className="fixed inset-0 z-2 overflow-hidden">
         <div className="fixed right-16 top-5 z-4 flex items-center gap-2">
-          <button
-            type="button"
-            onClick={handleToggleStoryboardFullscreen}
-            className="flex h-9 w-9 items-center justify-center rounded-md border border-white/12 bg-[#35322F] text-[#D8CEC2] transition-colors hover:bg-[#403B37] hover:text-white"
-            aria-label={isStoryboardPanelExpanded ? "Collapse storyboard" : "Open storyboard fullscreen"}
-            title={isStoryboardPanelExpanded ? "Back to split view" : "Open storyboard fullscreen"}
-          >
-            {isStoryboardPanelExpanded ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-          </button>
-
-          {phase === "open" && !isStoryboardPanelOpen && (
+          {phase === "open" && (
             <button
               type="button"
-              onClick={() => setIsStoryboardPanelOpen(true)}
+              onClick={handleToggleStoryboardFullscreen}
               className="flex h-9 items-center justify-center rounded-md border border-white/12 bg-[#35322F] px-3 text-[11px] uppercase tracking-[0.18em] text-[#D8CEC2] transition-colors hover:bg-[#403B37] hover:text-white"
+              aria-label={isStoryboardPanelOpen && isStoryboardPanelExpanded ? "Close storyboard" : "Open storyboard fullscreen"}
+              title={isStoryboardPanelOpen && isStoryboardPanelExpanded ? "Close storyboard" : "Open storyboard fullscreen"}
             >
-              Storyboard
-            </button>
-          )}
-
-          {phase === "open" && isStoryboardPanelOpen && (
-            <button
-              type="button"
-              onClick={() => {
-                setIsStoryboardPanelOpen(false)
-                setIsStoryboardPanelExpanded(false)
-              }}
-              className="flex h-9 items-center justify-center rounded-md border border-white/12 bg-[#35322F] px-3 text-[11px] uppercase tracking-[0.18em] text-[#D8CEC2] transition-colors hover:bg-[#403B37] hover:text-white"
-              aria-label="Close storyboard"
-              title="Close storyboard"
-            >
-              Close storyboard
+              <span className="mr-2 flex items-center">{isStoryboardPanelOpen && isStoryboardPanelExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</span>
+              {isStoryboardPanelOpen && isStoryboardPanelExpanded ? "Close Storyboard" : "Storyboard"}
             </button>
           )}
         </div>
@@ -644,8 +613,8 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
                     setIsStoryboardPanelExpanded(false)
                   }}
                   onToggleExpanded={() => {
-                    setIsStoryboardPanelOpen(true)
-                    setIsStoryboardPanelExpanded((current) => !current)
+                    setIsStoryboardPanelOpen((currentOpen) => !currentOpen)
+                    setIsStoryboardPanelExpanded(false)
                   }}
                 />
               )}
@@ -744,8 +713,8 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
                       setIsStoryboardPanelExpanded(false)
                     }}
                     onToggleExpanded={() => {
-                      setIsStoryboardPanelOpen(true)
-                      setIsStoryboardPanelExpanded((current) => !current)
+                      setIsStoryboardPanelOpen((currentOpen) => !currentOpen)
+                      setIsStoryboardPanelExpanded(false)
                     }}
                   />
                 </div>

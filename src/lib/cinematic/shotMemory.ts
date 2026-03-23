@@ -16,6 +16,9 @@ export interface ShotMemory {
   lockedAnchors: string[]
   carryOverInstructions: string
   setupForNext: string
+  keyframeRole: ShotSpec["continuity"]["keyframeRole"]
+  anchorShotId: string | null
+  promptBlocks: ShotSpec["continuity"]["promptBlocks"]
 }
 
 function uniqueStrings(values: string[]): string[] {
@@ -50,5 +53,8 @@ export function createShotMemory(shot: ShotSpec): ShotMemory {
     lockedAnchors: uniqueStrings(shot.continuity.lockedVisualAnchors),
     carryOverInstructions: shot.continuity.carryOverFromPrevious,
     setupForNext: shot.continuity.setupForNext,
+    keyframeRole: shot.continuity.keyframeRole,
+    anchorShotId: shot.continuity.anchorShotId,
+    promptBlocks: shot.continuity.promptBlocks,
   }
 }
