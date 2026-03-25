@@ -1,4 +1,5 @@
 export * from "@/features/breakdown/bibleContext"
+export * from "@/features/breakdown/directingWorkflow"
 export * from "@/features/breakdown/engine"
 export * from "@/features/breakdown/models"
 export * from "@/features/breakdown/storyboard"

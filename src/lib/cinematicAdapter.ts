@@ -14,17 +14,17 @@ function formatContinuity(spec: ShotSpec): string[] {
   const { continuity } = spec
 
   return compactLines([
-    formatList("Characters", continuity.characterIds),
-    formatList("Wardrobe", Object.entries(continuity.wardrobeState).map(([characterId, state]) => `${characterId}=${state}`)),
-    formatList("Props", continuity.propIds),
-    continuity.locationId ? `Location anchor: ${continuity.locationId}` : null,
-    continuity.timeOfDay ? `Time of day: ${continuity.timeOfDay}` : null,
-    continuity.screenDirection ? `Screen direction: ${continuity.screenDirection}` : null,
-    continuity.eyeline ? `Eyeline: ${continuity.eyeline}` : null,
-    continuity.axisOfAction ? `Axis of action: ${continuity.axisOfAction}` : null,
-    continuity.carryOverFromPrevious ? `Carry-over: ${continuity.carryOverFromPrevious}` : null,
-    continuity.setupForNext ? `Setup for next: ${continuity.setupForNext}` : null,
-    formatList("Locked anchors", continuity.lockedVisualAnchors),
+    formatList("Персонажи", continuity.characterIds),
+    formatList("Костюм", Object.entries(continuity.wardrobeState).map(([characterId, state]) => `${characterId}=${state}`)),
+    formatList("Реквизит", continuity.propIds),
+    continuity.locationId ? `Локационный якорь: ${continuity.locationId}` : null,
+    continuity.timeOfDay ? `Время суток: ${continuity.timeOfDay}` : null,
+    continuity.screenDirection ? `Экранное направление: ${continuity.screenDirection}` : null,
+    continuity.eyeline ? `Линия взгляда: ${continuity.eyeline}` : null,
+    continuity.axisOfAction ? `Ось действия: ${continuity.axisOfAction}` : null,
+    continuity.carryOverFromPrevious ? `Переход из прошлого кадра: ${continuity.carryOverFromPrevious}` : null,
+    continuity.setupForNext ? `Подготовка следующего кадра: ${continuity.setupForNext}` : null,
+    formatList("Зафиксированные якоря", continuity.lockedVisualAnchors),
   ])
 }
 
@@ -35,7 +35,7 @@ function buildLegacyLabel(spec: ShotSpec): string {
   }
 
   const technical = compactLines([spec.shotSize, spec.shotType]).join(" ")
-  return technical || `Shot ${spec.order + 1}`
+  return technical || `Кадр ${spec.order + 1}`
 }
 
 function buildLegacyCaption(spec: ShotSpec): string {
@@ -44,13 +44,13 @@ function buildLegacyCaption(spec: ShotSpec): string {
 
 function buildLegacyNotes(spec: ShotSpec): string {
   return compactLines([
-    spec.dramaticBeat ? `Beat: ${spec.dramaticBeat}` : null,
-    spec.composition ? `Composition: ${spec.composition}` : null,
-    spec.blocking ? `Blocking: ${spec.blocking}` : null,
-    spec.environment ? `Environment: ${spec.environment}` : null,
-    spec.lighting ? `Lighting: ${spec.lighting}` : null,
-    formatList("Palette", spec.palette),
-    formatList("Props", spec.props),
+    spec.dramaticBeat ? `Бит: ${spec.dramaticBeat}` : null,
+    spec.composition ? `Композиция: ${spec.composition}` : null,
+    spec.blocking ? `Действие: ${spec.blocking}` : null,
+    spec.environment ? `Среда: ${spec.environment}` : null,
+    spec.lighting ? `Свет: ${spec.lighting}` : null,
+    formatList("Палитра", spec.palette),
+    formatList("Реквизит", spec.props),
     ...formatContinuity(spec),
   ]).join("\n")
 }
@@ -58,16 +58,16 @@ function buildLegacyNotes(spec: ShotSpec): string {
 function buildLegacyDirectorNote(spec: ShotSpec): string {
   return compactLines([
     spec.narrativePurpose,
-    spec.transitionIn ? `Transition in: ${spec.transitionIn}` : null,
-    spec.transitionOut ? `Transition out: ${spec.transitionOut}` : null,
+    spec.transitionIn ? `Вход в кадр: ${spec.transitionIn}` : null,
+    spec.transitionOut ? `Выход из кадра: ${spec.transitionOut}` : null,
   ]).join("\n")
 }
 
 function buildLegacyCameraNote(spec: ShotSpec): string {
   return compactLines([
-    spec.shotType ? `Type: ${spec.shotType}` : null,
-    spec.composition ? `Composition: ${spec.composition}` : null,
-    spec.camera ? `Camera: ${spec.camera}` : null,
+    spec.shotType ? `Тип: ${spec.shotType}` : null,
+    spec.composition ? `Композиция: ${spec.composition}` : null,
+    spec.camera ? `Оператор: ${spec.camera}` : null,
   ]).join("\n")
 }
 
@@ -77,8 +77,8 @@ function buildLegacyVisualDescription(spec: ShotSpec): string {
     spec.environment,
     spec.blocking,
     spec.lighting,
-    formatList("Palette", spec.palette),
-    formatList("Props", spec.props),
+    formatList("Палитра", spec.palette),
+    formatList("Реквизит", spec.props),
   ]).join(". ")
 }
 

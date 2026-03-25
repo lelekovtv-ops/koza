@@ -1,3 +1,13 @@
+import type { ImageGenModel, ImageGenResult } from "@/lib/pipeline/imageGenerator"
+import type { SceneAnalysis } from "@/lib/cinematic/sceneAnalyst"
+import type { ActionSplitStep } from "@/lib/cinematic/actionSplitter"
+import type { ContinuitySupervisorResult } from "@/lib/cinematic/continuitySupervisor"
+import type { CreativePlannerResult } from "@/lib/cinematic/creativePlanner"
+import type { CensorStageResult } from "@/lib/cinematic/censor"
+import type { ContextRouterResult } from "@/lib/cinematic/contextRouter"
+import type { BreakdownDiagnostics } from "@/lib/jenkins"
+import type { ShotSpec } from "@/types/cinematic"
+
 // === DIRECTOR PRESET ===
 export interface DirectorPreset {
   id: string
@@ -36,9 +46,13 @@ export type PipelineStageId =
   | "sceneInput"
   | "sceneAnalyst"
   | "actionSplitter"
+  | "contextRouter"
+  | "creativePlanner"
+  | "censor"
   | "shotPlanner"
   | "continuitySupervisor"
   | "promptComposer"
+  | "promptOptimizer"
   | "imageGenerator"
 
 export type PipelineStageStatus = "idle" | "running" | "done" | "error"
@@ -126,17 +140,54 @@ export interface ImagePlan {
   orderedShots: ShotExecutionEntry[]
 }
 
+export interface PipelineDraftShot {
+  shotId: string
+  order: number
+  label: string
+  shotType: string
+  shotSize: string
+  composition: string
+  camera: string
+  actionText: string
+  shotDescription: string
+  directorNote: string
+  cameraNote: string
+  visualDescription: string
+  continuitySummary: string
+  keyframeRole: KeyframeRole
+}
+
+export interface PipelineBreakdownDraft {
+  sceneId: string
+  sceneText: string
+  analysis: SceneAnalysis
+  actionSplit: ActionSplitStep[]
+  contextPlan: ContextRouterResult
+  creativePlan: CreativePlannerResult
+  censorReport: CensorStageResult
+  shotPlan: ShotSpec[]
+  continuity: ContinuitySupervisorResult
+  draftShots: PipelineDraftShot[]
+  diagnostics: BreakdownDiagnostics
+}
+
 // === NORMALIZED RUN RESULT ===
 export interface NormalizedRunResult {
   sceneId: string
   analysis: unknown
   actionSplit: unknown
+  contextPlan?: unknown
+  creativePlan?: unknown
+  censorReport?: unknown
   shotPlan: unknown
   continuity: unknown
   promptPackages: unknown
   imagePlan: ImagePlan
   diagnostics: {
     usedFallback: boolean
+    contextRouterFallback?: boolean
+    creativePlannerFallback?: boolean
+    censorFallback?: boolean
     actionSplitFallback: boolean
     shotPlannerFallback: boolean
     promptComposerFallback: boolean
@@ -162,3 +213,5 @@ export interface DropFeedback {
   type: "valid" | "invalid" | "pulse" | null
   timestamp: number
 }
+
+export type { ImageGenModel, ImageGenResult }

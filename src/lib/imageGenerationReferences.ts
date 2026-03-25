@@ -1,5 +1,5 @@
 import type { CharacterEntry, LocationEntry } from "@/lib/bibleParser"
-import { getCharactersForShot } from "@/lib/promptBuilder"
+import { getCharactersForShot, getLocationsForShot } from "@/lib/promptBuilder"
 import { GENERATED_CANONICAL_IMAGE_ID } from "@/store/bible"
 import type { TimelineShot } from "@/store/timeline"
 
@@ -130,7 +130,7 @@ export function getShotGenerationReferenceImages(
   const references: GenerationReferenceImage[] = []
   const seenUrls = new Set<string>()
   const shotCharacters = getCharactersForShot(shot, characters).slice(0, 2)
-  const shotLocation = locations.find((entry) => entry.sceneIds.includes(shot.sceneId || "")) || null
+  const shotLocations = getLocationsForShot(shot, locations).slice(0, 2)
 
   for (const character of shotCharacters) {
     const characterReferences = getCharacterReferenceImages(character, character.generatedPortraitUrl ? 1 : 2)
@@ -139,7 +139,7 @@ export function getShotGenerationReferenceImages(
     }
   }
 
-  if (shotLocation) {
+  for (const shotLocation of shotLocations) {
     for (const reference of getLocationReferenceImages(shotLocation, 2)) {
       pushUniqueReference(references, reference, seenUrls, 5)
     }

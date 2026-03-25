@@ -20,6 +20,48 @@ import { GENERATED_CANONICAL_IMAGE_ID, useBibleStore } from "@/store/bible"
 
 type BibleTab = "characters" | "locations"
 
+function BibleContextPanel({
+  storyHistory,
+  directorVision,
+  onStoryHistorySave,
+  onDirectorVisionSave,
+}: {
+  storyHistory: string
+  directorVision: string
+  onStoryHistorySave: (value: string) => void
+  onDirectorVisionSave: (value: string) => void
+}) {
+  return (
+    <section className="mb-6 grid gap-4 lg:grid-cols-2">
+      <article className="rounded-2xl border border-white/8 bg-white/3 p-4">
+        <div className="mb-3">
+          <p className="text-[10px] uppercase tracking-[0.22em] text-white/35">Story History</p>
+          <h2 className="mt-1 text-sm font-semibold uppercase tracking-[0.14em] text-white">История проекта</h2>
+        </div>
+        <EditableTextArea
+          value={storyHistory}
+          placeholder="Опиши историю мира, предысторию персонажей, драматический контекст и то, что должно сохраняться между сценами..."
+          rows={8}
+          onSave={onStoryHistorySave}
+        />
+      </article>
+
+      <article className="rounded-2xl border border-white/8 bg-white/3 p-4">
+        <div className="mb-3">
+          <p className="text-[10px] uppercase tracking-[0.22em] text-white/35">Director Vision</p>
+          <h2 className="mt-1 text-sm font-semibold uppercase tracking-[0.14em] text-white">Философия фильма</h2>
+        </div>
+        <EditableTextArea
+          value={directorVision}
+          placeholder="Опиши философию фильма, режиссёрский взгляд, эмоциональную оптику, этику кадра и правила выбора решений..."
+          rows={8}
+          onSave={onDirectorVisionSave}
+        />
+      </article>
+    </section>
+  )
+}
+
 const IMAGE_GEN_MODELS = [
   { id: "gpt-image", label: "GPT Image", price: "$0.04" },
   { id: "nano-banana", label: "NB1", price: "$0.039" },
@@ -57,12 +99,13 @@ function buildCharacterPrompt(character: CharacterEntry, style: string): string 
   const resolvedStyle = style.trim() || DEFAULT_PROJECT_STYLE
   const referenceHint = character.referenceImages.length > 0 ? " Matching the reference style." : ""
   const identityInstruction = "Preserve the exact same facial identity, hair shape, costume silhouette, and proportions from the provided reference images."
+  const textGuard = "No visible text, letters, logos, monograms, or name patches in frame."
 
   if (character.appearancePrompt.trim()) {
-    return `Cinematic portrait photograph. ${character.appearancePrompt.trim()}.${referenceHint} ${resolvedStyle}. ${identityInstruction} Portrait framing, head and shoulders, looking into camera. No text.`
+    return `Cinematic portrait photograph. ${character.appearancePrompt.trim()}.${referenceHint} ${resolvedStyle}. ${identityInstruction} Portrait framing, head and shoulders, gaze slightly off-camera, neutral observational pose. ${textGuard}`
   }
 
-  return `Cinematic portrait of a character named ${character.name}.${referenceHint} ${resolvedStyle}. ${identityInstruction} Portrait framing, head and shoulders. No text.`
+  return `Cinematic portrait of the same recurring character.${referenceHint} ${resolvedStyle}. ${identityInstruction} Portrait framing, head and shoulders, gaze slightly off-camera, neutral observational pose. ${textGuard}`
 }
 
 function buildLocationPrompt(location: LocationEntry, style: string): string {
@@ -475,9 +518,13 @@ export default function BiblePage() {
   const blocks = useScriptStore((state) => state.blocks)
   const characters = useBibleStore((state) => state.characters)
   const locations = useBibleStore((state) => state.locations)
+  const storyHistory = useBibleStore((state) => state.storyHistory)
+  const directorVision = useBibleStore((state) => state.directorVision)
   const updateFromScreenplay = useBibleStore((state) => state.updateFromScreenplay)
   const updateCharacter = useBibleStore((state) => state.updateCharacter)
   const updateLocation = useBibleStore((state) => state.updateLocation)
+  const updateStoryHistory = useBibleStore((state) => state.updateStoryHistory)
+  const updateDirectorVision = useBibleStore((state) => state.updateDirectorVision)
   const selectedImageGenModel = useBoardStore((state) => state.selectedImageGenModel)
   const setSelectedImageGenModel = useBoardStore((state) => state.setSelectedImageGenModel)
   const projectStyle = useBoardStore((state) => state.projectStyle)
@@ -670,6 +717,13 @@ export default function BiblePage() {
             </div>
           </div>
         </header>
+
+        <BibleContextPanel
+          storyHistory={storyHistory}
+          directorVision={directorVision}
+          onStoryHistorySave={updateStoryHistory}
+          onDirectorVisionSave={updateDirectorVision}
+        />
 
         {activeTab === "characters" ? (
           <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">

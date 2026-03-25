@@ -17,6 +17,7 @@ import {
   type CinematicStyleContext,
   resolveStyleDirective,
 } from "@/lib/cinematic/stageUtils"
+import type { ContextRouterResult } from "@/lib/cinematic/contextRouter"
 import type { ContinuityPromptBlocks, ImagePromptPackage, ShotRelation, ShotSpec, VideoPromptPackage } from "@/types/cinematic"
 
 export interface PromptComposerInput {
@@ -25,10 +26,22 @@ export interface PromptComposerInput {
   shots: ShotSpec[]
   memories: ShotMemory[]
   relations: ShotRelation[]
+  contextPlan?: ContextRouterResult
+  editorialNotes?: PromptComposerEditorialNote[]
   config?: BreakdownEngineConfig
   sceneText?: string
   bible?: CinematicBibleContext
   style?: CinematicStyleContext
+}
+
+export interface PromptComposerEditorialNote {
+  shotId: string
+  label: string
+  actionText: string
+  shotDescription: string
+  directorNote: string
+  cameraNote: string
+  visualDescription: string
 }
 
 export interface PromptComposerShot {
@@ -463,6 +476,7 @@ function normalizePromptComposerShot(
   memory: ShotMemory | undefined,
   nextMemory: ShotMemory | undefined,
   relation: ShotRelation | undefined,
+  editorialNote?: PromptComposerEditorialNote,
 ): PromptComposerShot {
   const composed = typeof item === "object" && item !== null ? item as Record<string, unknown> : {}
   const continuityConstraint = buildContinuityConstraintText(shot, memory, nextMemory)
@@ -473,6 +487,8 @@ function normalizePromptComposerShot(
   const notes = normalizePreferredText(
     composed.notes,
     compactText([
+      editorialNote?.actionText,
+      editorialNote?.directorNote,
       shot.narrativePurpose,
       shot.blocking,
       shot.continuity.carryOverFromPrevious,
@@ -480,18 +496,28 @@ function normalizePromptComposerShot(
       continuityConstraint,
     ])
   )
-  const directorNote = normalizePreferredText(composed.directorNote, compactText([shot.narrativePurpose, shot.dramaticBeat, shot.transitionOut]))
-  const cameraNote = normalizePreferredText(composed.cameraNote, compactText([shot.shotType, shot.composition, shot.camera, shot.lighting]))
+  const directorNote = normalizePreferredText(
+    composed.directorNote,
+    compactText([editorialNote?.directorNote, shot.narrativePurpose, shot.dramaticBeat, shot.transitionOut]),
+  )
+  const cameraNote = normalizePreferredText(
+    composed.cameraNote,
+    compactText([editorialNote?.cameraNote, shot.shotType, shot.composition, shot.camera, shot.lighting]),
+  )
 
   return {
     shotId: normalizePreferredText(composed.shotId, shot.id),
-    label: normalizePreferredText(composed.label, shot.narrativePurpose || shot.subject || `Shot ${shot.order + 1}`, { rejectGenericShotLabel: true }),
+    label: normalizePreferredText(
+      composed.label,
+      editorialNote?.label || shot.narrativePurpose || shot.subject || `Shot ${shot.order + 1}`,
+      { rejectGenericShotLabel: true },
+    ),
     type: "image",
     duration: clampInteger(composed.duration, 3000, 500, 15000),
     notes: enrichText(notes, `Keep the scene readable and emotionally clear for the next shot.`, config.textRichness),
     shotSize: normalizePreferredText(composed.shotSize, shot.shotSize),
     cameraMotion: normalizePreferredText(composed.cameraMotion, shot.camera),
-    caption: normalizePreferredText(composed.caption, compactText([shot.subject, shot.environment])),
+    caption: normalizePreferredText(composed.caption, compactText([editorialNote?.shotDescription, shot.subject, shot.environment])),
     directorNote: enrichText(directorNote, `Let the emotional turn stay obvious for the viewer.`, config.textRichness),
     cameraNote: enrichText(cameraNote, `Keep the framing logic and movement motivation easy to follow.`, config.textRichness),
     imagePrompt: mergePromptWithContinuity(normalizePreferredText(composed.imagePrompt, imagePackage.finalPrompt), continuityConstraint),
@@ -499,7 +525,10 @@ function normalizePromptComposerShot(
       normalizePreferredText(composed.videoPrompt, videoPackage.finalPrompt),
       compactText([relationTransition, continuityConstraint]),
     ),
-    visualDescription: normalizePreferredText(composed.visualDescription, compactText([shot.subject, shot.environment, shot.lighting])),
+    visualDescription: normalizePreferredText(
+      composed.visualDescription,
+      compactText([editorialNote?.visualDescription, editorialNote?.shotDescription, shot.subject, shot.environment, shot.lighting]),
+    ),
     imagePackage,
     videoPackage,
   }
@@ -563,9 +592,11 @@ Rules:
 - videoPrompt extends the image prompt with motion, duration and pacing.
 - Use the provided continuity memory to state what must remain identical, what may change, and what must prepare the next shot.
 - Use the provided shot relations to express transition logic in the video prompt.
+- If editorialNotes are present, treat them as high-priority human overrides for label, action, framing intent, and visual emphasis.
 - Preserve continuity details from the ShotSpec continuity block.
 - continuityPrompt must preserve the exact section headers PRESERVE, CHANGE, PREPARE, and DO NOT.
 - If continuity.keyframeRole is key, treat that shot as canonical and avoid redefining it later unless CHANGE explicitly allows it.
+- If context router data is present, preserve its environment routing logic: keep primaryLocation as the main anchor, weave visibleSecondaryLocations into frames where windows, reflections, openings, backgrounds or exterior spill make sense, and use promptHints/referenceRouting without inventing new action.
 - Visual style directive: ${styleDirective}
 ${buildBreakdownConfigPrompt(input.config)}
 ${buildBibleContextPrompt(input.bible)}
@@ -583,8 +614,11 @@ export function buildPromptComposerUserMessage(input: PromptComposerInput): stri
   }
 
   const screenplayExcerpt = buildPromptComposerSceneExcerpt(input.sceneText)
+  const contextSummary = input.contextPlan
+    ? `\n\nContext router:\n${serializeForPrompt(input.contextPlan)}`
+    : ""
 
-  return `Compose final prompt packages for scene ${input.sceneId}.\n\nScene analysis summary:\n${serializeForPrompt(analysisSummary)}${screenplayExcerpt ? `\n\nScreenplay excerpt:\n${screenplayExcerpt}` : ""}\n\nShot specs:\n${serializeForPrompt(input.shots.map(toPromptShotPayload))}\n\nContinuity memory:\n${serializeForPrompt(input.memories.map(toPromptMemoryPayload))}\n\nShot relations:\n${serializeForPrompt(input.relations.map(toPromptRelationPayload))}`
+  return `Compose final prompt packages for scene ${input.sceneId}.\n\nScene analysis summary:\n${serializeForPrompt(analysisSummary)}${screenplayExcerpt ? `\n\nScreenplay excerpt:\n${screenplayExcerpt}` : ""}${contextSummary}\n\nShot specs:\n${serializeForPrompt(input.shots.map(toPromptShotPayload))}${input.editorialNotes?.length ? `\n\nEditorial notes:\n${serializeForPrompt(input.editorialNotes)}` : ""}\n\nContinuity memory:\n${serializeForPrompt(input.memories.map(toPromptMemoryPayload))}\n\nShot relations:\n${serializeForPrompt(input.relations.map(toPromptRelationPayload))}`
 }
 
 export function composePromptPackagesLocally(input: PromptComposerInput): PromptComposerShot[] {
@@ -592,6 +626,7 @@ export function composePromptPackagesLocally(input: PromptComposerInput): Prompt
   const config = resolveBreakdownConfig(input.config)
   const memoryByShotId = new Map(input.memories.map((memory) => [memory.shotId, memory]))
   const relationByToShotId = new Map(input.relations.map((relation) => [relation.toShotId, relation]))
+  const editorialByShotId = new Map((input.editorialNotes ?? []).map((note) => [note.shotId, note]))
 
   return input.shots.map((shot, index) => normalizePromptComposerShot(
     {},
@@ -601,6 +636,7 @@ export function composePromptPackagesLocally(input: PromptComposerInput): Prompt
     memoryByShotId.get(shot.id),
     index < input.shots.length - 1 ? memoryByShotId.get(input.shots[index + 1].id) : undefined,
     relationByToShotId.get(shot.id),
+    editorialByShotId.get(shot.id),
   ))
 }
 
@@ -611,6 +647,7 @@ export function parsePromptComposerResponse(
   relations: ShotRelation[],
   config?: BreakdownEngineConfig,
   style?: CinematicStyleContext,
+  editorialNotes?: PromptComposerEditorialNote[],
 ): PromptComposerShot[] {
   const parsed = JSON.parse(extractJsonArray(rawText)) as unknown
   const styleDirective = resolveStyleDirective(style)
@@ -622,6 +659,7 @@ export function parsePromptComposerResponse(
 
   const memoryByShotId = new Map(memories.map((memory) => [memory.shotId, memory]))
   const relationByToShotId = new Map(relations.map((relation) => [relation.toShotId, relation]))
+  const editorialByShotId = new Map((editorialNotes ?? []).map((note) => [note.shotId, note]))
 
   return shots.map((shot, index) => normalizePromptComposerShot(
     parsed[index],
@@ -631,5 +669,6 @@ export function parsePromptComposerResponse(
     memoryByShotId.get(shot.id),
     index < shots.length - 1 ? memoryByShotId.get(shots[index + 1].id) : undefined,
     relationByToShotId.get(shot.id),
+    editorialByShotId.get(shot.id),
   ))
 }

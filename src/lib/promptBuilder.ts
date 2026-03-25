@@ -15,6 +15,14 @@ function getShotText(shot: TimelineShot): string {
   ].join(" ").toLowerCase()
 }
 
+function normalizeLocationText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/^(int\.?|ext\.?|int\.?\/ext\.?|ext\.?\/int\.?|i\/e\.?)\s*/i, "")
+    .replace(/[—–-]\s*(утро|день|вечер|ночь).*$/i, "")
+    .trim()
+}
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 }
@@ -29,8 +37,37 @@ function stripKnownStyleDirective(text: string, style: string): string {
     .replace(/[\s,.;:]+$/, "")
 }
 
+export function locationMentionedInShot(location: LocationEntry, shot: TimelineShot): boolean {
+  const shotText = getShotText(shot)
+  const candidates = [location.name, location.fullHeading]
+    .map((value) => normalizeLocationText(value))
+    .filter(Boolean)
+
+  return candidates.some((candidate) => {
+    if (shotText.includes(candidate)) {
+      return true
+    }
+
+    if (candidate.length >= 6) {
+      const shortened = candidate.slice(0, Math.max(6, candidate.length - 3))
+      return shotText.includes(shortened)
+    }
+
+    return false
+  })
+}
+
+export function getLocationsForShot(shot: TimelineShot, locations: LocationEntry[]): LocationEntry[] {
+  const primary = locations.find((entry) => entry.sceneIds.includes(shot.sceneId || "")) || null
+  const mentioned = locations.filter((location) => locationMentionedInShot(location, shot))
+
+  return [primary, ...mentioned]
+    .filter((location): location is LocationEntry => Boolean(location))
+    .filter((location, index, all) => all.findIndex((entry) => entry.id === location.id) === index)
+}
+
 function getLocationForShot(shot: TimelineShot, locations: LocationEntry[]): LocationEntry | null {
-  return locations.find((entry) => entry.sceneIds.includes(shot.sceneId || "")) || null
+  return getLocationsForShot(shot, locations)[0] ?? null
 }
 
 function formatCharacterRefs(characters: CharacterEntry[]): string {

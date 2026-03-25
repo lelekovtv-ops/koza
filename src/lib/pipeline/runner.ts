@@ -1,17 +1,141 @@
-import { breakdownSceneDetailed, type BreakdownDetailedResult } from "@/lib/jenkins"
+import {
+  breakdownSceneDetailed,
+  breakdownScenePlanningDetailed,
+  buildJenkinsShotsFromPromptPackages,
+  composePromptPackagesDetailed,
+  type BreakdownDetailedResult,
+} from "@/lib/jenkins"
+import type { ScreenplaySceneContext } from "@/lib/cinematic/contextRouter"
+import { parseScenes, type Scene } from "@/lib/sceneParser"
+import { parseTextToBlocks } from "@/lib/screenplayFormat"
 import { pipelineConfigToBreakdownConfig, buildPipelineStylePrompt, getStageModelId } from "./bridge"
 import { normalizeRunResult } from "./normalizer"
 import type { PipelineConfig, PipelineStageId, NormalizedRunResult } from "@/types/pipeline"
 import { usePipelineStore } from "@/store/pipeline"
 import { useBibleStore } from "@/store/bible"
+import { useScenesStore } from "@/store/scenes"
+import { superviseShotContinuity } from "@/lib/cinematic/continuitySupervisor"
+import { applyDraftToShotSpecs, buildPromptComposerEditorialNotes, createPipelineBreakdownDraft } from "@/lib/pipeline/breakdownDraft"
+import { buildPromptOptimizationPreview, extractPipelinePromptEntries } from "@/lib/pipeline/imageGenerator"
+
+const CLAUDE_KEY_MISSING_MESSAGE = "ANTHROPIC_API_KEY is missing"
+
+function buildClaudeFallbackConfig(config: PipelineConfig): PipelineConfig {
+  return {
+    ...config,
+    stageModels: config.stageModels.map((stageModel) => (
+      stageModel.stageId === "imageGenerator" || stageModel.modelId === "local"
+        ? stageModel
+        : { ...stageModel, modelId: "gpt-4o" }
+    )),
+  }
+}
+
+async function executePipelineBreakdown(
+  sceneText: string,
+  config: PipelineConfig,
+  bibleContext: {
+    characters: Array<{ name: string; description: string; appearancePrompt: string }>
+    locations: Array<{ name: string; description: string; appearancePrompt: string; intExt: string }>
+  },
+  screenplayContext: {
+    previousScene: ScreenplaySceneContext | null
+    currentScene: ScreenplaySceneContext | null
+    nextScene: ScreenplaySceneContext | null
+  },
+): Promise<BreakdownDetailedResult> {
+  const breakdownConfig = pipelineConfigToBreakdownConfig(config)
+  const stylePrompt = buildPipelineStylePrompt(config)
+  const modelId = getStageModelId(config, "sceneAnalyst")
+
+  return breakdownSceneDetailed(sceneText, {
+    modelId,
+    bible: bibleContext,
+    style: stylePrompt,
+    config: breakdownConfig,
+    screenplayContext,
+  })
+}
+
+async function executePipelinePlanning(
+  sceneText: string,
+  config: PipelineConfig,
+  bibleContext: {
+    characters: Array<{ name: string; description: string; appearancePrompt: string }>
+    locations: Array<{ name: string; description: string; appearancePrompt: string; intExt: string }>
+  },
+  screenplayContext: {
+    previousScene: ScreenplaySceneContext | null
+    currentScene: ScreenplaySceneContext | null
+    nextScene: ScreenplaySceneContext | null
+  },
+) {
+  const breakdownConfig = pipelineConfigToBreakdownConfig(config)
+  const stylePrompt = buildPipelineStylePrompt(config)
+  const modelId = getStageModelId(config, "sceneAnalyst")
+
+  return breakdownScenePlanningDetailed(sceneText, {
+    modelId,
+    bible: bibleContext,
+    style: stylePrompt,
+    config: breakdownConfig,
+    screenplayContext,
+  })
+}
+
+function toScreenplaySceneContext(scene: Scene | null | undefined): ScreenplaySceneContext | null {
+  if (!scene) {
+    return null
+  }
+
+  return {
+    id: scene.id,
+    title: scene.title,
+    index: scene.index,
+  }
+}
+
+function buildSyntheticScreenplayContext(sceneText: string) {
+  const scenes = parseScenes(parseTextToBlocks(sceneText.trim()))
+  const currentScene = scenes[0] ?? null
+
+  return {
+    previousScene: null,
+    currentScene: toScreenplaySceneContext(currentScene),
+    nextScene: toScreenplaySceneContext(scenes[1] ?? null),
+  }
+}
+
+function resolveScreenplayContext(sceneText: string) {
+  const { scenes, selectedSceneId } = useScenesStore.getState()
+
+  if (!scenes.length) {
+    return buildSyntheticScreenplayContext(sceneText)
+  }
+
+  const currentIndex = selectedSceneId
+    ? scenes.findIndex((scene) => scene.id === selectedSceneId)
+    : 0
+  const safeIndex = currentIndex >= 0 ? currentIndex : 0
+
+  return {
+    previousScene: toScreenplaySceneContext(scenes[safeIndex - 1] ?? null),
+    currentScene: toScreenplaySceneContext(scenes[safeIndex] ?? null),
+    nextScene: toScreenplaySceneContext(scenes[safeIndex + 1] ?? null),
+  }
+}
 
 // Stage execution sequence
 const STAGE_SEQUENCE: PipelineStageId[] = [
   "sceneAnalyst",
   "actionSplitter",
+  "contextRouter",
+  "creativePlanner",
+  "censor",
   "shotPlanner",
   "continuitySupervisor",
   "promptComposer",
+  "promptOptimizer",
   "imageGenerator",
 ]
 
@@ -32,6 +156,14 @@ export async function runPipeline(
   sceneText: string,
   runFromStage: PipelineStageId = "sceneAnalyst",
 ): Promise<NormalizedRunResult> {
+  await runPipelineBreakdown(sceneText, runFromStage)
+  return composePipelinePrompts()
+}
+
+export async function runPipelineBreakdown(
+  sceneText: string,
+  runFromStage: PipelineStageId = "sceneAnalyst",
+): Promise<void> {
   const store = usePipelineStore.getState()
   const bible = useBibleStore.getState()
 
@@ -40,10 +172,6 @@ export async function runPipeline(
 
   // ── Create immutable snapshot ──
   store.startRun(sceneText)
-
-  const breakdownConfig = pipelineConfigToBreakdownConfig(config)
-  const stylePrompt = buildPipelineStylePrompt(config)
-  const modelId = getStageModelId(config, "sceneAnalyst")
 
   const bibleContext = {
     characters: bible.characters.map((c) => ({
@@ -58,6 +186,7 @@ export async function runPipeline(
       intExt: l.intExt,
     })),
   }
+  const screenplayContext = resolveScreenplayContext(sceneText)
 
   // ── Sequential stage status simulation ──
   // Even though breakdownSceneDetailed is a single call, we simulate
@@ -84,32 +213,26 @@ export async function runPipeline(
     const stageStartTime = Date.now()
 
     // ── Execute the actual breakdown call ──
-    const result = await breakdownSceneDetailed(sceneText, {
-      modelId,
-      bible: bibleContext,
-      style: stylePrompt,
-      config: breakdownConfig,
-    })
+    let effectiveConfig = config
+    let result: Awaited<ReturnType<typeof executePipelinePlanning>>
+
+    try {
+      result = await executePipelinePlanning(sceneText, effectiveConfig, bibleContext, screenplayContext)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+
+      if (!message.includes(CLAUDE_KEY_MISSING_MESSAGE)) {
+        throw error
+      }
+
+      effectiveConfig = buildClaudeFallbackConfig(config)
+      store.setRunNotice("Claude API key не настроен. Pipeline автоматически переключился на GPT-4o.")
+      result = await executePipelinePlanning(sceneText, effectiveConfig, bibleContext, screenplayContext)
+    }
 
     // ── Simulate sequential stage completion ──
-    await simulateStageProgress(result, startStageIdx, stageStartTime, config)
-
-    // ── Normalize results ──
-    const normalized = normalizeRunResult(result, config)
-
-    // ── Store imageGenerator planning data ──
-    store.setStageResult("imageGenerator", {
-      imageModel: config.stageModels.find((sm) => sm.stageId === "imageGenerator")?.modelId ?? "gpt-image",
-      referenceStrategy: config.referenceStrategy,
-      keyframeCandidates: normalized.imagePlan.keyframeCandidates,
-      orderedShotCount: normalized.imagePlan.orderedShots.length,
-      status: "planned",
-    })
-
-    // ── Complete run with normalized result ──
-    store.completeRun(normalized)
-
-    return normalized
+    await simulatePlanningStageProgress(result, startStageIdx, stageStartTime)
+    store.completeBreakdownPhase(createPipelineBreakdownDraft(result, sceneText))
   } catch (error) {
     const currentStage = usePipelineStore.getState().runState.currentStage
     store.failRun(
@@ -120,16 +243,150 @@ export async function runPipeline(
   }
 }
 
+export async function composePipelinePrompts(): Promise<NormalizedRunResult> {
+  const store = usePipelineStore.getState()
+  const bible = useBibleStore.getState()
+  const draft = store.breakdownDraft
+
+  if (!draft) {
+    throw new Error("Breakdown draft is missing. Run phase 1 first.")
+  }
+
+  const config = store.activeConfig
+  const bibleContext = {
+    characters: bible.characters.map((c) => ({
+      name: c.name,
+      description: c.description,
+      appearancePrompt: c.appearancePrompt,
+    })),
+    locations: bible.locations.map((l) => ({
+      name: l.name,
+      description: l.description,
+      appearancePrompt: l.appearancePrompt,
+      intExt: l.intExt,
+    })),
+  }
+
+  const editedShotPlan = applyDraftToShotSpecs(draft.shotPlan, draft.draftShots)
+  const continuity = superviseShotContinuity(editedShotPlan, pipelineConfigToBreakdownConfig(config))
+
+  store.startPromptRun()
+  store.setStageResult("continuitySupervisor", {
+    input: draft.shotPlan,
+    output: continuity,
+  })
+
+  try {
+    let effectiveConfig = config
+    const runPromptComposition = (targetConfig: PipelineConfig) => composePromptPackagesDetailed({
+      sceneId: draft.sceneId,
+      sceneText: draft.sceneText,
+      analysis: draft.analysis,
+      contextPlan: draft.contextPlan,
+      continuity,
+      modelId: getStageModelId(targetConfig, "promptComposer"),
+      bible: bibleContext,
+      style: buildPipelineStylePrompt(targetConfig),
+      config: pipelineConfigToBreakdownConfig(targetConfig),
+      editorialNotes: buildPromptComposerEditorialNotes(draft.draftShots),
+    })
+
+    let composed
+
+    try {
+      composed = await runPromptComposition(effectiveConfig)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+
+      if (!message.includes(CLAUDE_KEY_MISSING_MESSAGE)) {
+        throw error
+      }
+
+      effectiveConfig = buildClaudeFallbackConfig(config)
+      store.setRunNotice("Claude API key не настроен. Prompt Composer автоматически переключился на GPT-4o.")
+      composed = await runPromptComposition(effectiveConfig)
+    }
+
+    const fullResult: BreakdownDetailedResult = {
+      sceneId: draft.sceneId,
+      analysis: draft.analysis,
+      actionSplit: draft.actionSplit,
+      contextPlan: draft.contextPlan,
+      creativePlan: draft.creativePlan,
+      censorReport: draft.censorReport,
+      shotPlan: continuity.shots,
+      continuity,
+      promptPackages: composed.promptPackages,
+      shots: buildJenkinsShotsFromPromptPackages(continuity.shots, composed.promptPackages),
+      diagnostics: {
+        usedFallback: draft.diagnostics.usedFallback || composed.diagnostics.usedFallback,
+        contextRouterFallback: draft.diagnostics.contextRouterFallback,
+        creativePlannerFallback: draft.diagnostics.creativePlannerFallback,
+        censorFallback: draft.diagnostics.censorFallback,
+        actionSplitFallback: draft.diagnostics.actionSplitFallback,
+        shotPlannerFallback: draft.diagnostics.shotPlannerFallback,
+        promptComposerFallback: composed.diagnostics.promptComposerFallback,
+      },
+    }
+
+    store.setStageResult("promptComposer", {
+      input: { shots: continuity, contextPlan: draft.contextPlan, editorialNotes: draft.draftShots },
+      output: composed.promptPackages,
+    })
+    store.setStageStatus("promptComposer", "done")
+    store.setStageStatus("promptOptimizer", "running")
+
+    const normalized = normalizeRunResult(fullResult, effectiveConfig)
+    const promptEntries = extractPipelinePromptEntries(normalized)
+    const optimizedEntries = promptEntries.map((entry) => buildPromptOptimizationPreview(
+      draft.sceneId,
+      entry,
+      promptEntries,
+      bible.characters,
+      bible.locations,
+    ))
+    const totalCharsSaved = optimizedEntries.reduce((sum, entry) => sum + entry.charsSaved, 0)
+
+    store.setStageResult("promptOptimizer", {
+      input: { promptCount: promptEntries.length },
+      output: {
+        optimizedEntries,
+        totalCharsSaved,
+      },
+    })
+    store.setStageStatus("promptOptimizer", "done")
+    store.setStageStatus("imageGenerator", "running")
+
+    store.setStageResult("imageGenerator", {
+      imageModel: effectiveConfig.stageModels.find((sm) => sm.stageId === "imageGenerator")?.modelId ?? "gpt-image",
+      referenceStrategy: effectiveConfig.referenceStrategy,
+      keyframeCandidates: normalized.imagePlan.keyframeCandidates,
+      orderedShotCount: normalized.imagePlan.orderedShots.length,
+      status: "planned",
+    })
+    store.setStageStatus("imageGenerator", "done")
+    store.completeRun(normalized)
+
+    return normalized
+  } catch (error) {
+    const currentStage = usePipelineStore.getState().runState.currentStage
+    store.failRun(
+      error instanceof Error ? error.message : String(error),
+      currentStage ?? "promptComposer",
+    )
+    throw error
+  }
+}
+
 /**
  * Simulates sequential stage progression after the single breakdownSceneDetailed
  * call completes. Each stage gets a minimum display time so the UI shows
  * meaningful progress rather than jumping from idle to done.
  */
-async function simulateStageProgress(
-  result: BreakdownDetailedResult,
+async function simulatePlanningStageProgress(
+  result: Awaited<ReturnType<typeof executePipelinePlanning>>,
   startStageIdx: number,
   stageStartTime: number,
-  config: PipelineConfig,
 ): Promise<void> {
   const store = usePipelineStore.getState
 
@@ -143,22 +400,50 @@ async function simulateStageProgress(
       input: result.analysis,
       output: result.actionSplit,
     },
+    contextRouter: {
+      input: {
+        analysis: result.analysis,
+        actions: result.actionSplit,
+      },
+      output: result.contextPlan,
+    },
+    creativePlanner: {
+      input: {
+        analysis: result.analysis,
+        actions: result.actionSplit,
+        contextPlan: result.contextPlan,
+      },
+      output: result.creativePlan,
+    },
+    censor: {
+      input: {
+        analysis: result.analysis,
+        actions: result.actionSplit,
+        creativePlan: result.creativePlan,
+      },
+      output: result.censorReport,
+    },
     shotPlanner: {
-      input: result.actionSplit,
+      input: {
+        actions: result.actionSplit,
+        contextPlan: result.contextPlan,
+        creativePlan: result.creativePlan,
+        censorReport: result.censorReport,
+      },
       output: result.shotPlan,
     },
     continuitySupervisor: {
       input: result.shotPlan,
       output: result.continuity,
     },
-    promptComposer: {
-      input: { shots: result.continuity, shotPlan: result.shotPlan },
-      output: result.promptPackages,
-    },
   }
 
   for (let i = startStageIdx; i < STAGE_SEQUENCE.length; i++) {
     const stageId = STAGE_SEQUENCE[i]
+
+    if (stageId === "promptComposer" || stageId === "imageGenerator") {
+      break
+    }
 
     // sceneAnalyst was already set to running before the call
     if (i > startStageIdx) {
@@ -171,13 +456,6 @@ async function simulateStageProgress(
     if (elapsed < minWait) {
       await delay(minWait - elapsed)
     }
-
-    // imageGenerator is a planning stage — mark done but don't store raw result here
-    if (stageId === "imageGenerator") {
-      store().setStageStatus(stageId, "done")
-      continue
-    }
-
     // Store stage result with input/output for inspector
     const stageData = stageResults[stageId]
     if (stageData) {
@@ -186,4 +464,7 @@ async function simulateStageProgress(
 
     store().setStageStatus(stageId, "done")
   }
+
+  store().setStageStatus("promptComposer", "idle")
+  store().setStageStatus("imageGenerator", "idle")
 }

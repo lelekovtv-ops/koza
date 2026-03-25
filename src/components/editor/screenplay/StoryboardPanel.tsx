@@ -4,7 +4,7 @@ import Image from "next/image"
 import { useRouter } from "next/navigation"
 import { BookOpen, Camera, Clapperboard, Copy, Film, Grid, Image as ImageIcon, List, Loader2, MoreHorizontal, Plus, RefreshCw, Trash2, Wand2 } from "lucide-react"
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { breakdownScene, buildBreakdownBibleContext, createSceneTimelineShotsFromBreakdown } from "@/features/breakdown"
+import { breakdownScene, buildBreakdownBibleContext, buildScenePromptDrafts, createSceneTimelineShotsFromBreakdown } from "@/features/breakdown"
 import { getTotalDuration, useTimelineStore } from "@/store/timeline"
 import type { TimelineShot } from "@/store/timeline"
 import { timelineShotToStoryboardView, createShotFromStoryboardDefaults } from "@/lib/storyboardBridge"
@@ -21,6 +21,8 @@ import { useBoardStore } from "@/store/board"
 import { devlog } from "@/store/devlog"
 import { useLibraryStore } from "@/store/library"
 import { useProjectsStore } from "@/store/projects"
+import { useProjectProfilesStore } from "@/store/projectProfiles"
+import { slugify, type CharacterEntry, type LocationEntry } from "@/lib/bibleParser"
 
 const SHOT_SIZE_OPTIONS = ["WIDE", "MEDIUM", "CLOSE", "EXTREME CLOSE", "OVER SHOULDER", "POV", "INSERT", "AERIAL", "TWO SHOT"] as const
 const CAMERA_MOTION_OPTIONS = ["Static", "Pan Left", "Pan Right", "Pan Up", "Tilt Down", "Push In", "Pull Out", "Track Left", "Track Right", "Track Around", "Dolly In", "Crane Up", "Crane Down", "Drone In", "Handheld", "Steadicam"] as const
@@ -65,6 +67,157 @@ const IMAGE_GEN_MODELS = [
   { id: "nano-banana-2", label: "NB2", price: "$0.045" },
   { id: "nano-banana-pro", label: "NB Pro", price: "$0.13" },
 ] as const
+
+function mergeProfileText(existing: string, incoming: string): string {
+  const nextIncoming = incoming.trim()
+  const nextExisting = existing.trim()
+
+  if (!nextIncoming) {
+    return nextExisting
+  }
+
+  if (!nextExisting) {
+    return nextIncoming
+  }
+
+  if (nextExisting.includes(nextIncoming)) {
+    return nextExisting
+  }
+
+  return `${nextExisting}\n\n${nextIncoming}`.trim()
+}
+
+function applyLucBessonProfileToScene({
+  lucBessonProfile,
+  targetScene,
+  selectedSceneContext,
+  setProjectStyle,
+  updateDirectorVision,
+  replaceSceneShots,
+}: {
+  lucBessonProfile: NonNullable<ReturnType<typeof useProjectProfilesStore.getState>["lucBessonByProjectId"][string]>
+  targetScene: { id: string; title: string; blockIds: string[] }
+  selectedSceneContext: string
+  setProjectStyle: (value: string) => void
+  updateDirectorVision: (value: string) => void
+  replaceSceneShots: (
+    sceneId: string,
+    sceneText: string,
+    sceneBlockIds: string[],
+    jenkinsShots: Array<{
+      label: string
+      type: "image"
+      duration: number
+      notes: string
+      shotSize?: string
+      cameraMotion?: string
+      caption?: string
+      directorNote?: string
+      cameraNote?: string
+      videoPrompt?: string
+      imagePrompt?: string
+      visualDescription?: string
+    }>,
+  ) => number
+}) {
+  useBibleStore.setState((state) => {
+    const nextCharacters = [...state.characters]
+    const nextLocations = [...state.locations]
+
+    lucBessonProfile.characterOverrides.forEach((override) => {
+      const entryId = slugify(override.name)
+      const existingIndex = nextCharacters.findIndex((entry) => entry.id === entryId)
+
+      if (existingIndex >= 0) {
+        const current = nextCharacters[existingIndex]
+        nextCharacters[existingIndex] = {
+          ...current,
+          description: mergeProfileText(current.description, override.description),
+          appearancePrompt: mergeProfileText(current.appearancePrompt, override.appearancePrompt),
+          sceneIds: current.sceneIds.includes(targetScene.id) ? current.sceneIds : [...current.sceneIds, targetScene.id],
+        }
+        return
+      }
+
+      nextCharacters.push({
+        id: entryId,
+        name: override.name,
+        description: override.description,
+        referenceImages: [],
+        canonicalImageId: null,
+        generatedPortraitUrl: null,
+        portraitBlobKey: null,
+        appearancePrompt: override.appearancePrompt,
+        sceneIds: [targetScene.id],
+        dialogueCount: 0,
+      } satisfies CharacterEntry)
+    })
+
+    lucBessonProfile.locationOverrides.forEach((override) => {
+      const entryId = slugify(override.name)
+      const existingIndex = nextLocations.findIndex((entry) => entry.id === entryId)
+
+      if (existingIndex >= 0) {
+        const current = nextLocations[existingIndex]
+        nextLocations[existingIndex] = {
+          ...current,
+          description: mergeProfileText(current.description, override.description),
+          appearancePrompt: mergeProfileText(current.appearancePrompt, override.appearancePrompt),
+          sceneIds: current.sceneIds.includes(targetScene.id) ? current.sceneIds : [...current.sceneIds, targetScene.id],
+        }
+        return
+      }
+
+      nextLocations.push({
+        id: entryId,
+        name: override.name,
+        fullHeading: override.name,
+        intExt: "INT",
+        timeOfDay: "",
+        description: override.description,
+        referenceImages: [],
+        canonicalImageId: null,
+        generatedImageUrl: null,
+        imageBlobKey: null,
+        appearancePrompt: override.appearancePrompt,
+        sceneIds: [targetScene.id],
+      } satisfies LocationEntry)
+    })
+
+    return {
+      characters: nextCharacters,
+      locations: nextLocations,
+    }
+  })
+
+  if (lucBessonProfile.stylePrompt.trim()) {
+    setProjectStyle(lucBessonProfile.stylePrompt.trim())
+  }
+
+  if (lucBessonProfile.directorVisionPrompt.trim()) {
+    updateDirectorVision(lucBessonProfile.directorVisionPrompt.trim())
+  }
+
+  replaceSceneShots(
+    targetScene.id,
+    lucBessonProfile.sceneText.trim() || selectedSceneContext || targetScene.title,
+    targetScene.blockIds,
+    lucBessonProfile.shots.map((shot) => ({
+      label: shot.label,
+      type: "image" as const,
+      duration: 3200,
+      notes: shot.refReason,
+      shotSize: "",
+      cameraMotion: "",
+      caption: shot.visualDescription,
+      directorNote: shot.directorNote,
+      cameraNote: shot.cameraNote,
+      videoPrompt: "",
+      imagePrompt: shot.imagePrompt,
+      visualDescription: shot.visualDescription,
+    })),
+  )
+}
 
 function formatSummaryTime(ms: number): string {
   const totalSeconds = Math.max(0, ms) / 1000
@@ -818,8 +971,15 @@ export function StoryboardPanel({
   const setSelectedImageGenModel = useBoardStore((state) => state.setSelectedImageGenModel)
   const projectStyle = useBoardStore((state) => state.projectStyle)
   const setProjectStyle = useBoardStore((state) => state.setProjectStyle)
+  const workflowProfile = useBoardStore((state) => state.workflowProfile)
+  const activeProjectId = useProjectsStore((state) => state.activeProjectId)
+  const lucBessonProfile = useProjectProfilesStore((state) => (
+    activeProjectId ? state.lucBessonByProjectId[activeProjectId] ?? null : null
+  ))
+  const isLucBessonBreakdownMode = workflowProfile === "legacy-luc-besson" && !!lucBessonProfile
   const characters = useBibleStore((state) => state.characters)
   const locations = useBibleStore((state) => state.locations)
+  const updateDirectorVision = useBibleStore((state) => state.updateDirectorVision)
   const cardScale = 90
   const frames = useMemo(() => shots.map((shot, index) => timelineShotToStoryboardView(shot, index)), [shots])
   const totalShotDurationMs = useMemo(() => getTotalDuration(shots), [shots])
@@ -841,6 +1001,7 @@ export function StoryboardPanel({
   const scenario = useScriptStore((state) => state.scenario)
   const [jenkinsLoading, setJenkinsLoading] = useState(false)
   const [breakdownLoadingSceneId, setBreakdownLoadingSceneId] = useState<string | null>(null)
+  const [promptLoadingSceneId, setPromptLoadingSceneId] = useState<string | null>(null)
   const selectedScene = useMemo(() => scenes.find((scene) => scene.id === selectedSceneId) ?? null, [scenes, selectedSceneId])
   const inspectorShots = useMemo(
     () => (selectedSceneId ? shotsBySceneId.get(selectedSceneId) ?? [] : shots),
@@ -975,6 +1136,19 @@ export function StoryboardPanel({
   }, [scenario, jenkinsLoading, addShot, characters, locations, projectStyle, shots])
 
   const handleSceneBreakdown = useCallback(async (scene: { id: string; blockIds: string[]; title: string }) => {
+    if (workflowProfile === "legacy-luc-besson" && lucBessonProfile) {
+      applyLucBessonProfileToScene({
+        lucBessonProfile,
+        targetScene: scene,
+        selectedSceneContext,
+        setProjectStyle,
+        updateDirectorVision,
+        replaceSceneShots,
+      })
+      setBreakdownWarning(`Luc Besson breakdown применён к сцене ${scene.title}. Этот проект сейчас работает в Luc Besson режиме по умолчанию.`)
+      return
+    }
+
     if (breakdownLoadingSceneId) return
     setBreakdownLoadingSceneId(scene.id)
     try {
@@ -982,9 +1156,11 @@ export function StoryboardPanel({
         .map((bid) => scriptBlocks.find((b) => b.id === bid)?.text)
         .filter(Boolean)
         .join("\n")
-      if (!sceneText.trim()) return
+      if (!sceneText.trim()) {
+        setBreakdownWarning(`Сцена ${scene.title} пустая. Для breakdown нужен текст внутри scene blocks.`)
+        return
+      }
       const bible = buildBreakdownBibleContext(characters, locations)
-      const existingSceneShots = shots.filter((shot) => shot.sceneId === scene.id)
       const { shots: jenkinsShots, diagnostics } = await breakdownScene(sceneText, {
         sceneId: scene.id,
         blockIds: scene.blockIds,
@@ -992,24 +1168,21 @@ export function StoryboardPanel({
         style: projectStyle,
       })
 
-      if (diagnostics.usedFallback && existingSceneShots.length > 0) {
-        const warning = `Scene ${scene.title} used fallback mode. Existing scene shots were preserved to avoid replacing a better storyboard result.`
+      if (jenkinsShots.length === 0) {
+        const warning = `Breakdown для сцены ${scene.title} вернул 0 shots. Проверь текст сцены и Bible context.`
         setBreakdownWarning(warning)
-        devlog.warn("Scene breakdown preserved existing shots", warning, {
+        devlog.warn("Scene breakdown returned zero shots", warning, {
           ...diagnostics,
           sceneId: scene.id,
-          existingShotCount: existingSceneShots.length,
         })
         selectScene(scene.id)
-        setViewMode("board")
-        setExpandedShotId(existingSceneShots[0]?.id ?? null)
         return
       }
 
       replaceSceneShots(scene.id, sceneText, scene.blockIds, jenkinsShots)
       setBreakdownWarning(
         diagnostics.usedFallback
-          ? `Scene ${scene.title} completed in fallback mode. Existing shots were replaced because there was no prior scene result to protect.`
+          ? `Scene ${scene.title} completed in fallback mode. Новые shots всё равно применены, но формулировки могут быть слабее полного AI-pass.`
           : null,
       )
     } catch (error) {
@@ -1017,7 +1190,62 @@ export function StoryboardPanel({
     } finally {
       setBreakdownLoadingSceneId(null)
     }
-  }, [breakdownLoadingSceneId, scriptBlocks, characters, locations, projectStyle, replaceSceneShots, shots, selectScene])
+  }, [breakdownLoadingSceneId, scriptBlocks, characters, locations, projectStyle, replaceSceneShots, shots, selectScene, lucBessonProfile, selectedSceneContext, setProjectStyle, updateDirectorVision, workflowProfile])
+
+  const handleScenePromptGeneration = useCallback((scene: { id: string; title: string }) => {
+    if (promptLoadingSceneId) return
+
+    const sceneShots = (shotsBySceneId.get(scene.id) ?? []).slice().sort((left, right) => left.order - right.order)
+    if (sceneShots.length === 0) {
+      setBreakdownWarning(`Сначала сделай breakdown сцены ${scene.title}, потом запускай Generate Prompts.`)
+      return
+    }
+
+    setPromptLoadingSceneId(scene.id)
+
+    try {
+      const promptDrafts = buildScenePromptDrafts(sceneShots, characters, locations, projectStyle)
+
+      promptDrafts.forEach((draft) => {
+        updateShot(draft.shotId, {
+          imagePrompt: draft.imagePrompt,
+          videoPrompt: draft.videoPrompt,
+        })
+      })
+
+      selectScene(scene.id)
+      setViewMode("board")
+      setExpandedShotId(sceneShots[0]?.id ?? null)
+      setExpandedSceneShotIds((current) => new Set(current).add(scene.id))
+      setBreakdownWarning(`Prompt pack собран для сцены ${scene.title}. Теперь можно отдельно генерировать каждый shot.`)
+    } finally {
+      setPromptLoadingSceneId(null)
+    }
+  }, [characters, locations, projectStyle, promptLoadingSceneId, selectScene, shotsBySceneId, updateShot])
+
+  const handleLucBessonBreakdown = useCallback(() => {
+    if (!lucBessonProfile) {
+      setBreakdownWarning("Luc Besson профиль ещё не подключён из configurator")
+      return
+    }
+
+    const targetScene = selectedScene ?? scenes[0] ?? null
+    if (!targetScene) {
+      setBreakdownWarning("Сначала выбери сцену в основном проекте, куда применить Luc Besson breakdown")
+      return
+    }
+
+    applyLucBessonProfileToScene({
+      lucBessonProfile,
+      targetScene,
+      selectedSceneContext,
+      setProjectStyle,
+      updateDirectorVision,
+      replaceSceneShots,
+    })
+
+    setBreakdownWarning(`Luc Besson профиль применён к сцене ${targetScene.title}. Основной screenplay не изменён; обновлены только scene Bible overrides, style и scene shots.`)
+  }, [lucBessonProfile, replaceSceneShots, scenes, selectedScene, selectedSceneContext, setProjectStyle, updateDirectorVision])
 
   const handleSceneClick = useCallback((scene: { id: string; headingBlockId: string }) => {
     selectScene(scene.id)
@@ -1257,6 +1485,7 @@ export function StoryboardPanel({
           const relatedShots = shotsBySceneId.get(scene.id) ?? []
           const isShotsExpanded = expandedSceneShotIds.has(scene.id)
           const isBreaking = breakdownLoadingSceneId === scene.id
+          const isGeneratingPrompts = promptLoadingSceneId === scene.id
 
           return (
             <div key={scene.id} className="flex flex-col gap-3">
@@ -1318,10 +1547,20 @@ export function StoryboardPanel({
                     onClick={(e) => { e.stopPropagation(); handleSceneBreakdown(scene) }}
                     disabled={isBreaking}
                     className="flex h-6 items-center gap-1 rounded-md px-1.5 text-[9px] uppercase tracking-[0.12em] text-[#7F8590] transition-colors hover:bg-white/5 hover:text-white disabled:opacity-40"
-                    aria-label={`Breakdown scene ${scene.index}`}
+                    aria-label={`${isLucBessonBreakdownMode ? "Luc Besson breakdown" : "Breakdown"} scene ${scene.index}`}
                   >
                     {isBreaking ? <Loader2 size={10} className="animate-spin" /> : <Clapperboard size={10} />}
-                    {relatedShots.length > 0 ? "Re-breakdown" : "Breakdown"}
+                    {isLucBessonBreakdownMode ? (relatedShots.length > 0 ? "Re-Besson" : "Besson") : (relatedShots.length > 0 ? "Re-breakdown" : "Breakdown")}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); handleScenePromptGeneration(scene) }}
+                    disabled={isGeneratingPrompts || relatedShots.length === 0}
+                    className="flex h-6 items-center gap-1 rounded-md px-1.5 text-[9px] uppercase tracking-[0.12em] text-[#CBB892] transition-colors hover:bg-[#D4A853]/10 hover:text-[#E7D1A4] disabled:opacity-40"
+                    aria-label={`Generate prompts for scene ${scene.index}`}
+                  >
+                    {isGeneratingPrompts ? <Loader2 size={10} className="animate-spin" /> : <Wand2 size={10} />}
+                    Prompts
                   </button>
                 </div>
               </div>
@@ -1490,6 +1729,16 @@ export function StoryboardPanel({
             >
               <Wand2 size={12} />
               Breakdown Studio
+            </button>
+            <button
+              type="button"
+              onClick={handleLucBessonBreakdown}
+              disabled={!lucBessonProfile}
+              className="flex items-center gap-1.5 rounded-xl border border-[#8b5cf6]/24 bg-[#8b5cf6]/10 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] text-[#E8DEFF] transition-colors hover:bg-[#8b5cf6]/16 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
+              aria-label="Apply Luc Besson profile to selected scene"
+            >
+              <Wand2 size={12} />
+              Luc Besson Breakdown
             </button>
             <div className="flex items-center gap-1 rounded-xl border border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,0.12)_0%,rgba(255,255,255,0.04)_100%)] px-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.22),0_12px_24px_rgba(0,0,0,0.14)] backdrop-blur-lg">
               <span className="px-1 text-[8px] uppercase tracking-wider text-white/30">Model:</span>

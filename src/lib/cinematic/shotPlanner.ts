@@ -6,6 +6,9 @@ import {
   getShotDensityMultiplier,
   type BreakdownEngineConfig,
 } from "@/lib/cinematic/config"
+import type { CensorStageResult } from "@/lib/cinematic/censor"
+import type { ContextRouterResult } from "@/lib/cinematic/contextRouter"
+import type { CreativePlannerResult } from "@/lib/cinematic/creativePlanner"
 import type { SceneAnalysis } from "@/lib/cinematic/sceneAnalyst"
 import {
   buildBibleContextPrompt,
@@ -26,6 +29,9 @@ export interface ShotPlannerInput {
   sceneId: string
   analysis: SceneAnalysis
   actions: ActionSplitStep[]
+  contextPlan?: ContextRouterResult
+  creativePlan?: CreativePlannerResult
+  censorReport?: CensorStageResult
   config?: BreakdownEngineConfig
   sceneText?: string
   bible?: CinematicBibleContext
@@ -568,7 +574,8 @@ Rules:
 - imagePromptBase and videoPromptBase are structured foundations, not final polished prompts.
 - Keep the number of shots near the recommended shot count unless the analysis strongly implies otherwise.
 - Preserve screenplay language in narrativePurpose and dramaticBeat when appropriate.
-- Use English technical terminology for camera craft when useful.
+- If the screenplay or scene text is in Russian, keep all human-facing planning fields in Russian: narrativePurpose, dramaticBeat, blocking, subject, environment, lighting, transitionIn, transitionOut, imagePromptBase, videoPromptBase.
+- For Russian-language scenes, prefer Russian film terminology for camera craft instead of switching the planning text to English.
 
 ${DEAKINS_RULES}
 ${SHOT_TRANSITION_RULES}
@@ -582,8 +589,22 @@ Respond with JSON only.`
 
 export function buildShotPlannerUserMessage(input: ShotPlannerInput): string {
   const screenplayExcerpt = buildScreenplayExcerpt(input.sceneText)
+  const contextSummary = input.contextPlan
+    ? `\n\nContext router guidance:\n${serializeForPrompt(input.contextPlan)}`
+    : ""
+  const creativeSummary = input.creativePlan
+    ? `\n\nCreative operator guidance:\n${serializeForPrompt({
+        operatorMission: input.creativePlan.operatorMission,
+        pressurePoints: input.creativePlan.scenePressurePoints,
+        globalGuidance: input.creativePlan.globalGuidance,
+        sceneIdeas: input.creativePlan.sceneIdeas,
+      })}`
+    : ""
+  const censorSummary = input.censorReport
+    ? `\n\nCensor verdict:\n${serializeForPrompt(input.censorReport)}`
+    : ""
 
-  return `Plan structured cinematic shots for scene ${input.sceneId}.\n\nScene analysis summary:\n${serializeForPrompt(toShotPlannerAnalysisPayload(input.analysis))}\n\nAction split:\n${serializeForPrompt(toShotPlannerActionPayload(input.actions))}${screenplayExcerpt ? `\n\nScreenplay excerpt:\n${screenplayExcerpt}` : ""}`
+  return `Plan structured cinematic shots for scene ${input.sceneId}.\n\nScene analysis summary:\n${serializeForPrompt(toShotPlannerAnalysisPayload(input.analysis))}\n\nAction split:\n${serializeForPrompt(toShotPlannerActionPayload(input.actions))}${contextSummary}${creativeSummary}${censorSummary}${screenplayExcerpt ? `\n\nScreenplay excerpt:\n${screenplayExcerpt}` : ""}`
 }
 
 export function parseShotPlannerResponse(rawText: string, sceneId: string): ShotSpec[] {

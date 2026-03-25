@@ -31,6 +31,7 @@ import { buildImagePrompt } from "@/lib/promptBuilder"
 import { useBibleStore, GENERATED_CANONICAL_IMAGE_ID } from "@/store/bible"
 import { useBoardStore } from "@/store/board"
 import { useProjectsStore } from "@/store/projects"
+import { createTimelineShot } from "@/store/timeline"
 
 type AssistantTarget = "analysis" | "actionSplit" | "shotPlan" | "continuity" | "prompts" | "all"
 
@@ -519,11 +520,12 @@ export default function BreakdownStudioPage() {
 
   const genBasePrompt = useMemo(() => {
     if (!genShotPackage) return ""
-    // Build a minimal stub TimelineShot so buildImagePrompt can be called
-    const stub = {
+    const stub = createTimelineShot({
       id: genShotPackage.shotId,
-      sceneId: "",
+      sceneId: null,
       label: genShotPackage.label ?? "",
+      duration: genShotPackage.duration ?? 3000,
+      type: "image",
       imagePrompt: genShotPackage.imagePrompt ?? "",
       videoPrompt: genShotPackage.videoPrompt ?? "",
       directorNote: genShotPackage.directorNote ?? "",
@@ -533,11 +535,10 @@ export default function BreakdownStudioPage() {
       cameraMotion: "",
       notes: "",
       visualDescription: "",
-      characterIds: genCharacter ? [genCharacter.id] : [],
-      locationId: genLocation?.id ?? null,
-    }
+      sourceText: "",
+    })
     return buildImagePrompt(
-      stub as Parameters<typeof buildImagePrompt>[0],
+      stub,
       [],
       genCharacter ? [genCharacter] : [],
       genLocation ? [genLocation] : [],
@@ -575,7 +576,7 @@ export default function BreakdownStudioPage() {
         body: JSON.stringify({
           prompt: promptText,
           model: selectedImageGenModel,
-          referenceImages: referenceImages.map((ref) => ({ url: ref.url, label: ref.label })),
+          referenceImages,
         }),
       })
 

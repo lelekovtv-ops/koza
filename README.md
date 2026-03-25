@@ -1,36 +1,200 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# KOZA
 
-## Getting Started
+KOZA is a Next.js-based AI production studio workspace for screenplay, board, timeline, and image-assisted creative workflows.
 
-First, run the development server:
+## Source of Truth
+
+The GitHub repository is the single source of truth for this project.
+
+- Local working folder: `/Users/macbookbpm/Desktop/KOZA`
+- Git remote: `origin -> https://github.com/lelekovtv-ops/koza.git`
+- Main production branch: `main`
+- Vercel should deploy from `main`
+
+Do not maintain parallel copies of the project outside this folder.
+
+## Local Setup
+
+Install dependencies:
+
+```bash
+npm install
+```
+
+Create local environment variables:
+
+```bash
+cp .env.example .env.local
+```
+
+Run development server:
 
 ```bash
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Check managed dev server health:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```bash
+npm run dev:status
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+The app runs on:
 
-## Learn More
+```bash
+http://localhost:3001
+```
 
-To learn more about Next.js, take a look at the following resources:
+You can also use:
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+```bash
+./start-dev.sh
+```
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+## Environment Variables
 
-## Deploy on Vercel
+Current app integrations use these keys:
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+- `OPENAI_API_KEY`
+- `GOOGLE_API_KEY`
+- `ANTHROPIC_API_KEY` for Claude models
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Supabase is scaffolded but not active yet, so `NEXT_PUBLIC_SUPABASE_URL` and `NEXT_PUBLIC_SUPABASE_ANON_KEY` are not required right now.
+
+Rules:
+
+- Keep real secrets only in `.env.local` and Vercel project settings
+- Never commit `.env.local`
+- Keep `.env.example` updated when required keys change
+
+## GitHub-First Workflow
+
+If you want the repository to stay current at all times, work from Git first, not from loose local copies.
+
+### First clone
+
+```bash
+git clone https://github.com/lelekovtv-ops/koza.git /Users/macbookbpm/Desktop/KOZA
+cd /Users/macbookbpm/Desktop/KOZA
+npm install
+cp .env.example .env.local
+```
+
+### Start every work session
+
+```bash
+cd /Users/macbookbpm/Desktop/KOZA
+git pull origin main
+```
+
+Then start the app:
+
+```bash
+npm run dev
+```
+
+### Publish your latest work to GitHub
+
+```bash
+git status
+git add .
+git commit -m "Describe the change"
+git push origin main
+```
+
+### Minimal safe routine
+
+Use this exact order every time:
+
+1. `git pull origin main`
+2. make changes
+3. `npm run build` if the change is significant
+4. `git add .`
+5. `git commit -m "..."`
+6. `git push origin main`
+
+That is the simplest way to keep GitHub always current.
+
+## Vercel Setup
+
+Recommended deployment model:
+
+- GitHub hosts the code
+- Vercel pulls from GitHub
+- Production deploys from `main`
+
+### One-time Vercel setup
+
+1. Import the repository in Vercel
+2. Choose the `koza` GitHub repository
+3. Framework preset: Next.js
+4. Root directory: project root
+5. Build command: `npm run build`
+6. Install command: `npm install`
+7. Add required environment variables in Vercel
+
+### Recommended Vercel env
+
+- `OPENAI_API_KEY`
+- `GOOGLE_API_KEY`
+- `ANTHROPIC_API_KEY` if Claude is enabled
+
+If you install the Vercel CLI later, sync env down to local like this:
+
+```bash
+npm i -g vercel
+vercel login
+cd /Users/macbookbpm/Desktop/KOZA
+vercel link
+vercel env pull .env.local
+```
+
+## Recommended Repo Discipline
+
+To avoid drift and confusion:
+
+- Work only inside `/Users/macbookbpm/Desktop/KOZA`
+- Push to GitHub at the end of each focused task
+- Pull from GitHub before starting new work
+- Do not store secrets in git
+- Do not use multiple local copies of the same project
+
+## Quick Commands
+
+Install:
+
+```bash
+npm install
+```
+
+Dev:
+
+```bash
+npm run dev
+```
+
+Build:
+
+```bash
+npm run build
+```
+
+Safe build that restarts the managed dev server if it was already running:
+
+```bash
+npm run build:safe
+```
+
+Pull latest:
+
+```bash
+git pull origin main
+```
+
+Push latest:
+
+```bash
+git add .
+git commit -m "Update KOZA"
+git push origin main
+```

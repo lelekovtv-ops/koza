@@ -544,7 +544,7 @@ export function superviseShotContinuity(shots: ShotSpec[], config?: BreakdownEng
     risks.push(...shotRisks)
 
     const relation = previousShot ? deriveShotRelation(previousShot, shot) : null
-    if (previousShot) {
+    if (relation) {
       relations.push(relation)
     }
 

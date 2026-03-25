@@ -14,6 +14,8 @@ import type {
   RunSnapshot,
   NormalizedRunResult,
   RunHistoryEntry,
+  PipelineBreakdownDraft,
+  PipelineDraftShot,
 } from "@/types/pipeline"
 import {
   DEFAULT_DIRECTOR_PRESET,
@@ -24,15 +26,22 @@ import {
   mergeCinematographerPreset,
   mergePipelineConfig,
 } from "@/lib/pipeline/presetMerge"
+import { buildPipelineEdgeLabels } from "@/lib/pipeline/edgeLabels"
+import type { ImageGenModel, ImageGenResult } from "@/lib/pipeline/imageGenerator"
+import { clonePipelineConfig } from "@/lib/pipeline/configTransfer"
 
 const MAX_UNDO_HISTORY = 20
 
 const DEFAULT_STAGE_MODELS: StageModelConfig[] = [
   { stageId: "sceneAnalyst", modelId: "claude-sonnet-4-20250514", customSystemPromptSuffix: "" },
   { stageId: "actionSplitter", modelId: "claude-sonnet-4-20250514", customSystemPromptSuffix: "" },
+  { stageId: "contextRouter", modelId: "gpt-4o", customSystemPromptSuffix: "" },
+  { stageId: "creativePlanner", modelId: "claude-sonnet-4-20250514", customSystemPromptSuffix: "" },
+  { stageId: "censor", modelId: "gpt-4o", customSystemPromptSuffix: "" },
   { stageId: "shotPlanner", modelId: "gpt-4o", customSystemPromptSuffix: "" },
   { stageId: "continuitySupervisor", modelId: "local", customSystemPromptSuffix: "" },
   { stageId: "promptComposer", modelId: "claude-sonnet-4-20250514", customSystemPromptSuffix: "" },
+  { stageId: "promptOptimizer", modelId: "local", customSystemPromptSuffix: "" },
   { stageId: "imageGenerator", modelId: "gpt-image", customSystemPromptSuffix: "" },
 ]
 
@@ -40,9 +49,13 @@ const ALL_STAGE_IDS: PipelineStageId[] = [
   "sceneInput",
   "sceneAnalyst",
   "actionSplitter",
+  "contextRouter",
+  "creativePlanner",
+  "censor",
   "shotPlanner",
   "continuitySupervisor",
   "promptComposer",
+  "promptOptimizer",
   "imageGenerator",
 ]
 
@@ -82,6 +95,7 @@ function createDefaultConfig(): PipelineConfig {
 
 interface PipelineState {
   activeConfig: PipelineConfig
+  configBaseline: PipelineConfig | null
   customDirectorPresets: DirectorPreset[]
   customCinematographerPresets: CinematographerPreset[]
   savedConfigs: PipelineConfig[]
@@ -90,6 +104,12 @@ interface PipelineState {
   runState: PipelineRunState
   runSnapshot: RunSnapshot | null
   normalizedResult: NormalizedRunResult | null
+  breakdownDraft: PipelineBreakdownDraft | null
+  edgeLabels: Record<string, string>
+  imageGenModel: ImageGenModel
+  imageGenResults: Record<string, ImageGenResult>
+  imageGenRunning: string | null
+  runNotice: string | null
   runHistory: RunHistoryEntry[]
 
   // Config
@@ -101,6 +121,11 @@ interface PipelineState {
   setStylePrompt: (prompt: string) => void
   setLanguage: (lang: PipelineConfig["language"]) => void
   setReferenceStrategy: (strategy: ReferenceStrategy) => void
+  updateConfigValue: (fieldId: string, value: string | [number, number]) => void
+  setImageGenModel: (model: ImageGenModel) => void
+  setImageGenResult: (shotId: string, result: ImageGenResult) => void
+  setImageGenRunning: (shotId: string | null) => void
+  clearImageGenResults: () => void
 
   // Merge presets
   applyDirectorPreset: (preset: DirectorPreset, mode?: PresetApplyMode) => void
@@ -125,12 +150,17 @@ interface PipelineState {
   deleteCustomPreset: (type: "director" | "cinematographer", id: string) => void
   saveConfig: (name: string) => void
   loadConfig: (id: string) => void
+  importConfig: (config: PipelineConfig) => void
 
   // Run
   setStageStatus: (stageId: PipelineStageId, status: PipelineStageStatus) => void
   setStageResult: (stageId: PipelineStageId, result: unknown) => void
+  setRunNotice: (notice: string | null) => void
   startRun: (sceneText: string) => void
+  startPromptRun: () => void
+  completeBreakdownPhase: (draft: PipelineBreakdownDraft) => void
   completeRun: (normalized: NormalizedRunResult) => void
+  updateDraftShot: (shotId: string, patch: Partial<PipelineDraftShot>) => void
   failRun: (error: string, failedStage?: PipelineStageId) => void
   resetRun: () => void
 }
@@ -143,10 +173,17 @@ function pushUndo(state: PipelineState): PipelineConfig[] {
   return history
 }
 
+function revokeImageGenResults(results: Record<string, ImageGenResult>) {
+  Object.values(results).forEach((result) => {
+    URL.revokeObjectURL(result.imageUrl)
+  })
+}
+
 export const usePipelineStore = create<PipelineState>()(
   persist(
     (set, get) => ({
       activeConfig: createDefaultConfig(),
+      configBaseline: createDefaultConfig(),
       customDirectorPresets: [],
       customCinematographerPresets: [],
       savedConfigs: [],
@@ -155,6 +192,12 @@ export const usePipelineStore = create<PipelineState>()(
       runState: INITIAL_RUN_STATE,
       runSnapshot: null,
       normalizedResult: null,
+      breakdownDraft: null,
+      edgeLabels: {},
+      imageGenModel: "gpt-image",
+      imageGenResults: {},
+      imageGenRunning: null,
+      runNotice: null,
       runHistory: [],
 
       setDirectorPreset: (preset) =>
@@ -175,6 +218,7 @@ export const usePipelineStore = create<PipelineState>()(
               sm.stageId === stageId ? { ...sm, modelId } : sm,
             ),
           },
+          ...(stageId === "imageGenerator" ? { imageGenModel: modelId as ImageGenModel } : {}),
         })),
 
       setStageCustomPrompt: (stageId, suffix) =>
@@ -206,6 +250,139 @@ export const usePipelineStore = create<PipelineState>()(
         set((state) => ({
           activeConfig: { ...state.activeConfig, referenceStrategy: strategy },
         })),
+
+      updateConfigValue: (fieldId, value) =>
+        set((state) => {
+          if (fieldId.startsWith("stage.") && fieldId.endsWith(".modelId")) {
+            const stageId = fieldId.split(".")[1] as PipelineStageId
+            return {
+              activeConfig: {
+                ...state.activeConfig,
+                stageModels: state.activeConfig.stageModels.map((sm) =>
+                  sm.stageId === stageId ? { ...sm, modelId: value as string } : sm,
+                ),
+              },
+              ...(stageId === "imageGenerator" ? { imageGenModel: value as ImageGenModel } : {}),
+            }
+          }
+
+          if (fieldId.startsWith("stage.") && fieldId.endsWith(".customPromptSuffix")) {
+            const stageId = fieldId.split(".")[1] as PipelineStageId
+            return {
+              activeConfig: {
+                ...state.activeConfig,
+                stageModels: state.activeConfig.stageModels.map((sm) =>
+                  sm.stageId === stageId ? { ...sm, customSystemPromptSuffix: value as string } : sm,
+                ),
+              },
+            }
+          }
+
+          switch (fieldId) {
+            case "director.emotionalFocus":
+              return {
+                activeConfig: {
+                  ...state.activeConfig,
+                  directorPreset: { ...state.activeConfig.directorPreset, emotionalFocus: value as string },
+                },
+              }
+            case "director.dramaticDensity":
+              return {
+                activeConfig: {
+                  ...state.activeConfig,
+                  directorPreset: { ...state.activeConfig.directorPreset, dramaticDensity: value as PipelineConfig["directorPreset"]["dramaticDensity"] },
+                },
+              }
+            case "director.shotCountRange":
+              return {
+                activeConfig: {
+                  ...state.activeConfig,
+                  directorPreset: { ...state.activeConfig.directorPreset, shotCountRange: value as [number, number] },
+                },
+              }
+            case "director.keyframePolicy":
+              return {
+                activeConfig: {
+                  ...state.activeConfig,
+                  directorPreset: { ...state.activeConfig.directorPreset, keyframePolicy: value as PipelineConfig["directorPreset"]["keyframePolicy"] },
+                },
+              }
+            case "dp.continuityStrictness":
+              return {
+                activeConfig: {
+                  ...state.activeConfig,
+                  cinematographerPreset: { ...state.activeConfig.cinematographerPreset, continuityStrictness: value as PipelineConfig["cinematographerPreset"]["continuityStrictness"] },
+                },
+              }
+            case "dp.relationMode":
+              return {
+                activeConfig: {
+                  ...state.activeConfig,
+                  cinematographerPreset: { ...state.activeConfig.cinematographerPreset, relationMode: value as PipelineConfig["cinematographerPreset"]["relationMode"] },
+                },
+              }
+            case "dp.textRichness":
+              return {
+                activeConfig: {
+                  ...state.activeConfig,
+                  cinematographerPreset: { ...state.activeConfig.cinematographerPreset, textRichness: value as PipelineConfig["cinematographerPreset"]["textRichness"] },
+                },
+              }
+            case "config.stylePrompt":
+              return { activeConfig: { ...state.activeConfig, stylePrompt: value as string } }
+            case "config.language":
+              return { activeConfig: { ...state.activeConfig, language: value as PipelineConfig["language"] } }
+            case "config.referenceStrategy":
+              return { activeConfig: { ...state.activeConfig, referenceStrategy: value as ReferenceStrategy } }
+            case "config.fallbackMode":
+              return { activeConfig: { ...state.activeConfig, fallbackMode: value as PipelineConfig["fallbackMode"] } }
+            case "config.imageGenModel":
+              return {
+                imageGenModel: value as ImageGenModel,
+                activeConfig: {
+                  ...state.activeConfig,
+                  stageModels: state.activeConfig.stageModels.map((sm) =>
+                    sm.stageId === "imageGenerator" ? { ...sm, modelId: value as string } : sm,
+                  ),
+                },
+              }
+            default:
+              return state
+          }
+        }),
+
+      setImageGenModel: (model) =>
+        set((state) => ({
+          imageGenModel: model,
+          activeConfig: {
+            ...state.activeConfig,
+            stageModels: state.activeConfig.stageModels.map((sm) =>
+              sm.stageId === "imageGenerator" ? { ...sm, modelId: model } : sm,
+            ),
+          },
+        })),
+
+      setImageGenResult: (shotId, result) =>
+        set((state) => {
+          const previous = state.imageGenResults[shotId]
+          if (previous && previous.imageUrl !== result.imageUrl) {
+            URL.revokeObjectURL(previous.imageUrl)
+          }
+
+          return {
+            imageGenResults: {
+              ...state.imageGenResults,
+              [shotId]: result,
+            },
+          }
+        }),
+
+      setImageGenRunning: (shotId) => set({ imageGenRunning: shotId }),
+
+      clearImageGenResults: () => {
+        revokeImageGenResults(get().imageGenResults)
+        set({ imageGenResults: {}, imageGenRunning: null })
+      },
 
       applyDirectorPreset: (preset, mode = "merge") =>
         set((state) => ({
@@ -312,12 +489,29 @@ export const usePipelineStore = create<PipelineState>()(
 
       saveConfig: (name) =>
         set((state) => {
-          const config: PipelineConfig = {
+          const currentId = state.activeConfig.id
+          const currentName = name.trim() || state.activeConfig.name || "Pipeline Config"
+          const existingIndex = state.savedConfigs.findIndex((c) => c.id === currentId)
+          const nextConfig: PipelineConfig = clonePipelineConfig({
             ...state.activeConfig,
-            id: `config-${Date.now()}`,
-            name,
+            id: existingIndex >= 0 || currentId !== "default" ? currentId : `config-${Date.now()}`,
+            name: currentName,
+          })
+
+          const nextSavedConfigs = [...state.savedConfigs]
+          const targetIndex = nextSavedConfigs.findIndex((c) => c.id === nextConfig.id)
+
+          if (targetIndex >= 0) {
+            nextSavedConfigs[targetIndex] = nextConfig
+          } else {
+            nextSavedConfigs.push(nextConfig)
           }
-          return { savedConfigs: [...state.savedConfigs, config] }
+
+          return {
+            savedConfigs: nextSavedConfigs,
+            activeConfig: clonePipelineConfig(nextConfig),
+            configBaseline: clonePipelineConfig(nextConfig),
+          }
         }),
 
       loadConfig: (id) =>
@@ -326,9 +520,17 @@ export const usePipelineStore = create<PipelineState>()(
           if (!config) return state
           return {
             previousConfigs: pushUndo(state),
-            activeConfig: { ...config },
+            activeConfig: clonePipelineConfig(config),
+            configBaseline: clonePipelineConfig(config),
           }
         }),
+
+      importConfig: (config) =>
+        set((state) => ({
+          previousConfigs: pushUndo(state),
+          activeConfig: clonePipelineConfig(config),
+          configBaseline: null,
+        })),
 
       setStageStatus: (stageId, status) =>
         set((state) => ({
@@ -353,9 +555,12 @@ export const usePipelineStore = create<PipelineState>()(
           },
         })),
 
+      setRunNotice: (notice) => set({ runNotice: notice }),
+
       startRun: (sceneText) => {
         const state = get()
         const now = Date.now()
+        revokeImageGenResults(state.imageGenResults)
         set({
           runSnapshot: {
             config: structuredClone(state.activeConfig),
@@ -363,6 +568,11 @@ export const usePipelineStore = create<PipelineState>()(
             startedAt: now,
           },
           normalizedResult: null,
+          breakdownDraft: null,
+          edgeLabels: {},
+          imageGenResults: {},
+          imageGenRunning: null,
+          runNotice: null,
           runState: {
             ...INITIAL_RUN_STATE,
             status: "running",
@@ -373,6 +583,43 @@ export const usePipelineStore = create<PipelineState>()(
           },
         })
       },
+
+      startPromptRun: () =>
+        set((state) => ({
+          normalizedResult: null,
+          edgeLabels: {},
+          imageGenResults: {},
+          imageGenRunning: null,
+          runNotice: null,
+          runState: {
+            ...state.runState,
+            status: "running",
+            currentStage: "promptComposer",
+            failedStage: null,
+            error: null,
+            completedAt: null,
+            stageStatuses: {
+              ...state.runState.stageStatuses,
+              promptComposer: "running",
+              promptOptimizer: "idle",
+              imageGenerator: "idle",
+            },
+          },
+        })),
+
+      completeBreakdownPhase: (draft) =>
+        set((state) => ({
+          breakdownDraft: draft,
+          normalizedResult: null,
+          edgeLabels: {},
+          runState: {
+            ...state.runState,
+            status: "done",
+            currentStage: null,
+            error: null,
+            completedAt: Date.now(),
+          },
+        })),
 
       completeRun: (normalized) => {
         const state = get()
@@ -388,6 +635,8 @@ export const usePipelineStore = create<PipelineState>()(
         }
         set((s) => ({
           normalizedResult: normalized,
+          breakdownDraft: s.breakdownDraft,
+          edgeLabels: buildPipelineEdgeLabels(normalized),
           runHistory: [...s.runHistory.slice(-19), entry],
           runState: {
             ...s.runState,
@@ -397,6 +646,22 @@ export const usePipelineStore = create<PipelineState>()(
           },
         }))
       },
+
+      updateDraftShot: (shotId, patch) =>
+        set((state) => {
+          if (!state.breakdownDraft) {
+            return state
+          }
+
+          return {
+            breakdownDraft: {
+              ...state.breakdownDraft,
+              draftShots: state.breakdownDraft.draftShots.map((shot) => (
+                shot.shotId === shotId ? { ...shot, ...patch } : shot
+              )),
+            },
+          }
+        }),
 
       failRun: (error, failedStage) =>
         set((state) => ({
@@ -411,16 +676,30 @@ export const usePipelineStore = create<PipelineState>()(
         })),
 
       resetRun: () =>
-        set({ runState: INITIAL_RUN_STATE, runSnapshot: null, normalizedResult: null }),
+        {
+          revokeImageGenResults(get().imageGenResults)
+          set({
+            runState: INITIAL_RUN_STATE,
+            runSnapshot: null,
+            normalizedResult: null,
+            breakdownDraft: null,
+            edgeLabels: {},
+            imageGenResults: {},
+            imageGenRunning: null,
+            runNotice: null,
+          })
+        },
     }),
     {
       name: "koza-pipeline-v1",
       partialize: (state) => ({
         activeConfig: state.activeConfig,
+        configBaseline: state.configBaseline,
         customDirectorPresets: state.customDirectorPresets,
         customCinematographerPresets: state.customCinematographerPresets,
         savedConfigs: state.savedConfigs,
         previousConfigs: state.previousConfigs,
+        imageGenModel: state.imageGenModel,
         runHistory: state.runHistory,
       }),
     },

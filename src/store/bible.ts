@@ -16,9 +16,13 @@ import { type Block } from "@/lib/screenplayFormat"
 interface BibleState {
   characters: CharacterEntry[]
   locations: LocationEntry[]
+  storyHistory: string
+  directorVision: string
   updateFromScreenplay: (blocks: Block[], scenes: Scene[]) => void
   updateCharacter: (id: string, patch: Partial<CharacterEntry>) => void
   updateLocation: (id: string, patch: Partial<LocationEntry>) => void
+  updateStoryHistory: (value: string) => void
+  updateDirectorVision: (value: string) => void
 }
 
 export const GENERATED_CANONICAL_IMAGE_ID = "__generated_primary__"
@@ -173,6 +177,8 @@ export const useBibleStore = create<BibleState>()(
     (set) => ({
       characters: [],
       locations: [],
+      storyHistory: "",
+      directorVision: "",
       updateFromScreenplay: (blocks, scenes) => {
         const characters = linkCharactersToScenes(parseCharacters(blocks), blocks, scenes)
         const locations = parseLocations(blocks, scenes)
@@ -211,12 +217,20 @@ export const useBibleStore = create<BibleState>()(
           )),
         }))
       },
+      updateStoryHistory: (value) => {
+        set({ storyHistory: value })
+      },
+      updateDirectorVision: (value) => {
+        set({ directorVision: value })
+      },
     }),
     {
       name: "koza-bible-v1",
       partialize: (state) => ({
         characters: state.characters,
         locations: state.locations,
+        storyHistory: state.storyHistory,
+        directorVision: state.directorVision,
       }),
       onRehydrateStorage: () => (state, error) => {
         if (error || !state) return
@@ -236,6 +250,8 @@ export const useBibleStore = create<BibleState>()(
           useBibleStore.setState({
             characters,
             locations,
+            storyHistory: state.storyHistory ?? "",
+            directorVision: state.directorVision ?? "",
           })
         })
       },

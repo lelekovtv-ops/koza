@@ -10,6 +10,8 @@ export interface PipelineOutputNodeData {
   modelId: string
   status: PipelineStageStatus
   shotCount: number
+  generatedCount?: number
+  generatingShotId?: string | null
   dropHighlight?: "valid" | "invalid" | "pulse" | null
   onSelect?: () => void
   [key: string]: unknown
@@ -25,7 +27,7 @@ const handleStyle = {
 }
 
 function PipelineOutputNode({ data }: NodeProps) {
-  const { modelId, status, shotCount, dropHighlight, onSelect } = data as PipelineOutputNodeData
+  const { modelId, status, shotCount, generatedCount = 0, generatingShotId, dropHighlight, onSelect } = data as PipelineOutputNodeData
 
   const highlightClass =
     dropHighlight === "valid"
@@ -36,13 +38,21 @@ function PipelineOutputNode({ data }: NodeProps) {
           ? "ring-2 ring-emerald-400/60 border-emerald-400/40 animate-pulse"
           : ""
 
+  const progressLabel = shotCount === 0
+    ? "ожидает промпты"
+    : generatingShotId
+      ? `generating ${Math.min(generatedCount + 1, shotCount)}/${shotCount}`
+      : generatedCount >= shotCount && shotCount > 0
+        ? `done ${generatedCount}/${shotCount}`
+        : `${shotCount} prompts ready`
+
   return (
     <div
-      className={`flex h-[120px] w-[220px] cursor-pointer flex-col rounded-xl border border-white/8 bg-[#1A1816]/95 shadow-[0_14px_28px_rgba(0,0,0,0.2)] transition-all hover:border-white/15 ${highlightClass}`}
+      className={`flex h-30 w-55 cursor-pointer flex-col rounded-xl border border-white/8 bg-[#1A1816]/95 shadow-[0_14px_28px_rgba(0,0,0,0.2)] transition-all hover:border-white/15 ${highlightClass}`}
       onClick={onSelect}
     >
       {/* Accent bar */}
-      <div className="h-[3px] w-full rounded-t-xl bg-emerald-500" />
+      <div className="h-0.75 w-full rounded-t-xl bg-emerald-500" />
 
       {/* Header */}
       <div className="flex items-center gap-2 px-3 py-1.5">
@@ -55,17 +65,21 @@ function PipelineOutputNode({ data }: NodeProps) {
 
       {/* Info */}
       <p className="px-3 text-[10px] leading-tight text-white/35">
-        Generate images from composed prompts
+        Генерирует изображения из готовых pipeline prompts
       </p>
 
       <div className="mt-auto flex flex-col gap-0.5 border-t border-white/5 px-3 py-1.5">
+        <div className="flex items-center justify-between">
+          <span className="text-[9px] text-white/30">Статус</span>
+          <span className="text-[9px] text-emerald-300/70">{progressLabel}</span>
+        </div>
         <div className="flex items-center justify-between">
           <span className="text-[9px] text-white/30">Модель</span>
           <span className="text-[9px] text-white/55">{modelId}</span>
         </div>
         <div className="flex items-center justify-between">
           <span className="text-[9px] text-white/30">Кадры</span>
-          <span className="text-[9px] text-white/55">{shotCount > 0 ? shotCount : "—"}</span>
+          <span className="text-[9px] text-white/55">{shotCount > 0 ? `${generatedCount}/${shotCount}` : "—"}</span>
         </div>
       </div>
 

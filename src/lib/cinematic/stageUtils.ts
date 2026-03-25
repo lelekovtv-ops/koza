@@ -46,18 +46,78 @@ export function buildBibleContextPrompt(bible?: CinematicBibleContext): string {
 export function extractJsonObject(rawText: string): string {
   const trimmed = rawText.trim()
 
-  if (trimmed.startsWith("{")) {
-    return trimmed
-  }
-
-  const startIndex = trimmed.indexOf("{")
-  const endIndex = trimmed.lastIndexOf("}")
-
-  if (startIndex === -1 || endIndex === -1 || endIndex <= startIndex) {
+  if (!trimmed) {
     throw new Error("Stage returned invalid JSON object")
   }
 
-  return trimmed.slice(startIndex, endIndex + 1)
+  const fencedMatch = trimmed.match(/```(?:json)?\s*([\s\S]*?)\s*```/i)
+  const candidateText = fencedMatch?.[1]?.trim() || trimmed
+
+  if (candidateText.startsWith("{")) {
+    try {
+      JSON.parse(candidateText)
+      return candidateText
+    } catch {
+      // Fall through to balanced brace scanning.
+    }
+  }
+
+  let startIndex = -1
+  let depth = 0
+  let inString = false
+  let isEscaped = false
+
+  for (let index = 0; index < candidateText.length; index += 1) {
+    const char = candidateText[index]
+
+    if (inString) {
+      if (isEscaped) {
+        isEscaped = false
+        continue
+      }
+
+      if (char === "\\") {
+        isEscaped = true
+        continue
+      }
+
+      if (char === '"') {
+        inString = false
+      }
+
+      continue
+    }
+
+    if (char === '"') {
+      inString = true
+      continue
+    }
+
+    if (char === "{") {
+      if (depth === 0) {
+        startIndex = index
+      }
+      depth += 1
+      continue
+    }
+
+    if (char === "}" && depth > 0) {
+      depth -= 1
+
+      if (depth === 0 && startIndex !== -1) {
+        const candidate = candidateText.slice(startIndex, index + 1)
+
+        try {
+          JSON.parse(candidate)
+          return candidate
+        } catch {
+          startIndex = -1
+        }
+      }
+    }
+  }
+
+  throw new Error("Stage returned invalid JSON object")
 }
 
 export function extractJsonArray(rawText: string): string {

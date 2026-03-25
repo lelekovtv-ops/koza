@@ -123,6 +123,8 @@ Rules:
 - Keep the order chronological.
 - whyItMatters should explain in plain language why this moment matters.
 - Preserve screenplay language where useful.
+- If the screenplay or scene text is in Russian, keep all human-facing fields in Russian: title, summary, whyItMatters, visibleChange, emotionalChange, transitionOut.
+- Do not switch to English for planning prose when the scene is Russian.
 - Respect this visual style direction when deciding emphasis: ${styleDirective}
 ${buildBreakdownConfigPrompt(input.config)}
 ${buildBibleContextPrompt(input.bible)}

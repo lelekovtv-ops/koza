@@ -1,6 +1,7 @@
 "use client"
 
-import { ArrowDownToLine, ArrowLeft, Trash2 } from "lucide-react"
+import Link from "next/link"
+import { ArrowDownToLine, ArrowLeft, Sparkles, Trash2 } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Fragment, Suspense, useMemo, useState } from "react"
 import type { LogEntry, LogEntryType } from "@/store/devlog"
@@ -415,6 +416,13 @@ function DevConsoleContent() {
               <ArrowLeft className="h-4 w-4" />
               Back
             </button>
+            <Link
+              href="/dev/configurator"
+              className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/4 px-3 py-2 text-sm text-white/70 transition hover:text-white"
+            >
+              <Sparkles className="h-4 w-4" />
+              Configurator Sandbox
+            </Link>
             <div>
               <h1 className="text-lg font-semibold tracking-[0.24em] text-white/90">KOZA DEV CONSOLE</h1>
               <p className="text-xs text-white/35">System breakdown, image generation, prompt and sync logs</p>
