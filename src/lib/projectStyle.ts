@@ -14,7 +14,7 @@ export const STYLE_PRESETS = [
   {
     id: "sketch",
     label: "Sketch",
-    prompt: "Simple pencil storyboard sketch, minimal clean lines, no shading, no hatching, no cross-hatching, no shadows, white background, quick loose outline only, like a director's napkin sketch",
+    prompt: "Clean thin-line storyboard sketch, single-weight pencil outline, no shading, no hatching, no fill, no texture, no shadows, no gradients, pure white background, minimal detail, only essential contours, like a clean animation key drawing",
   },
   {
     id: "watercolor",

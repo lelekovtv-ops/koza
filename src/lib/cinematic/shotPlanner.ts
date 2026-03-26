@@ -574,6 +574,7 @@ Rules:
 - imagePromptBase and videoPromptBase are structured foundations, not final polished prompts.
 - Keep the number of shots near the recommended shot count unless the analysis strongly implies otherwise.
 - IMPORTANT: Always respond in the same language as the screenplay text. Write ALL fields in the screenplay language, including imagePromptBase and videoPromptBase. If the scene is in Russian, write everything in Russian. If in English, write in English. Match the language of the input exactly.
+- MANDATORY ANCHORS: Every shot MUST reference characters and locations by their exact names from the PROJECT BIBLE. The "subject" field must name the specific character(s) from the Bible. The "environment" field must name the specific location. characterIds must list the exact Bible character names present in that shot. locationId must match a Bible location. Do not use generic descriptions like "a man" or "the room" when a Bible entry exists — always use the anchor name.
 
 ${DEAKINS_RULES}
 ${SHOT_TRANSITION_RULES}

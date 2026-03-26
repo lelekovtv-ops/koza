@@ -92,6 +92,7 @@ Requirements:
 - continuityRisks should mention eyelines, geography, props, wardrobe, time-of-day, entrances/exits, and action carry-over when relevant.
 - recommendedShotCount should be realistic for this scene.
 - IMPORTANT: Always respond in the same language as the screenplay text. If the scene is in Russian, write all text fields in Russian. If in English, write in English. Match the language of the input exactly.
+- MANDATORY: Use the exact character names and location names from the PROJECT BIBLE below as anchors. characterPresence must list characters by their exact Bible names. geography must reference Bible location names when they match the scene heading.
 - Respect this visual style direction when identifying motifs and risks: ${styleDirective}
 ${buildBibleContextPrompt(input.bible)}
 

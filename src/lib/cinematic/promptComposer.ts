@@ -589,6 +589,7 @@ Rules:
 - cameraNote may include English technical film terminology when there is no equivalent term.
 - imagePrompt describes a still frame.
 - videoPrompt extends the image prompt with motion, duration and pacing.
+- MANDATORY ANCHORS: caption, directorNote, imagePrompt, and videoPrompt MUST reference characters and locations by their exact names from the PROJECT BIBLE. Never use generic references like "a man", "the character", "the room" when a Bible entry exists. Always use the exact character name (e.g. "БОРИС") and location name (e.g. "Квартира Бориса"). These names are visual anchors that connect the shot to reference images.
 - Use the provided continuity memory to state what must remain identical, what may change, and what must prepare the next shot.
 - Use the provided shot relations to express transition logic in the video prompt.
 - If editorialNotes are present, treat them as high-priority human overrides for label, action, framing intent, and visual emphasis.

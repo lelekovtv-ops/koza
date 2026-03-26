@@ -13,6 +13,7 @@ import { useScenesStore } from "@/store/scenes"
 import { useNavigationStore } from "@/store/navigation"
 import { trySaveBlob } from "@/lib/fileStorage"
 import { convertReferenceImagesToDataUrls, getShotGenerationReferenceImages } from "@/lib/imageGenerationReferences"
+import { PromptLab, PromptLabPanel } from "./PromptLab"
 import { buildImagePrompt, buildVideoPrompt, getReferencedBibleEntries } from "@/lib/promptBuilder"
 import { ProjectStylePicker } from "@/components/ui/ProjectStylePicker"
 import { ScriptViewer } from "@/components/editor/screenplay/ScriptViewer"
@@ -29,7 +30,7 @@ import { slugify, type CharacterEntry, type LocationEntry } from "@/lib/biblePar
 const SHOT_SIZE_OPTIONS = ["WIDE", "MEDIUM", "CLOSE", "EXTREME CLOSE", "OVER SHOULDER", "POV", "INSERT", "AERIAL", "TWO SHOT"] as const
 const CAMERA_MOTION_OPTIONS = ["Static", "Pan Left", "Pan Right", "Pan Up", "Tilt Down", "Push In", "Pull Out", "Track Left", "Track Right", "Track Around", "Dolly In", "Crane Up", "Crane Down", "Drone In", "Handheld", "Steadicam"] as const
 
-type ViewMode = "scenes" | "board" | "list" | "inspector" | "director"
+type ViewMode = "scenes" | "board" | "list" | "inspector" | "director" | "prompt"
 type EditableShotField = "caption" | "directorNote" | "cameraNote" | "imagePrompt" | "videoPrompt"
 type DirectorFieldVisibility = "all" | "action" | "director" | "camera"
 
@@ -957,6 +958,7 @@ export function StoryboardPanel({
   const [editingShotDraft, setEditingShotDraft] = useState("")
   const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set())
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set())
+  const [promptLabShotId, setPromptLabShotId] = useState<string | null>(null)
   const [enhancingIds, setEnhancingIds] = useState<Set<string>>(new Set())
   const [pendingActionFocusShotId, setPendingActionFocusShotId] = useState<string | null>(null)
   const [isSplitScreen, setIsSplitScreen] = useState(false)
@@ -1839,6 +1841,14 @@ export function StoryboardPanel({
             </button>
             <button
               type="button"
+              onClick={() => setViewMode("prompt")}
+              className={`flex items-center gap-1 rounded-md px-2 py-1 text-[10px] uppercase tracking-[0.14em] transition-colors ${viewMode === "prompt" ? "bg-[#D4A853]/15 border border-[#D4A853]/30 text-[#E6C887]" : "text-white/40 hover:text-white/60"}`}
+            >
+              <Wand2 size={10} />
+              Prompt Lab
+            </button>
+            <button
+              type="button"
               onClick={handleToggleSplitScreen}
               className={`flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] uppercase tracking-[0.14em] transition-colors ${isDuoMode ? "border-[#D4A853]/35 bg-[#D4A853]/12 text-[#E6C887]" : "border-white/10 bg-white/3 text-white/50 hover:bg-white/6 hover:text-white/80"}`}
             >
@@ -2179,6 +2189,14 @@ export function StoryboardPanel({
                                   <Video size={13} />
                                   Video
                                 </button>
+                                <button
+                                  type="button"
+                                  onClick={() => shot && setPromptLabShotId(shot.id)}
+                                  className="flex items-center gap-1.5 rounded-lg border border-[#D4A853]/30 bg-[#D4A853]/15 px-3 py-1.5 text-[10px] uppercase tracking-[0.14em] text-[#E6C887] backdrop-blur-sm transition-colors hover:bg-[#D4A853]/25"
+                                >
+                                  <Wand2 size={13} />
+                                  Edit
+                                </button>
                                 {shot?.thumbnailUrl && (
                                   <button
                                     type="button"
@@ -2354,6 +2372,8 @@ export function StoryboardPanel({
                     })
                   )}
                 </div>
+                ) : viewMode === "prompt" ? (
+                <div className="-mx-4 -my-4 h-full"><PromptLab /></div>
                 ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-[11px] text-[#D7CDC1]">
@@ -2525,6 +2545,14 @@ export function StoryboardPanel({
                           >
                             <Video size={13} />
                             Video
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => shot && setPromptLabShotId(shot.id)}
+                            className="flex items-center gap-1.5 rounded-lg border border-[#D4A853]/30 bg-[#D4A853]/15 px-3 py-1.5 text-[10px] uppercase tracking-[0.14em] text-[#E6C887] backdrop-blur-sm transition-colors hover:bg-[#D4A853]/25"
+                          >
+                            <Wand2 size={13} />
+                            Edit
                           </button>
                           {shot?.thumbnailUrl && (
                             <button
@@ -2872,6 +2900,8 @@ export function StoryboardPanel({
               })
             )}
           </div>
+          ) : viewMode === "prompt" ? (
+          <div className="-mx-4 -my-4 h-full"><PromptLab /></div>
           ) : (
           /* Shot List (table) view */
           <div className="overflow-x-auto">
@@ -3065,6 +3095,11 @@ export function StoryboardPanel({
           to { opacity: 1; transform: translateY(0) scale(1) }
         }
       `}</style>
+
+      {/* ─── Prompt Lab Bottom Panel ─── */}
+      {promptLabShotId && (
+        <PromptLabPanel shotId={promptLabShotId} onClose={() => setPromptLabShotId(null)} />
+      )}
     </aside>
   )
 }

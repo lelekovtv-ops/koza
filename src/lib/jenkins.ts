@@ -216,7 +216,13 @@ async function executeStage<T>(config: StageConfig<T>): Promise<T> {
         attempt: attempt + 1,
       }, config.group)
 
-      const parsed = config.parse(fullText)
+      let parsed: T
+      try {
+        parsed = config.parse(fullText)
+      } catch (parseError) {
+        const preview = fullText.slice(0, 300) || "(empty response)"
+        throw new Error(`${getErrorMessage(parseError)} — response preview: ${preview}`)
+      }
       const logEntry = config.buildLogEntry(parsed)
 
       devlog.breakdown(config.stageLogType, logEntry.title, logEntry.details, logEntry.meta, config.group)
@@ -432,43 +438,13 @@ export async function breakdownScenePlanningDetailed(
       }, group)
     }
 
-    let contextPlan: ContextRouterResult
+    // ── Context Router + Creative Planner — PARALLEL (no cross-dependency) ──
 
-    try {
-      contextPlan = await executeStage<ContextRouterResult>({
-        stageLabel: "Context Router",
-        stageLogType: "breakdown_context_router",
-        systemPrompt: buildContextRouterSystemPrompt({ sceneId, config: opts.config, bible: opts.bible, style: opts.style }),
-        userMessage: buildContextRouterUserMessage({
-          sceneId,
-          sceneText: normalizedSceneText,
-          analysis,
-          actions: actionSplit,
-          screenplayContext: opts.screenplayContext,
-          config: opts.config,
-          bible: opts.bible,
-          style: opts.style,
-        }),
-        modelId,
-        group,
-        parse: (rawText) => parseContextRouterResponse(rawText),
-        buildLogEntry: (parsed) => ({
-          title: `Context Router mapped ${parsed.visibleSecondaryLocations.length} secondary locations`,
-          details: JSON.stringify(parsed, null, 2),
-          meta: {
-            sceneId,
-            primaryLocation: parsed.primaryLocation,
-            propAnchorCount: parsed.propAnchors.length,
-          },
-        }),
-      })
-    } catch (error) {
-      if (!allowLocalFallback) {
-        throw error
-      }
-
-      usedContextRouterFallback = true
-      contextPlan = composeContextRouterLocally({
+    const contextRouterPromise = executeStage<ContextRouterResult>({
+      stageLabel: "Context Router",
+      stageLogType: "breakdown_context_router",
+      systemPrompt: buildContextRouterSystemPrompt({ sceneId, config: opts.config, bible: opts.bible, style: opts.style }),
+      userMessage: buildContextRouterUserMessage({
         sceneId,
         sceneText: normalizedSceneText,
         analysis,
@@ -477,68 +453,64 @@ export async function breakdownScenePlanningDetailed(
         config: opts.config,
         bible: opts.bible,
         style: opts.style,
-      })
-
-      devlog.breakdown("breakdown_context_router", "Context Router fallback used", JSON.stringify(contextPlan, null, 2), {
-        sceneId,
-        reason: getErrorMessage(error),
-        primaryLocation: contextPlan.primaryLocation,
-        fallback: "local-context-router",
-      }, group)
-    }
-
-    let creativePlan: CreativePlannerResult
-
-    try {
-      creativePlan = await executeStage<CreativePlannerResult>({
-        stageLabel: "Creative Planner",
-        stageLogType: "breakdown_creative_plan",
-        systemPrompt: buildCreativePlannerSystemPrompt({ sceneId, config: opts.config, bible: opts.bible, style: opts.style }),
-        userMessage: buildCreativePlannerUserMessage({
+      }),
+      modelId,
+      group,
+      parse: (rawText) => parseContextRouterResponse(rawText),
+      buildLogEntry: (parsed) => ({
+        title: `Context Router mapped ${parsed.visibleSecondaryLocations.length} secondary locations`,
+        details: JSON.stringify(parsed, null, 2),
+        meta: {
           sceneId,
-          analysis,
-          actions: actionSplit,
-          config: opts.config,
-          sceneText: normalizedSceneText,
-          bible: opts.bible,
-          style: opts.style,
-        }),
-        modelId,
-        group,
-        parse: (rawText) => parseCreativePlannerResponse(rawText),
-        buildLogEntry: (parsed) => ({
-          title: `Creative Planner produced ${parsed.sceneIdeas.length} scene ideas`,
-          details: JSON.stringify(parsed, null, 2),
-          meta: {
-            sceneId,
-            referenceCount: parsed.filmHistoryReferences.length,
-            sceneIdeaCount: parsed.sceneIdeas.length,
-          },
-        }),
+          primaryLocation: parsed.primaryLocation,
+          propAnchorCount: parsed.propAnchors.length,
+        },
+      }),
+    }).catch((error) => {
+      if (!allowLocalFallback) throw error
+      usedContextRouterFallback = true
+      const result = composeContextRouterLocally({
+        sceneId, sceneText: normalizedSceneText, analysis, actions: actionSplit,
+        screenplayContext: opts.screenplayContext, config: opts.config, bible: opts.bible, style: opts.style,
       })
-    } catch (error) {
-      if (!allowLocalFallback) {
-        throw error
-      }
-
-      usedCreativePlannerFallback = true
-      creativePlan = composeCreativePlannerLocally({
-        sceneId,
-        analysis,
-        actions: actionSplit,
-        config: opts.config,
-        sceneText: normalizedSceneText,
-        bible: opts.bible,
-        style: opts.style,
-      })
-
-      devlog.breakdown("breakdown_creative_plan", "Creative Planner fallback used", JSON.stringify(creativePlan, null, 2), {
-        sceneId,
-        reason: getErrorMessage(error),
-        sceneIdeaCount: creativePlan.sceneIdeas.length,
-        fallback: "local-creative-planner",
+      devlog.breakdown("breakdown_context_router", "Context Router fallback used", JSON.stringify(result, null, 2), {
+        sceneId, reason: getErrorMessage(error), primaryLocation: result.primaryLocation, fallback: "local-context-router",
       }, group)
-    }
+      return result
+    })
+
+    const creativePlannerPromise = executeStage<CreativePlannerResult>({
+      stageLabel: "Creative Planner",
+      stageLogType: "breakdown_creative_plan",
+      systemPrompt: buildCreativePlannerSystemPrompt({ sceneId, config: opts.config, bible: opts.bible, style: opts.style }),
+      userMessage: buildCreativePlannerUserMessage({
+        sceneId, analysis, actions: actionSplit, config: opts.config,
+        sceneText: normalizedSceneText, bible: opts.bible, style: opts.style,
+      }),
+      modelId,
+      group,
+      parse: (rawText) => parseCreativePlannerResponse(rawText),
+      buildLogEntry: (parsed) => ({
+        title: `Creative Planner produced ${parsed.sceneIdeas.length} scene ideas`,
+        details: JSON.stringify(parsed, null, 2),
+        meta: {
+          sceneId, referenceCount: parsed.filmHistoryReferences.length, sceneIdeaCount: parsed.sceneIdeas.length,
+        },
+      }),
+    }).catch((error) => {
+      if (!allowLocalFallback) throw error
+      usedCreativePlannerFallback = true
+      const result = composeCreativePlannerLocally({
+        sceneId, analysis, actions: actionSplit, config: opts.config,
+        sceneText: normalizedSceneText, bible: opts.bible, style: opts.style,
+      })
+      devlog.breakdown("breakdown_creative_plan", "Creative Planner fallback used", JSON.stringify(result, null, 2), {
+        sceneId, reason: getErrorMessage(error), sceneIdeaCount: result.sceneIdeas.length, fallback: "local-creative-planner",
+      }, group)
+      return result
+    })
+
+    const [contextPlan, creativePlan] = await Promise.all([contextRouterPromise, creativePlannerPromise])
 
     let censorReport: CensorStageResult
 
