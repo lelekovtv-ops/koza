@@ -354,19 +354,30 @@ export async function breakdownScenePlanningDetailed(
     : optionsOrModelId ?? {}
   const modelId = opts.modelId ?? DEFAULT_TEXT_MODEL_ID
 
-  // Per-stage model routing: fast models for structural stages, heavy for creative
-  const FAST_MODEL = "gemini-2.5-flash"
+  // Per-stage model routing from settings store (or defaults)
+  let fastModel = "gemini-2.5-flash"
+  let heavyModel = modelId
+  try {
+    // Dynamic import from store — works in browser context
+    const { useBreakdownConfigStore } = require("@/store/breakdownConfig")
+    const state = useBreakdownConfigStore.getState()
+    fastModel = state.structuralModel || fastModel
+    heavyModel = state.qualityModel || heavyModel
+    if (state.breakdownSpeed === "fast") { heavyModel = fastModel }
+    else if (state.breakdownSpeed === "quality") { fastModel = heavyModel }
+  } catch { /* server context or store not available — use defaults */ }
+
   const stageModel = (stage: string) => {
-    if (opts.modelId) return opts.modelId // User override takes priority
+    if (opts.modelId) return opts.modelId
     switch (stage) {
-      case "scene_analyst": return FAST_MODEL     // Structural parsing — fast is fine
-      case "action_splitter": return FAST_MODEL    // Splitting into beats — fast
-      case "context_router": return FAST_MODEL     // Location mapping — fast
-      case "censor": return FAST_MODEL             // Filtering — fast
-      case "creative_planner": return modelId      // Creative work — needs quality
-      case "shot_planner": return modelId          // Core planning — needs quality
-      case "prompt_composer": return modelId        // Final prompts — needs quality
-      default: return modelId
+      case "scene_analyst": return fastModel
+      case "action_splitter": return fastModel
+      case "context_router": return fastModel
+      case "censor": return fastModel
+      case "creative_planner": return heavyModel
+      case "shot_planner": return heavyModel
+      case "prompt_composer": return heavyModel
+      default: return heavyModel
     }
   }
   const sceneId = opts.sceneId ?? `scene-${Date.now()}`
