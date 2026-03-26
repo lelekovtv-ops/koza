@@ -353,6 +353,22 @@ export async function breakdownScenePlanningDetailed(
     ? { modelId: optionsOrModelId }
     : optionsOrModelId ?? {}
   const modelId = opts.modelId ?? DEFAULT_TEXT_MODEL_ID
+
+  // Per-stage model routing: fast models for structural stages, heavy for creative
+  const FAST_MODEL = "gemini-2.5-flash"
+  const stageModel = (stage: string) => {
+    if (opts.modelId) return opts.modelId // User override takes priority
+    switch (stage) {
+      case "scene_analyst": return FAST_MODEL     // Structural parsing — fast is fine
+      case "action_splitter": return FAST_MODEL    // Splitting into beats — fast
+      case "context_router": return FAST_MODEL     // Location mapping — fast
+      case "censor": return FAST_MODEL             // Filtering — fast
+      case "creative_planner": return modelId      // Creative work — needs quality
+      case "shot_planner": return modelId          // Core planning — needs quality
+      case "prompt_composer": return modelId        // Final prompts — needs quality
+      default: return modelId
+    }
+  }
   const sceneId = opts.sceneId ?? `scene-${Date.now()}`
   const group = `breakdown-${sceneId}`
   const allowLocalFallback = shouldAllowLocalFallback(opts.config)
@@ -374,7 +390,7 @@ export async function breakdownScenePlanningDetailed(
       stageLogType: "breakdown_scene_analysis",
       systemPrompt: buildSceneAnalystSystemPrompt({ sceneId, bible: opts.bible, style: opts.style }),
       userMessage: buildSceneAnalystUserMessage(normalizedSceneText),
-      modelId,
+      modelId: stageModel("scene_analyst"),
       group,
       parse: (rawText) => parseSceneAnalysisResponse(rawText, { sceneId, bible: opts.bible, style: opts.style }),
       buildLogEntry: (parsed) => ({
@@ -403,7 +419,7 @@ export async function breakdownScenePlanningDetailed(
           bible: opts.bible,
           style: opts.style,
         }),
-        modelId,
+        modelId: stageModel("action_splitter"),
         group,
         parse: (rawText) => parseActionSplitResponse(rawText, sceneId),
         buildLogEntry: (parsed) => ({
@@ -454,7 +470,7 @@ export async function breakdownScenePlanningDetailed(
         bible: opts.bible,
         style: opts.style,
       }),
-      modelId,
+      modelId: stageModel("context_router"),
       group,
       parse: (rawText) => parseContextRouterResponse(rawText),
       buildLogEntry: (parsed) => ({
@@ -487,7 +503,7 @@ export async function breakdownScenePlanningDetailed(
         sceneId, analysis, actions: actionSplit, config: opts.config,
         sceneText: normalizedSceneText, bible: opts.bible, style: opts.style,
       }),
-      modelId,
+      modelId: stageModel("creative_planner"),
       group,
       parse: (rawText) => parseCreativePlannerResponse(rawText),
       buildLogEntry: (parsed) => ({
@@ -530,7 +546,7 @@ export async function breakdownScenePlanningDetailed(
           bible: opts.bible,
           style: opts.style,
         }),
-        modelId,
+        modelId: stageModel("censor"),
         group,
         parse: (rawText) => parseCensorResponse(rawText),
         buildLogEntry: (parsed) => ({
@@ -577,7 +593,7 @@ export async function breakdownScenePlanningDetailed(
         stageLogType: "breakdown_shot_plan",
         systemPrompt: buildShotPlannerSystemPrompt({ sceneId, config: opts.config, bible: opts.bible, style: opts.style }),
         userMessage: buildShotPlannerUserMessage({ sceneId, analysis, actions: actionSplit, contextPlan, creativePlan, censorReport, config: opts.config, sceneText: normalizedSceneText, bible: opts.bible, style: opts.style }),
-        modelId,
+        modelId: stageModel("shot_planner"),
         group,
         parse: (rawText) => parseShotPlannerResponse(rawText, sceneId),
         buildLogEntry: (parsed) => ({

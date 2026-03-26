@@ -19,6 +19,8 @@ export interface CreativePlanReference {
   shotIdea: string
   whyItWorks: string
   useWhen: string
+  concept?: string
+  application?: string
 }
 
 export interface CreativeSceneIdea {
@@ -102,8 +104,8 @@ function normalizeReference(item: unknown, index: number): CreativePlanReference
   return {
     id: normalizeString(record.id, fallback.id),
     title: normalizeString(record.title, fallback.title),
-    operatorConcept: normalizeString(record.operatorConcept, fallback.operatorConcept),
-    shotIdea: normalizeString(record.shotIdea, fallback.shotIdea),
+    operatorConcept: normalizeString(record.operatorConcept || record.concept, fallback.operatorConcept),
+    shotIdea: normalizeString(record.shotIdea || record.application, fallback.shotIdea),
     whyItWorks: normalizeString(record.whyItWorks, fallback.whyItWorks),
     useWhen: normalizeString(record.useWhen, fallback.useWhen),
   }
@@ -130,7 +132,7 @@ export function buildCreativePlannerSystemPrompt(input: Omit<CreativePlannerInpu
 Твоя единственная работа: думать только о необычных, кинематографичных, редких операторских решениях и ракурсах.
 
 Ты обязан мыслить как архив нестандартных планов из истории кино.
-Держи в голове задачу: найти и использовать 30 самых интересных операторских подходов в истории кино и на их основе предложить сильные идеи для текущей сцены.
+Держи в голове задачу: выбрать 5 самых подходящих операторских приёмов из истории кино для текущей сцены.
 
 Верни только JSON-объект такого вида:
 {
@@ -141,10 +143,8 @@ export function buildCreativePlannerSystemPrompt(input: Omit<CreativePlannerInpu
     {
       "id": "string",
       "title": "string",
-      "operatorConcept": "string",
-      "shotIdea": "string",
-      "whyItWorks": "string",
-      "useWhen": "string"
+      "concept": "string",
+      "application": "string"
     }
   ],
   "sceneIdeas": [
@@ -162,7 +162,7 @@ export function buildCreativePlannerSystemPrompt(input: Omit<CreativePlannerInpu
 
 Правила:
 - ВАЖНО: Всегда отвечай на том же языке, на котором написан сценарий. Если сцена на русском — пиши по-русски. Если на английском — по-английски.
-- filmHistoryReferences должно содержать ровно 30 сильных операторских подходов.
+- filmHistoryReferences должно содержать 5 самых релевантных операторских подходов для этой конкретной сцены.
 - Не предлагай банальные coverage-решения.
 - Ищи странные, дерзкие, редкие, архитектурные, наблюдательные, частично скрытые, отражённые, барьерные и психологические планы.
 - sceneIdeas должны опираться на текущую сцену, сценарий и режиссёрское видение.
@@ -202,7 +202,7 @@ export function parseCreativePlannerResponse(rawText: string): CreativePlannerRe
     scenePressurePoints: normalizeStringArray(parsed.scenePressurePoints),
     globalGuidance: normalizeString(parsed.globalGuidance),
     filmHistoryReferences: Array.isArray(parsed.filmHistoryReferences)
-      ? parsed.filmHistoryReferences.slice(0, 30).map((item, index) => normalizeReference(item, index))
+      ? parsed.filmHistoryReferences.slice(0, 10).map((item, index) => normalizeReference(item, index))
       : FILM_HISTORY_LIBRARY,
     sceneIdeas: Array.isArray(parsed.sceneIdeas)
       ? parsed.sceneIdeas.map((item, index) => normalizeSceneIdea(item, index))

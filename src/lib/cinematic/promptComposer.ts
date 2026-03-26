@@ -554,32 +554,7 @@ Return valid JSON array only. Each object must have this shape:
   "notes": "string",
   "visualDescription": "string",
   "imagePrompt": "string",
-  "videoPrompt": "string",
-  "imagePackage": {
-    "shotId": "string",
-    "basePrompt": "string",
-    "subjectPrompt": "string",
-    "environmentPrompt": "string",
-    "lightingPrompt": "string",
-    "continuityPrompt": "string",
-    "stylePrompt": "string",
-    "negativePrompt": "string",
-    "referenceImageIds": ["string"],
-    "finalPrompt": "string"
-  },
-  "videoPackage": {
-    "shotId": "string",
-    "basePrompt": "string",
-    "motionPrompt": "string",
-    "cameraPrompt": "string",
-    "continuityPrompt": "string",
-    "transitionPrompt": "string",
-    "stylePrompt": "string",
-    "negativePrompt": "string",
-    "durationMs": 3000,
-    "referenceImageIds": ["string"],
-    "finalPrompt": "string"
-  }
+  "videoPrompt": "string"
 }
 
 Rules:
