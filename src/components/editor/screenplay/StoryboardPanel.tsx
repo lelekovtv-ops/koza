@@ -2,7 +2,7 @@
 
 import Image from "next/image"
 import { useRouter } from "next/navigation"
-import { BookOpen, Camera, Clapperboard, Copy, Film, Grid, Image as ImageIcon, List, Loader2, MoreHorizontal, Plus, RefreshCw, Trash2, Wand2 } from "lucide-react"
+import { AlertTriangle, BookOpen, Camera, ChevronLeft, ChevronRight, Clapperboard, Copy, Film, Grid, Image as ImageIcon, List, Loader2, MoreHorizontal, Pencil, Play, Plus, RefreshCw, Settings, Trash2, Video, Wand2, X } from "lucide-react"
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { breakdownScene, buildBreakdownBibleContext, buildScenePromptDrafts, createSceneTimelineShotsFromBreakdown } from "@/features/breakdown"
 import { getTotalDuration, useTimelineStore } from "@/store/timeline"
@@ -18,6 +18,8 @@ import { ProjectStylePicker } from "@/components/ui/ProjectStylePicker"
 import { ScriptViewer } from "@/components/editor/screenplay/ScriptViewer"
 import { useBibleStore } from "@/store/bible"
 import { useBoardStore } from "@/store/board"
+import { useBreakdownConfigStore } from "@/store/breakdownConfig"
+import { useReEditConfigStore } from "@/store/reEditConfig"
 import { devlog } from "@/store/devlog"
 import { useLibraryStore } from "@/store/library"
 import { useProjectsStore } from "@/store/projects"
@@ -802,7 +804,6 @@ function DirectorShotCard({
 
 async function generateShotImage(
   shot: TimelineShot,
-  allShots: TimelineShot[],
 ): Promise<{ objectUrl: string; blobKey: string | null }> {
   const { characters, locations } = useBibleStore.getState()
   const { selectedImageGenModel, projectStyle } = useBoardStore.getState()
@@ -827,7 +828,7 @@ async function generateShotImage(
     ? "Use the provided reference images as hard visual anchors. Preserve the exact face identity, hair, costume silhouette, proportions, and environment design from those references. Do not redesign recurring characters or locations."
     : ""
   const prompt = [
-    buildImagePrompt(shot, allShots, characters, locations, projectStyle),
+    buildImagePrompt(shot, characters, locations, projectStyle),
     referenceInstruction,
   ].filter(Boolean).join("\n\n")
 
@@ -955,6 +956,7 @@ export function StoryboardPanel({
   const [editingShotField, setEditingShotField] = useState<{ shotId: string; field: EditableShotField } | null>(null)
   const [editingShotDraft, setEditingShotDraft] = useState("")
   const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set())
+  const [failedIds, setFailedIds] = useState<Set<string>>(new Set())
   const [enhancingIds, setEnhancingIds] = useState<Set<string>>(new Set())
   const [pendingActionFocusShotId, setPendingActionFocusShotId] = useState<string | null>(null)
   const [isSplitScreen, setIsSplitScreen] = useState(false)
@@ -1002,6 +1004,14 @@ export function StoryboardPanel({
   const [jenkinsLoading, setJenkinsLoading] = useState(false)
   const [breakdownLoadingSceneId, setBreakdownLoadingSceneId] = useState<string | null>(null)
   const [promptLoadingSceneId, setPromptLoadingSceneId] = useState<string | null>(null)
+  const [configPanelOpen, setConfigPanelOpen] = useState(false)
+  const [videoGeneratingIds, setVideoGeneratingIds] = useState<Set<string>>(new Set())
+  const [editOverlayShotId, setEditOverlayShotId] = useState<string | null>(null)
+  const [editInstruction, setEditInstruction] = useState("")
+  const [editingIds, setEditingIds] = useState<Set<string>>(new Set())
+  const editInputRef = useRef<HTMLInputElement>(null)
+  const breakdownConfig = useBreakdownConfigStore((s) => s.global)
+  const setBreakdownGlobalConfig = useBreakdownConfigStore((s) => s.setGlobal)
   const selectedScene = useMemo(() => scenes.find((scene) => scene.id === selectedSceneId) ?? null, [scenes, selectedSceneId])
   const inspectorShots = useMemo(
     () => (selectedSceneId ? shotsBySceneId.get(selectedSceneId) ?? [] : shots),
@@ -1096,7 +1106,8 @@ export function StoryboardPanel({
     setJenkinsLoading(true)
     try {
       const bible = buildBreakdownBibleContext(characters, locations)
-      const { shots: jenkinsShots, diagnostics } = await breakdownScene(text, { bible, style: projectStyle })
+      const breakdownConfig = useBreakdownConfigStore.getState().getConfigForScene("global")
+      const { shots: jenkinsShots, diagnostics } = await breakdownScene(text, { bible, style: projectStyle, config: breakdownConfig })
 
       if (diagnostics.usedFallback && shots.length > 0) {
         const warning = "Breakdown switched to fallback mode. Existing storyboard shots were preserved to avoid overwriting the stronger result."
@@ -1161,11 +1172,13 @@ export function StoryboardPanel({
         return
       }
       const bible = buildBreakdownBibleContext(characters, locations)
+      const breakdownConfig = useBreakdownConfigStore.getState().getConfigForScene(scene.id)
       const { shots: jenkinsShots, diagnostics } = await breakdownScene(sceneText, {
         sceneId: scene.id,
         blockIds: scene.blockIds,
         bible,
         style: projectStyle,
+        config: breakdownConfig,
       })
 
       if (jenkinsShots.length === 0) {
@@ -1180,6 +1193,17 @@ export function StoryboardPanel({
       }
 
       replaceSceneShots(scene.id, sceneText, scene.blockIds, jenkinsShots)
+
+      if (useBreakdownConfigStore.getState().autoPromptBuild) {
+        const sceneShots = useTimelineStore.getState().shots.filter((s) => s.sceneId === scene.id).sort((a, b) => a.order - b.order)
+        if (sceneShots.length > 0) {
+          const promptDrafts = buildScenePromptDrafts(sceneShots, characters, locations, projectStyle)
+          promptDrafts.forEach((draft) => {
+            updateShot(draft.shotId, { imagePrompt: draft.imagePrompt, videoPrompt: draft.videoPrompt })
+          })
+        }
+      }
+
       setBreakdownWarning(
         diagnostics.usedFallback
           ? `Scene ${scene.title} completed in fallback mode. Новые shots всё равно применены, но формулировки могут быть слабее полного AI-pass.`
@@ -1187,6 +1211,7 @@ export function StoryboardPanel({
       )
     } catch (error) {
       console.error("Scene breakdown error:", error)
+      setBreakdownWarning(`Breakdown failed: ${error instanceof Error ? error.message : String(error)}`)
     } finally {
       setBreakdownLoadingSceneId(null)
     }
@@ -1304,19 +1329,196 @@ export function StoryboardPanel({
     const shot = shots.find((s) => s.id === shotId)
     if (!shot || generatingIds.has(shotId)) return
     setGeneratingIds((prev) => new Set(prev).add(shotId))
+    setFailedIds((prev) => { const next = new Set(prev); next.delete(shotId); return next })
     try {
-      const result = await generateShotImage(shot, shots)
+      const result = await generateShotImage(shot)
+
+      const entry = { url: result.objectUrl, blobKey: result.blobKey, timestamp: Date.now() }
+      const history = [...(shot.generationHistory || []), entry]
 
       updateShot(shotId, {
         thumbnailUrl: result.objectUrl,
         thumbnailBlobKey: result.blobKey,
+        generationHistory: history,
+        activeHistoryIndex: history.length - 1,
       })
     } catch (error) {
       console.error("Image generation error:", error)
+      setFailedIds((prev) => new Set(prev).add(shotId))
     } finally {
       setGeneratingIds((prev) => { const next = new Set(prev); next.delete(shotId); return next })
     }
   }, [shots, generatingIds, updateShot])
+
+  const handleHistoryNav = useCallback((shotId: string, direction: -1 | 1) => {
+    const shot = shots.find((s) => s.id === shotId)
+    if (!shot || !shot.generationHistory?.length) return
+    const current = shot.activeHistoryIndex ?? shot.generationHistory.length - 1
+    const next = current + direction
+    if (next < 0 || next >= shot.generationHistory.length) return
+    const entry = shot.generationHistory[next]
+    updateShot(shotId, {
+      thumbnailUrl: entry.url,
+      thumbnailBlobKey: entry.blobKey,
+      activeHistoryIndex: next,
+    })
+  }, [shots, updateShot])
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!selectedShotId) return
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      if (e.key === "ArrowLeft") { e.preventDefault(); handleHistoryNav(selectedShotId, -1) }
+      if (e.key === "ArrowRight") { e.preventDefault(); handleHistoryNav(selectedShotId, 1) }
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [selectedShotId, handleHistoryNav])
+
+  const handleGenerateVideo = useCallback(async (shotId: string) => {
+    const shot = shots.find((s) => s.id === shotId)
+    if (!shot || videoGeneratingIds.has(shotId)) return
+    setVideoGeneratingIds((prev) => new Set(prev).add(shotId))
+    try {
+      const videoPrompt = shot.videoPrompt || buildVideoPrompt(shot, characters, locations, projectStyle)
+      console.info("[Video Generate] Shot:", shotId, "Prompt:", videoPrompt.slice(0, 120))
+      // TODO: call video generation API when ready
+      // For now, save the generated prompt to the shot
+      updateShot(shotId, { videoPrompt })
+    } catch (error) {
+      console.error("Video generation error:", error)
+    } finally {
+      setVideoGeneratingIds((prev) => { const next = new Set(prev); next.delete(shotId); return next })
+    }
+  }, [shots, videoGeneratingIds, updateShot, characters, locations, projectStyle])
+
+  const openEditOverlay = useCallback((shotId: string) => {
+    setEditOverlayShotId(shotId)
+    setEditInstruction("")
+    setTimeout(() => editInputRef.current?.focus(), 100)
+  }, [])
+
+  const handleShotReEdit = useCallback(async () => {
+    const shotId = editOverlayShotId
+    if (!shotId || !editInstruction.trim()) return
+    const shot = shots.find((s) => s.id === shotId)
+    if (!shot || !shot.thumbnailUrl || editingIds.has(shotId)) return
+
+    setEditingIds((prev) => new Set(prev).add(shotId))
+    setEditOverlayShotId(null)
+    const instruction = editInstruction.trim()
+    setEditInstruction("")
+
+    try {
+      const { characters: chars, locations: locs } = useBibleStore.getState()
+      const { projectStyle: style } = useBoardStore.getState()
+      const reEditCfg = useReEditConfigStore.getState().config
+      const selectedModel = reEditCfg.model === "auto"
+        ? (useBoardStore.getState().selectedImageGenModel || "nano-banana-2")
+        : reEditCfg.model
+
+      // 1. Collect reference images based on config
+      const refs: string[] = []
+
+      // Current shot image
+      if (reEditCfg.includeCurrentImage && shot.thumbnailUrl) {
+        try {
+          const resp = await fetch(shot.thumbnailUrl)
+          const blob = await resp.blob()
+          const dataUrl = await new Promise<string>((resolve) => {
+            const reader = new FileReader()
+            reader.onloadend = () => resolve(reader.result as string)
+            reader.readAsDataURL(blob)
+          })
+          refs.push(dataUrl)
+        } catch {
+          // continue without current image
+        }
+      }
+
+      // Bible character refs
+      if (reEditCfg.includeBibleRefs) {
+        const bibleRefs = getShotGenerationReferenceImages(shot, chars, locs)
+        const bibleDataUrls = await convertReferenceImagesToDataUrls(bibleRefs)
+        refs.push(...bibleDataUrls)
+      }
+
+      const allReferenceImages = refs.slice(0, reEditCfg.maxReferenceImages)
+
+      // 2. Build re-edit prompt
+      const basePrompt = shot.imagePrompt || buildImagePrompt(shot, chars, locs, style)
+      const rulesLines = [
+        "- Apply the instruction above to modify the shot composition.",
+        "- Keep ALL other elements intact: characters, costumes, lighting, environment, color palette, mood.",
+        "- The first reference image is the CURRENT frame — preserve its world, just change what was requested.",
+        "- Character reference images are visual anchors — preserve exact face identity and appearance.",
+      ]
+      if (reEditCfg.customRules.trim()) {
+        rulesLines.push(...reEditCfg.customRules.trim().split("\n").map((r) => `- ${r.replace(/^-\s*/, "")}`))
+      }
+      const reEditPrompt = [
+        `INSTRUCTION: ${instruction}`,
+        "",
+        "ORIGINAL SHOT DESCRIPTION:",
+        basePrompt,
+        "",
+        "RULES:",
+        ...rulesLines,
+      ].join("\n")
+
+      // 3. Call image generation API
+      const apiUrl = selectedModel === "gpt-image" ? "/api/gpt-image" : "/api/nano-banana"
+      const body = selectedModel === "gpt-image"
+        ? { prompt: reEditPrompt, referenceImages: allReferenceImages }
+        : { prompt: reEditPrompt, model: selectedModel, referenceImages: allReferenceImages }
+
+      const response = await fetch(apiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      })
+
+      if (!response.ok) {
+        const err = await response.json().catch(() => ({}))
+        throw new Error(err.error || `Re-edit failed: ${response.status}`)
+      }
+
+      const blob = await response.blob()
+      const blobKey = `shot-thumb-${shotId}`
+      const persisted = await trySaveBlob(blobKey, blob)
+      const objectUrl = URL.createObjectURL(blob)
+
+      updateShot(shotId, {
+        thumbnailUrl: objectUrl,
+        thumbnailBlobKey: persisted ? blobKey : null,
+      })
+
+      // Add to library
+      if (reEditCfg.saveToLibrary) {
+      const projectId = useProjectsStore.getState().activeProjectId || "global"
+      useLibraryStore.getState().addFile({
+        id: `${blobKey}-edit-${Date.now()}`,
+        name: `${shot.label || "Shot"} — re-edit.png`,
+        type: "image",
+        mimeType: "image/png",
+        size: blob.size,
+        url: objectUrl,
+        thumbnailUrl: objectUrl,
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        tags: ["generated", "storyboard", "re-edit"],
+        projectId,
+        folder: "/storyboard",
+        origin: "generated",
+      })
+      }
+    } catch (error) {
+      console.error("Shot re-edit error:", error)
+      setBreakdownWarning(`Re-edit failed: ${error instanceof Error ? error.message : String(error)}`)
+    } finally {
+      setEditingIds((prev) => { const next = new Set(prev); next.delete(shotId); return next })
+    }
+  }, [editOverlayShotId, editInstruction, shots, editingIds, updateShot])
 
   const handleDirectorShotUpdate = useCallback((shotId: string, patch: Partial<TimelineShot>) => {
     updateShot(shotId, patch)
@@ -1599,7 +1801,7 @@ export function StoryboardPanel({
   )
 
   const workspaceChrome = (
-    <>
+    <div className={isDuoMode ? "sticky top-0 z-30 bg-[#0E1016]" : ""}>
       <div className="border-b border-white/6 px-4 py-3 text-[#E5E0DB]">
         <div className="flex flex-wrap items-center justify-between gap-3 text-[#9FA4AE]">
           <div className="flex flex-wrap items-center gap-2">
@@ -1660,7 +1862,7 @@ export function StoryboardPanel({
           {breakdownWarning}
         </div>
       ) : null}
-    </>
+    </div>
   )
 
   const directorWorkspaceContent = parsedScenesContent
@@ -1721,15 +1923,7 @@ export function StoryboardPanel({
               <Film size={12} />
               Timeline
             </button>
-            <button
-              type="button"
-              onClick={() => router.push("/dev/breakdown-studio")}
-              className="flex items-center gap-1.5 rounded-xl border border-[#7FAED8]/24 bg-[#7FAED8]/10 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] text-[#CFE6F7] transition-colors hover:bg-[#7FAED8]/16 hover:text-white"
-              aria-label="Open breakdown studio page"
-            >
-              <Wand2 size={12} />
-              Breakdown Studio
-            </button>
+
             <button
               type="button"
               onClick={handleLucBessonBreakdown}
@@ -1761,6 +1955,19 @@ export function StoryboardPanel({
             <ProjectStylePicker projectStyle={projectStyle} setProjectStyle={setProjectStyle} />
             <button
               type="button"
+              onClick={() => setConfigPanelOpen((v) => !v)}
+              className={`flex h-8 w-8 items-center justify-center rounded-xl border transition-all duration-300 ${
+                configPanelOpen
+                  ? "border-[#D4A853]/30 bg-[#D4A853]/15 text-[#E8C778]"
+                  : "border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,0.12)_0%,rgba(255,255,255,0.04)_100%)] text-[#BDAF9F] shadow-[inset_0_1px_0_rgba(255,255,255,0.22),0_12px_24px_rgba(0,0,0,0.14)] backdrop-blur-lg hover:border-white/22 hover:text-white"
+              }`}
+              aria-label="Breakdown engine config"
+              title="Breakdown Engine Config"
+            >
+              <Settings size={15} />
+            </button>
+            <button
+              type="button"
               className="flex h-8 w-8 items-center justify-center rounded-xl border border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,0.12)_0%,rgba(255,255,255,0.04)_100%)] text-[#BDAF9F] shadow-[inset_0_1px_0_rgba(255,255,255,0.22),0_12px_24px_rgba(0,0,0,0.14)] backdrop-blur-lg transition-all duration-300 hover:border-white/22 hover:bg-[linear-gradient(180deg,rgba(255,255,255,0.17)_0%,rgba(255,255,255,0.06)_100%)] hover:text-white"
               aria-label="More storyboard actions"
             >
@@ -1782,6 +1989,42 @@ export function StoryboardPanel({
             </button>
           </div>
         </div>
+
+        {configPanelOpen && (
+          <div className="border-b border-white/8 bg-[#0D0F12] px-4 py-3">
+            <div className="flex flex-wrap items-center gap-3">
+              <span className="text-[9px] uppercase tracking-[0.2em] text-[#8D919B]">Engine Config</span>
+              {([
+                { key: "shotDensity" as const, label: "Density", options: ["lean", "balanced", "dense"] },
+                { key: "continuityStrictness" as const, label: "Continuity", options: ["flexible", "standard", "strict"] },
+                { key: "textRichness" as const, label: "Richness", options: ["simple", "rich", "lush"] },
+                { key: "relationMode" as const, label: "Relations", options: ["minimal", "balanced", "explicit"] },
+                { key: "fallbackMode" as const, label: "Fallback", options: ["balanced", "prefer_speed", "fail_fast"] },
+                { key: "keyframePolicy" as const, label: "Keyframes", options: ["opening_anchor", "story_turns", "every_major_shift"] },
+              ] as const).map(({ key, label, options }) => (
+                <div key={key} className="flex items-center gap-1.5">
+                  <span className="text-[9px] text-white/40">{label}</span>
+                  <div className="flex rounded-lg border border-white/8 bg-white/4">
+                    {options.map((opt) => (
+                      <button
+                        key={opt}
+                        type="button"
+                        onClick={() => setBreakdownGlobalConfig({ [key]: opt })}
+                        className={`px-2 py-1 text-[9px] transition-all ${
+                          breakdownConfig[key] === opt
+                            ? "bg-[#D4A853]/18 text-[#E8C778]"
+                            : "text-white/35 hover:text-white/60"
+                        }`}
+                      >
+                        {opt.replace(/_/g, " ")}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         {!isDuoMode ? workspaceChrome : null}
 
@@ -1819,7 +2062,8 @@ export function StoryboardPanel({
                 >
                   {frames.map((frame, index) => {
                     const shot = shots[index]
-                    const isGenerating = shot ? generatingIds.has(shot.id) : false
+                    const isGenerating = shot ? (generatingIds.has(shot.id) || videoGeneratingIds.has(shot.id)) : false
+                    const isFailed = shot ? failedIds.has(shot.id) : false
                     const previewSrc = shot?.thumbnailUrl || frame.svg || null
                     return (
                     <Fragment key={frame.id}>
@@ -1867,19 +2111,73 @@ export function StoryboardPanel({
                               Shot {String(index + 1).padStart(2, "0")}
                             </div>
 
+                            {shot && (shot.generationHistory?.length ?? 0) > 1 && !isGenerating && (() => {
+                              const total = shot.generationHistory.length
+                              const current = (shot.activeHistoryIndex ?? total - 1) + 1
+                              return (
+                                <div className="absolute bottom-2 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-full border border-white/15 bg-black/60 px-1 py-0.5 backdrop-blur-sm">
+                                  <button type="button" onClick={(e) => { e.stopPropagation(); handleHistoryNav(shot.id, -1) }} disabled={current <= 1} className="flex h-5 w-5 items-center justify-center rounded-full text-white/70 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-30">
+                                    <ChevronLeft size={12} />
+                                  </button>
+                                  <span className="min-w-[32px] text-center text-[10px] tabular-nums text-white/80">{current}/{total}</span>
+                                  <button type="button" onClick={(e) => { e.stopPropagation(); handleHistoryNav(shot.id, 1) }} disabled={current >= total} className="flex h-5 w-5 items-center justify-center rounded-full text-white/70 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-30">
+                                    <ChevronRight size={12} />
+                                  </button>
+                                </div>
+                              )
+                            })()}
+
                             {isGenerating ? (
                               <div className="absolute inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm">
                                 <Loader2 size={28} className="animate-spin text-white/70" />
                               </div>
+                            ) : isFailed ? (
+                              <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 backdrop-blur-sm">
+                                <AlertTriangle size={22} className="text-red-400/80" />
+                                <p className="text-[10px] uppercase tracking-[0.14em] text-red-300/90">Generation failed</p>
+                                <button
+                                  type="button"
+                                  onClick={() => shot && handleGenerateImage(shot.id)}
+                                  className="flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-[10px] uppercase tracking-[0.14em] text-white/90 backdrop-blur-sm transition-colors hover:bg-white/20"
+                                >
+                                  <RefreshCw size={12} />
+                                  Retry
+                                </button>
+                              </div>
                             ) : (
+                              <>
+                              {shot?.thumbnailUrl && !editingIds.has(shot.id) && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); shot && openEditOverlay(shot.id) }}
+                                  className="absolute left-2 bottom-2 z-10 flex h-7 w-7 items-center justify-center rounded-lg border border-white/15 bg-black/40 text-white/60 backdrop-blur-sm transition-all hover:bg-white/15 hover:text-white/90 opacity-0 group-hover:opacity-100"
+                                  aria-label="Edit shot"
+                                >
+                                  <Pencil size={12} />
+                                </button>
+                              )}
+                              {editingIds.has(shot?.id ?? "") && (
+                                <div className="absolute inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                                  <Loader2 size={28} className="animate-spin text-[#DCC7A3]" />
+                                </div>
+                              )}
                               <div className="absolute inset-0 flex items-center justify-center gap-2 bg-black/40 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
                                 <button
                                   type="button"
                                   onClick={() => shot && handleGenerateImage(shot.id)}
                                   className="flex items-center gap-1.5 rounded-lg border border-white/15 bg-black/50 px-3 py-1.5 text-[10px] uppercase tracking-[0.14em] text-white/90 backdrop-blur-sm transition-colors hover:bg-white/10"
                                 >
-                                  <Wand2 size={14} />
-                                  Generate
+                                  <ImageIcon size={13} />
+                                  Photo
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => shot && handleGenerateVideo(shot.id)}
+                                  disabled={videoGeneratingIds.has(shot?.id ?? "")}
+                                  className="flex items-center gap-1.5 rounded-lg border border-[#7C6FD8]/30 bg-[#7C6FD8]/15 px-3 py-1.5 text-[10px] uppercase tracking-[0.14em] text-[#C4BBEF] backdrop-blur-sm transition-colors hover:bg-[#7C6FD8]/25 disabled:opacity-40"
+                                >
+                                  <Video size={13} />
+                                  Video
                                 </button>
                                 {shot?.thumbnailUrl && (
                                   <button
@@ -1891,6 +2189,7 @@ export function StoryboardPanel({
                                   </button>
                                 )}
                               </div>
+                              </>
                             )}
                           </div>
 
@@ -1973,7 +2272,7 @@ export function StoryboardPanel({
                       const resolvedShot = editingShotField?.shotId === shot.id
                         ? { ...shot, [editingShotField.field]: editingShotDraft }
                         : shot
-                      const imagePrompt = buildImagePrompt(resolvedShot, inspectorShots, characters, locations, projectStyle)
+                      const imagePrompt = buildImagePrompt(resolvedShot, characters, locations, projectStyle)
                       const videoPrompt = buildVideoPrompt(resolvedShot, characters, locations, projectStyle)
                       const refs = getReferencedBibleEntries(resolvedShot, characters, locations)
                       const previewSrc = shot.thumbnailUrl || shot.svg || null
@@ -2110,7 +2409,8 @@ export function StoryboardPanel({
           >
             {frames.map((frame, index) => {
               const shot = shots[index]
-              const isGenerating = shot ? generatingIds.has(shot.id) : false
+              const isGenerating = shot ? (generatingIds.has(shot.id) || videoGeneratingIds.has(shot.id)) : false
+              const isFailed = shot ? failedIds.has(shot.id) : false
               const previewSrc = shot?.thumbnailUrl || frame.svg || null
               return (
               <Fragment key={frame.id}>
@@ -2158,19 +2458,73 @@ export function StoryboardPanel({
                         Shot {String(index + 1).padStart(2, "0")}
                       </div>
 
+                      {shot && (shot.generationHistory?.length ?? 0) > 1 && !isGenerating && (() => {
+                        const total = shot.generationHistory.length
+                        const current = (shot.activeHistoryIndex ?? total - 1) + 1
+                        return (
+                          <div className="absolute bottom-2 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-full border border-white/15 bg-black/60 px-1 py-0.5 backdrop-blur-sm">
+                            <button type="button" onClick={(e) => { e.stopPropagation(); handleHistoryNav(shot.id, -1) }} disabled={current <= 1} className="flex h-5 w-5 items-center justify-center rounded-full text-white/70 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-30">
+                              <ChevronLeft size={12} />
+                            </button>
+                            <span className="min-w-[32px] text-center text-[10px] tabular-nums text-white/80">{current}/{total}</span>
+                            <button type="button" onClick={(e) => { e.stopPropagation(); handleHistoryNav(shot.id, 1) }} disabled={current >= total} className="flex h-5 w-5 items-center justify-center rounded-full text-white/70 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-30">
+                              <ChevronRight size={12} />
+                            </button>
+                          </div>
+                        )
+                      })()}
+
                       {isGenerating ? (
                         <div className="absolute inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm">
                           <Loader2 size={28} className="animate-spin text-white/70" />
                         </div>
+                      ) : isFailed ? (
+                        <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 bg-black/60 backdrop-blur-sm">
+                          <AlertTriangle size={22} className="text-red-400/80" />
+                          <p className="text-[10px] uppercase tracking-[0.14em] text-red-300/90">Generation failed</p>
+                          <button
+                            type="button"
+                            onClick={() => shot && handleGenerateImage(shot.id)}
+                            className="flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/10 px-3 py-1.5 text-[10px] uppercase tracking-[0.14em] text-white/90 backdrop-blur-sm transition-colors hover:bg-white/20"
+                          >
+                            <RefreshCw size={12} />
+                            Retry
+                          </button>
+                        </div>
                       ) : (
+                        <>
+                        {shot?.thumbnailUrl && !editingIds.has(shot.id) && (
+                          <button
+                            type="button"
+                            onClick={(e) => { e.stopPropagation(); shot && openEditOverlay(shot.id) }}
+                            className="absolute left-2 bottom-2 z-10 flex h-7 w-7 items-center justify-center rounded-lg border border-white/15 bg-black/40 text-white/60 backdrop-blur-sm transition-all hover:bg-white/15 hover:text-white/90 opacity-0 group-hover:opacity-100"
+                            aria-label="Edit shot"
+                          >
+                            <Pencil size={12} />
+                          </button>
+                        )}
+                        {editingIds.has(shot?.id ?? "") && (
+                          <div className="absolute inset-0 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+                            <Loader2 size={28} className="animate-spin text-[#DCC7A3]" />
+                          </div>
+                        )}
                         <div className="absolute inset-0 flex items-center justify-center gap-2 bg-black/40 opacity-0 transition-opacity duration-200 group-hover:opacity-100">
                           <button
                             type="button"
                             onClick={() => shot && handleGenerateImage(shot.id)}
                             className="flex items-center gap-1.5 rounded-lg border border-white/15 bg-black/50 px-3 py-1.5 text-[10px] uppercase tracking-[0.14em] text-white/90 backdrop-blur-sm transition-colors hover:bg-white/10"
                           >
-                            <Wand2 size={14} />
-                            Generate
+                            <ImageIcon size={13} />
+                            Photo
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => shot && handleGenerateVideo(shot.id)}
+                            disabled={videoGeneratingIds.has(shot?.id ?? "")}
+                            className="flex items-center gap-1.5 rounded-lg border border-[#7C6FD8]/30 bg-[#7C6FD8]/15 px-3 py-1.5 text-[10px] uppercase tracking-[0.14em] text-[#C4BBEF] backdrop-blur-sm transition-colors hover:bg-[#7C6FD8]/25 disabled:opacity-40"
+                          >
+                            <Video size={13} />
+                            Video
                           </button>
                           {shot?.thumbnailUrl && (
                             <button
@@ -2182,6 +2536,7 @@ export function StoryboardPanel({
                             </button>
                           )}
                         </div>
+                        </>
                       )}
                     </div>
 
@@ -2294,7 +2649,7 @@ export function StoryboardPanel({
                 const resolvedShot = editingShotField?.shotId === shot.id
                   ? { ...shot, [editingShotField.field]: editingShotDraft }
                   : shot
-                const imagePrompt = buildImagePrompt(resolvedShot, inspectorShots, characters, locations, projectStyle)
+                const imagePrompt = buildImagePrompt(resolvedShot, characters, locations, projectStyle)
                 const videoPrompt = buildVideoPrompt(resolvedShot, characters, locations, projectStyle)
                 const refs = getReferencedBibleEntries(resolvedShot, characters, locations)
                 const previewSrc = shot.thumbnailUrl || shot.svg || null
@@ -2532,11 +2887,41 @@ export function StoryboardPanel({
                 </tr>
               </thead>
               <tbody>
-                {frames.map((frame, index) => {
-                  const shot = shots[index]
-                  return (
-                    <tr key={frame.id} className="border-b border-white/5 transition-colors hover:bg-white/3">
-                      <td className="px-2 py-1.5 text-[#7F8590]">{String(index + 1).padStart(2, "0")}</td>
+                {(() => {
+                  let lastSceneId: string | null = null
+                  let globalIdx = 0
+                  return frames.map((frame, index) => {
+                    const shot = shots[index]
+                    const sceneId = shot?.sceneId || null
+                    const showSceneHeader = sceneId !== lastSceneId
+                    lastSceneId = sceneId
+                    globalIdx++
+
+                    const scene = sceneId ? scenes.find((s) => s.id === sceneId) : null
+                    const sceneShotCount = sceneId ? (shotsBySceneId.get(sceneId)?.length ?? 0) : 0
+
+                    return (
+                      <Fragment key={frame.id}>
+                        {showSceneHeader && scene && (
+                          <tr className="border-b border-white/[0.06]">
+                            <td colSpan={6} className="px-2 py-2">
+                              <div className="flex items-center gap-2">
+                                <span
+                                  className="h-2 w-2 rounded-full"
+                                  style={{ backgroundColor: scene.color }}
+                                />
+                                <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-white/50">
+                                  {scene.title}
+                                </span>
+                                <span className="text-[9px] text-white/20">
+                                  {sceneShotCount} {sceneShotCount === 1 ? "shot" : "shots"}
+                                </span>
+                              </div>
+                            </td>
+                          </tr>
+                        )}
+                        <tr className="border-b border-white/5 transition-colors hover:bg-white/3">
+                      <td className="px-2 py-1.5 text-[#7F8590]">{String(globalIdx).padStart(2, "0")}</td>
                       <td className="px-2 py-1.5 uppercase">
                         <InlineSelect
                           value={frame.meta.shot}
@@ -2573,8 +2958,10 @@ export function StoryboardPanel({
                         />
                       </td>
                     </tr>
-                  )
-                })}
+                      </Fragment>
+                    )
+                  })
+                })()}
               </tbody>
             </table>
           </div>
@@ -2598,6 +2985,86 @@ export function StoryboardPanel({
           }
         `}</style>
       </div>
+
+      {/* ─── Glass Edit Overlay ─── */}
+      {editOverlayShotId && (() => {
+        const overlayShot = shots.find(s => s.id === editOverlayShotId)
+        return (
+          <div
+            className="fixed inset-0 z-[100] flex items-center justify-center"
+            onClick={() => setEditOverlayShotId(null)}
+            style={{ animation: "editOverlayIn 0.25s ease-out" }}
+          >
+            {/* backdrop */}
+            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+
+            {/* glass bar */}
+            <div
+              className="relative flex w-[540px] items-center gap-3 rounded-2xl border border-white/[0.12] bg-white/[0.06] px-4 py-3 shadow-2xl backdrop-blur-2xl"
+              onClick={(e) => e.stopPropagation()}
+              style={{ animation: "editBarIn 0.3s cubic-bezier(0.16,1,0.3,1)" }}
+            >
+              {/* shot thumbnail preview */}
+              {overlayShot?.thumbnailUrl && (
+                <img
+                  src={overlayShot.thumbnailUrl}
+                  alt=""
+                  className="h-12 w-[72px] flex-shrink-0 rounded-lg border border-white/10 object-cover"
+                />
+              )}
+
+              {/* input */}
+              <input
+                ref={editInputRef}
+                type="text"
+                value={editInstruction}
+                onChange={(e) => setEditInstruction(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && editInstruction.trim()) {
+                    handleShotReEdit()
+                  }
+                  if (e.key === "Escape") {
+                    setEditOverlayShotId(null)
+                  }
+                }}
+                placeholder="Измени ракурс, сделай общий план..."
+                className="flex-1 bg-transparent text-sm text-white/90 placeholder-white/30 outline-none"
+                autoFocus
+              />
+
+              {/* submit */}
+              <button
+                type="button"
+                onClick={() => editInstruction.trim() && handleShotReEdit()}
+                disabled={!editInstruction.trim()}
+                className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-white/10 text-white/70 transition-colors hover:bg-white/20 hover:text-white disabled:opacity-30"
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
+              </button>
+
+              {/* close */}
+              <button
+                type="button"
+                onClick={() => setEditOverlayShotId(null)}
+                className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-white/40 transition-colors hover:bg-white/10 hover:text-white/70"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          </div>
+        )
+      })()}
+
+      <style>{`
+        @keyframes editOverlayIn {
+          from { opacity: 0 }
+          to { opacity: 1 }
+        }
+        @keyframes editBarIn {
+          from { opacity: 0; transform: translateY(12px) scale(0.96) }
+          to { opacity: 1; transform: translateY(0) scale(1) }
+        }
+      `}</style>
     </aside>
   )
 }

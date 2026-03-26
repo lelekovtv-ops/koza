@@ -122,9 +122,7 @@ Rules:
 - Each step should describe what visibly changes, not camera coverage.
 - Keep the order chronological.
 - whyItMatters should explain in plain language why this moment matters.
-- Preserve screenplay language where useful.
-- If the screenplay or scene text is in Russian, keep all human-facing fields in Russian: title, summary, whyItMatters, visibleChange, emotionalChange, transitionOut.
-- Do not switch to English for planning prose when the scene is Russian.
+- IMPORTANT: Always respond in the same language as the screenplay text. If the scene is in Russian, write all text fields in Russian. If in English, write in English. Match the language of the input exactly.
 - Respect this visual style direction when deciding emphasis: ${styleDirective}
 ${buildBreakdownConfigPrompt(input.config)}
 ${buildBibleContextPrompt(input.bible)}

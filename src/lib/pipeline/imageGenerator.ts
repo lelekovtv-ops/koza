@@ -377,6 +377,8 @@ function createPipelineTimelineShot(sceneId: string, promptEntry: PipelinePrompt
     blockRange: null,
     locked: false,
     sourceText: promptEntry.prompt,
+    generationHistory: [],
+    activeHistoryIndex: null,
   }
 }
 

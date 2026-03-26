@@ -573,9 +573,7 @@ Rules:
 - Use transitions and continuity fields intentionally.
 - imagePromptBase and videoPromptBase are structured foundations, not final polished prompts.
 - Keep the number of shots near the recommended shot count unless the analysis strongly implies otherwise.
-- Preserve screenplay language in narrativePurpose and dramaticBeat when appropriate.
-- If the screenplay or scene text is in Russian, keep all human-facing planning fields in Russian: narrativePurpose, dramaticBeat, blocking, subject, environment, lighting, transitionIn, transitionOut, imagePromptBase, videoPromptBase.
-- For Russian-language scenes, prefer Russian film terminology for camera craft instead of switching the planning text to English.
+- IMPORTANT: Always respond in the same language as the screenplay text. Write ALL fields in the screenplay language, including imagePromptBase and videoPromptBase. If the scene is in Russian, write everything in Russian. If in English, write in English. Match the language of the input exactly.
 
 ${DEAKINS_RULES}
 ${SHOT_TRANSITION_RULES}

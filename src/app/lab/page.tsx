@@ -596,8 +596,8 @@ function LabPageContent() {
 
   const computedSelectedFinalPrompt = useMemo(() => {
     if (!selectedTimelineShot) return ""
-    return buildImagePrompt(selectedTimelineShot, allTimelineShots, characters, locations, projectStyle)
-  }, [selectedTimelineShot, allTimelineShots, characters, locations, projectStyle])
+    return buildImagePrompt(selectedTimelineShot, characters, locations, projectStyle)
+  }, [selectedTimelineShot, characters, locations, projectStyle])
 
   const selectedFinalPrompt = selectedShot
     ? finalPromptDrafts[selectedShot.id] ?? computedSelectedFinalPrompt
@@ -749,7 +749,7 @@ function LabPageContent() {
           visualDescription: shot.visualDescription,
           sourceText: trimmedSceneText,
         })
-        const prompt = buildImagePrompt(timelineShot, [], characters, locations, projectStyle)
+        const prompt = buildImagePrompt(timelineShot, characters, locations, projectStyle)
         return [shot.id, prompt]
       }))
 
@@ -815,7 +815,7 @@ function LabPageContent() {
       locked: false,
     }))
 
-    const prompt = finalPromptDrafts[shot.id] ?? buildImagePrompt(timelineShot, allShots, characters, locations, projectStyle)
+    const prompt = finalPromptDrafts[shot.id] ?? buildImagePrompt(timelineShot, characters, locations, projectStyle)
     const endpoint = selectedImageGenModel === "gpt-image" ? "/api/gpt-image" : "/api/nano-banana"
     const group = `lab-image-${shot.id}-${Date.now()}`
     const startedAt = Date.now()
@@ -997,14 +997,7 @@ function LabPageContent() {
           </div>
 
           <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => router.push("/dev/breakdown-studio")}
-              className="inline-flex items-center gap-2 rounded-md border border-[#7FAED8]/28 bg-[#7FAED8]/12 px-3 py-2 text-xs font-medium text-[#BFD9F0] transition-colors hover:bg-[#7FAED8]/18 hover:text-[#D8EAFA]"
-            >
-              <WandSparkles className="h-4 w-4" />
-              Breakdown Studio
-            </button>
+
             <button
               type="button"
               onClick={() => setAssistantOpen((current) => !current)}

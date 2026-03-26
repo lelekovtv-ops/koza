@@ -17,16 +17,18 @@ type ReferencePart = {
 }
 
 function parseDataUrl(dataUrl: string): ReferencePart | null {
-  const match = dataUrl.match(/^data:(.+?);base64,(.+)$/)
-  if (!match) {
-    return null
-  }
+  const commaIndex = dataUrl.indexOf(",")
+  if (commaIndex === -1 || !dataUrl.startsWith("data:")) return null
+
+  const header = dataUrl.slice(5, commaIndex)
+  const base64Marker = ";base64"
+  if (!header.endsWith(base64Marker)) return null
+
+  const mimeType = header.slice(0, -base64Marker.length)
+  const data = dataUrl.slice(commaIndex + 1)
 
   return {
-    inlineData: {
-      mimeType: match[1],
-      data: match[2],
-    },
+    inlineData: { mimeType, data },
   }
 }
 
@@ -73,38 +75,61 @@ export async function POST(req: Request) {
       ...imageReferenceParts,
     ]
 
-    const response = await ai.models.generateContent({
-      model: modelId,
-      contents,
-      config: {
-        responseModalities: ["image"],
-        imageConfig: {
-          aspectRatio: "16:9",
-          ...(modelId === "gemini-2.5-flash-image" ? {} : { imageSize: "2K" }),
-        },
-      },
-    })
+    const maxAttempts = 3
+    let lastError: unknown = null
 
-    const parts = response.candidates?.[0]?.content?.parts as CandidatePart[] | undefined
-    const imagePart = parts?.find((part) => part.inlineData?.mimeType?.startsWith("image/"))
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        const response = await ai.models.generateContent({
+          model: modelId,
+          contents,
+          config: {
+            responseModalities: ["image"],
+            imageConfig: {
+              aspectRatio: "16:9",
+              ...(modelId === "gemini-2.5-flash-image" ? {} : { imageSize: "2K" }),
+            },
+          },
+        })
 
-    if (imagePart?.inlineData?.data) {
-      const imageBuffer = Buffer.from(imagePart.inlineData.data, "base64")
+        const parts = response.candidates?.[0]?.content?.parts as CandidatePart[] | undefined
+        const imagePart = parts?.find((part) => part.inlineData?.mimeType?.startsWith("image/"))
 
-      return new Response(imageBuffer, {
-        headers: {
-          "Content-Type": imagePart.inlineData.mimeType || "image/png",
-          "Cache-Control": "public, max-age=31536000",
-        },
-      })
+        if (imagePart?.inlineData?.data) {
+          const imageBuffer = Buffer.from(imagePart.inlineData.data, "base64")
+
+          return new Response(imageBuffer, {
+            headers: {
+              "Content-Type": imagePart.inlineData.mimeType || "image/png",
+              "Cache-Control": "public, max-age=31536000",
+            },
+          })
+        }
+
+        const textPart = parts?.find((part) => part.text)
+        return NextResponse.json(
+          {
+            error: "No image generated",
+            details: textPart?.text || `Model ${modelId} returned no image parts`,
+          },
+          { status: 500 }
+        )
+      } catch (error) {
+        lastError = error
+        const isRetryable = error instanceof Error && /503|UNAVAILABLE|overloaded|high demand/i.test(error.message)
+        if (isRetryable && attempt < maxAttempts - 1) {
+          const delay = (attempt + 1) * 3000
+          console.warn(`Nano Banana retry ${attempt + 1}/${maxAttempts} after ${delay}ms: ${getErrorMessage(error)}`)
+          await new Promise((resolve) => setTimeout(resolve, delay))
+          continue
+        }
+        break
+      }
     }
 
-    const textPart = parts?.find((part) => part.text)
+    console.error("Nano Banana error:", lastError)
     return NextResponse.json(
-      {
-        error: "No image generated",
-        details: textPart?.text || `Model ${modelId} returned no image parts`,
-      },
+      { error: "Image generation failed", details: getErrorMessage(lastError) },
       { status: 500 }
     )
   } catch (error) {

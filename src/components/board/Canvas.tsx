@@ -2,7 +2,7 @@
 
 import { useRouter } from 'next/navigation'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { ArrowLeft, BookOpen, GitBranch, WandSparkles } from 'lucide-react'
+import { ArrowLeft, BookOpen, GitBranch, Settings } from 'lucide-react'
 import {
   Background,
   BackgroundVariant,
@@ -33,12 +33,12 @@ import ScriptDocNode from './nodes/ScriptDocNode'
 import StyleNode from './nodes/StyleNode'
 import ScriptWriterOverlay from '@/components/editor/ScriptWriterOverlay'
 import { KozaLogo } from "@/components/ui/KozaLogo";
-import { breakdownScene, buildBreakdownBibleContext, createSceneTimelineShotsFromBreakdown } from '@/features/breakdown'
 import { buildProjectGraph } from '@/lib/boardGraphBuilder'
 import { trySaveBlob } from '@/lib/fileStorage'
 import { buildImagePrompt, getReferencedBibleEntries } from '@/lib/promptBuilder'
 import { useBibleStore } from '@/store/bible'
 import { useBoardStore } from '@/store/board'
+import { useBreakdownConfigStore } from '@/store/breakdownConfig'
 import { devlog } from '@/store/devlog'
 import { useLibraryStore } from '@/store/library'
 import { useNavigationStore } from '@/store/navigation'
@@ -100,6 +100,9 @@ export default function Canvas({ onBack }: CanvasProps) {
   const [expandedShotIds, setExpandedShotIds] = useState<Set<string>>(new Set())
   const [breakdownStatusByScene, setBreakdownStatusByScene] = useState<Record<string, 'idle' | 'running' | 'done'>>({})
   const [imageGenStatusByShot, setImageGenStatusByShot] = useState<Record<string, 'idle' | 'generating' | 'done'>>({})
+  const [canvasConfigOpen, setCanvasConfigOpen] = useState(false)
+  const breakdownConfig = useBreakdownConfigStore((s) => s.global)
+  const setBreakdownGlobalConfig = useBreakdownConfigStore((s) => s.setGlobal)
   const customNodePositionsRef = useRef<Record<string, { x: number; y: number }>>({})
   const [editorMode, setEditorMode] = useState<{
     active: boolean
@@ -229,6 +232,13 @@ export default function Canvas({ onBack }: CanvasProps) {
   }, [])
 
   const handleRunBreakdown = useCallback(async (sceneId: string) => {
+    const {
+      breakdownScene,
+      buildBreakdownBibleContext,
+      buildScenePromptDrafts,
+      createSceneTimelineShotsFromBreakdown,
+    } = await import('@/features/breakdown')
+
     const scenes = useScenesStore.getState().scenes
     const scene = scenes.find((s) => s.id === sceneId)
     if (!scene) return
@@ -247,10 +257,12 @@ export default function Canvas({ onBack }: CanvasProps) {
 
     try {
       const existingSceneShots = useTimelineStore.getState().shots.filter((shot) => shot.sceneId === scene.id)
+      const breakdownConfig = useBreakdownConfigStore.getState().getConfigForScene(scene.id)
       const { shots: jenkinsShots, diagnostics } = await breakdownScene(sceneText, {
         sceneId: scene.id,
         blockIds: scene.blockIds,
         bible,
+        config: breakdownConfig,
       })
 
       if (diagnostics.usedFallback && existingSceneShots.length > 0) {
@@ -278,6 +290,17 @@ export default function Canvas({ onBack }: CanvasProps) {
       }, jenkinsShots)
 
       reorderShots([...preservedShots, ...replacementShots])
+
+      if (useBreakdownConfigStore.getState().autoPromptBuild) {
+        const { characters, locations } = useBibleStore.getState()
+        const projectStyle = useBoardStore.getState().projectStyle
+        const prompts = buildScenePromptDrafts(replacementShots, characters, locations, projectStyle)
+        const updateShot = useTimelineStore.getState().updateShot
+        for (const p of prompts) {
+          updateShot(p.shotId, { imagePrompt: p.imagePrompt, videoPrompt: p.videoPrompt })
+        }
+      }
+
       if (diagnostics.usedFallback) {
         devlog.warn(
           'Board scene breakdown used fallback',
@@ -321,7 +344,7 @@ export default function Canvas({ onBack }: CanvasProps) {
       model: selectedModel,
     }, group)
 
-    const prompt = buildImagePrompt(shot, allShots, characters, locations, projectStyle)
+    const prompt = buildImagePrompt(shot, characters, locations, projectStyle)
 
     devlog.image('image_prompt', 'Image prompt', prompt, {
       promptLength: prompt.length,
@@ -358,9 +381,14 @@ export default function Canvas({ onBack }: CanvasProps) {
       const persisted = await trySaveBlob(blobKey, blob)
       const objectUrl = URL.createObjectURL(blob)
 
+      const currentShot = useTimelineStore.getState().shots.find((s) => s.id === shotId)
+      const entry = { url: objectUrl, blobKey: persisted ? blobKey : null, timestamp: Date.now() }
+      const history = [...(currentShot?.generationHistory || []), entry]
       useTimelineStore.getState().updateShot(shotId, {
         thumbnailUrl: objectUrl,
         thumbnailBlobKey: persisted ? blobKey : null,
+        generationHistory: history,
+        activeHistoryIndex: history.length - 1,
       })
 
       const projectId = useProjectsStore.getState().activeProjectId || 'global'
@@ -594,13 +622,7 @@ export default function Canvas({ onBack }: CanvasProps) {
           <BookOpen className="h-4 w-4" />
           Bible
         </button>
-        <button
-          onClick={() => router.push('/dev/breakdown-studio')}
-          className="flex items-center gap-2 rounded-lg bg-[#EAF4F6]/90 px-3 py-2 text-sm font-medium text-[#1D5C63] shadow-sm backdrop-blur transition-all hover:bg-white hover:shadow-md"
-        >
-          <WandSparkles className="h-4 w-4" />
-          Breakdown Studio
-        </button>
+
         <button
           onClick={handleTogglePipeline}
           className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium shadow-sm backdrop-blur transition-all hover:shadow-md ${
@@ -613,6 +635,17 @@ export default function Canvas({ onBack }: CanvasProps) {
           Pipeline
         </button>
         <button
+          onClick={() => setCanvasConfigOpen((v) => !v)}
+          className={`flex items-center gap-2 rounded-lg px-3 py-2 text-sm font-medium shadow-sm backdrop-blur transition-all hover:shadow-md ${
+            canvasConfigOpen
+              ? 'border border-[#D4A853]/30 bg-[#D4A853]/20 text-[#D4A853]'
+              : 'bg-white/80 text-[#2D2A26] hover:bg-white'
+          }`}
+        >
+          <Settings className="h-4 w-4" />
+          Config
+        </button>
+        <button
           onClick={onBack}
           className="flex items-center gap-2 rounded-lg bg-white/80 px-3 py-2 text-sm font-medium text-[#2D2A26] shadow-sm backdrop-blur transition-all hover:bg-white hover:shadow-md"
         >
@@ -620,6 +653,41 @@ export default function Canvas({ onBack }: CanvasProps) {
           Back
         </button>
       </div>
+      {canvasConfigOpen && (
+        <div className="absolute top-4 left-[220px] z-50 w-[340px] rounded-xl border border-[#C4B9AC]/60 bg-white/95 p-3 shadow-lg backdrop-blur">
+          <p className="mb-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-[#6B6356]">Breakdown Engine Config</p>
+          <div className="flex flex-col gap-2">
+            {([
+              { key: 'shotDensity' as const, label: 'Density', options: ['lean', 'balanced', 'dense'] },
+              { key: 'continuityStrictness' as const, label: 'Continuity', options: ['flexible', 'standard', 'strict'] },
+              { key: 'textRichness' as const, label: 'Richness', options: ['simple', 'rich', 'lush'] },
+              { key: 'relationMode' as const, label: 'Relations', options: ['minimal', 'balanced', 'explicit'] },
+              { key: 'fallbackMode' as const, label: 'Fallback', options: ['balanced', 'prefer_speed', 'fail_fast'] },
+              { key: 'keyframePolicy' as const, label: 'Keyframes', options: ['opening_anchor', 'story_turns', 'every_major_shift'] },
+            ] as const).map(({ key, label, options }) => (
+              <div key={key} className="flex items-center gap-2">
+                <span className="w-[70px] text-[10px] text-[#8B7E6E]">{label}</span>
+                <div className="flex rounded-lg border border-[#D8D0C3]/60 bg-[#F5F0EA]">
+                  {options.map((opt) => (
+                    <button
+                      key={opt}
+                      type="button"
+                      onClick={() => setBreakdownGlobalConfig({ [key]: opt })}
+                      className={`px-2 py-1 text-[9px] transition-all ${
+                        breakdownConfig[key] === opt
+                          ? 'bg-[#D4A853]/25 font-medium text-[#8B6914]'
+                          : 'text-[#8B7E6E] hover:text-[#4A3F2F]'
+                      }`}
+                    >
+                      {opt.replace(/_/g, ' ')}
+                    </button>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
       {!editorMode.active && <LibraryButton />}
       <LibraryPanel projectId={activeProjectId} hidden={editorMode.active} />
       <BoardAssistant />

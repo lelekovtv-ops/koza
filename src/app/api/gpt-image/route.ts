@@ -4,13 +4,19 @@ import { NextResponse } from "next/server"
 const DEFAULT_IMAGE_MODEL = "gpt-image-1"
 
 function dataUrlToFile(dataUrl: string, index: number): File {
-  const match = dataUrl.match(/^data:(.+?);base64,(.+)$/)
-
-  if (!match) {
+  const commaIndex = dataUrl.indexOf(",")
+  if (commaIndex === -1 || !dataUrl.startsWith("data:")) {
     throw new Error("Invalid reference image format")
   }
 
-  const [, mimeType, base64Payload] = match
+  const header = dataUrl.slice(5, commaIndex)
+  const base64Marker = ";base64"
+  if (!header.endsWith(base64Marker)) {
+    throw new Error("Invalid reference image format")
+  }
+
+  const mimeType = header.slice(0, -base64Marker.length)
+  const base64Payload = dataUrl.slice(commaIndex + 1)
   const buffer = Buffer.from(base64Payload, "base64")
   const extension = mimeType.split("/")[1] ?? "png"
 

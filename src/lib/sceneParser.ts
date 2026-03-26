@@ -120,6 +120,8 @@ export function parseScenesToShots(blocks: Block[]): TimelineShot[] {
       blockRange: null,
       locked: false,
       sourceText: "",
+      generationHistory: [],
+      activeHistoryIndex: null,
     })
   }
 

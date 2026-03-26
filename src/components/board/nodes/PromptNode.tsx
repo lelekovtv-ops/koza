@@ -28,15 +28,14 @@ export default function PromptNode({ data }: NodeProps) {
   const [copied, setCopied] = useState(false)
 
   const shot = useTimelineStore((state) => state.shots.find((s) => s.id === shotId))
-  const allShots = useTimelineStore((state) => state.shots)
   const characters = useBibleStore((state) => state.characters)
   const locations = useBibleStore((state) => state.locations)
   const projectStyle = useBoardStore((state) => state.projectStyle)
 
   const prompt = useMemo(() => {
     if (!shot) return ''
-    return buildImagePrompt(shot, allShots, characters, locations, projectStyle)
-  }, [shot, allShots, characters, locations, projectStyle])
+    return buildImagePrompt(shot, characters, locations, projectStyle)
+  }, [shot, characters, locations, projectStyle])
 
   const bibleRefs = useMemo(() => {
     if (!shot) return { characters: [], location: null }

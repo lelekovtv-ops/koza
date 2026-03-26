@@ -539,7 +539,6 @@ export default function BreakdownStudioPage() {
     })
     return buildImagePrompt(
       stub,
-      [],
       genCharacter ? [genCharacter] : [],
       genLocation ? [genLocation] : [],
       stylePrompt || undefined,

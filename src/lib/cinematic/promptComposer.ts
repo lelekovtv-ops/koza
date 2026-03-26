@@ -585,9 +585,8 @@ Return valid JSON array only. Each object must have this shape:
 Rules:
 - Keep shot order exactly as provided.
 - Keep the narrative intent exactly as provided.
-- caption and directorNote should stay in the screenplay language when practical.
-- cameraNote may use English technical film terminology.
-- imagePrompt and videoPrompt must be English only.
+- IMPORTANT: Write ALL fields in the same language as the screenplay text. If the scene is in Russian, write everything in Russian — including imagePrompt, videoPrompt, caption, directorNote. If in English, write in English. Match the language of the input exactly.
+- cameraNote may include English technical film terminology when there is no equivalent term.
 - imagePrompt describes a still frame.
 - videoPrompt extends the image prompt with motion, duration and pacing.
 - Use the provided continuity memory to state what must remain identical, what may change, and what must prepare the next shot.

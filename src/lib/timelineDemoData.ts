@@ -60,6 +60,8 @@ export function generateDemoShots(count: number): Omit<TimelineShot, "id">[] {
       blockRange: null,
       locked: false,
       sourceText: "",
+      generationHistory: [],
+      activeHistoryIndex: null,
     })
 
     shotInScene++

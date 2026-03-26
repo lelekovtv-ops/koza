@@ -9,7 +9,7 @@ export type AIModel = {
   capabilities: string[]
 }
 
-export const DEFAULT_TEXT_MODEL_ID = "claude-sonnet-4-20250514"
+export const DEFAULT_TEXT_MODEL_ID = "gpt-4o"
 
 export const ALL_MODELS: AIModel[] = [
   // Text models
@@ -24,6 +24,9 @@ export const ALL_MODELS: AIModel[] = [
   { id: "flux-1.1-pro", name: "Flux 1.1 Pro", provider: "Black Forest Labs", category: "image", color: "#ec4899", capabilities: ["text-to-image"] },
   { id: "imagen-4", name: "Imagen 4", provider: "Google", category: "image", color: "#3b82f6", capabilities: ["text-to-image"] },
   { id: "gpt-image", name: "GPT Image", provider: "OpenAI", category: "image", color: "#10b981", capabilities: ["text-to-image", "image-to-image"] },
+  { id: "nano-banana", name: "Nano Banana", provider: "Nano Banana", category: "image", color: "#facc15", capabilities: ["text-to-image"] },
+  { id: "nano-banana-2", name: "Nano Banana 2", provider: "Nano Banana", category: "image", color: "#eab308", capabilities: ["text-to-image"] },
+  { id: "nano-banana-pro", name: "Nano Banana Pro", provider: "Nano Banana", category: "image", color: "#ca8a04", capabilities: ["text-to-image"] },
 
   // Video models
   { id: "kling-3.0", name: "Kling 3.0", provider: "Kuaishou", category: "video", color: "#3b82f6", capabilities: ["text-to-video", "image-to-video"] },

@@ -91,7 +91,7 @@ Requirements:
 - Dramatic beats should reflect story progression, not camera coverage.
 - continuityRisks should mention eyelines, geography, props, wardrobe, time-of-day, entrances/exits, and action carry-over when relevant.
 - recommendedShotCount should be realistic for this scene.
-- Preserve the screenplay language for story-facing fields when possible.
+- IMPORTANT: Always respond in the same language as the screenplay text. If the scene is in Russian, write all text fields in Russian. If in English, write in English. Match the language of the input exactly.
 - Respect this visual style direction when identifying motifs and risks: ${styleDirective}
 ${buildBibleContextPrompt(input.bible)}
 
@@ -117,10 +117,56 @@ export function parseSceneAnalysisResponse(rawText: string, input: Omit<SceneAna
     propCandidates: normalizeStringArray(parsed.propCandidates),
     visualMotifs: normalizeStringArray(parsed.visualMotifs),
     continuityRisks: normalizeStringArray(parsed.continuityRisks),
-    recommendedShotCount: clampInteger(parsed.recommendedShotCount, 6, 1, 24),
+    recommendedShotCount: clampInteger(
+      parsed.recommendedShotCount,
+      6,
+      1,
+      Math.max(24, Math.ceil(rawText.length / 40)),
+    ),
   }
 }
 
 export function serializeSceneAnalysisForPrompt(analysis: SceneAnalysis): string {
   return serializeForPrompt(analysis)
+}
+
+// Local fallback: minimal scene analysis from raw text
+export function composeSceneAnalysisLocally(input: SceneAnalystInput): SceneAnalysis {
+  const sceneText = input.sceneText || ""
+  // Простейший разбор: ищем имена персонажей (заглавные слова в начале строк)
+  const characterSet = new Set<string>()
+  const lines = sceneText.split(/\r?\n/)
+  for (const line of lines) {
+    const match = line.match(/^([A-ZА-Я][A-ZА-Я\- ]{2,})[:\s]/)
+    if (match) characterSet.add(match[1].trim())
+  }
+  const characters = Array.from(characterSet)
+  // Простейший beat: весь текст как один beat
+  const sceneId = input.sceneId ?? "scene"
+  const beat: SceneBreakdownBeat = {
+    id: `${sceneId}-beat-1`,
+    sceneId,
+    order: 0,
+    title: "Main Beat",
+    summary: sceneText.slice(0, 120),
+    narrativeFunction: "",
+    emotionalShift: "",
+    subjectFocus: characters[0] || "",
+    characterIds: characters,
+    locationId: null,
+    propIds: [],
+    visualAnchors: [],
+    transitionOut: "",
+  }
+  return {
+    sceneSummary: sceneText.slice(0, 160),
+    dramaticBeats: [beat],
+    emotionalTone: "neutral",
+    geography: "",
+    characterPresence: characters,
+    propCandidates: [],
+    visualMotifs: [],
+    continuityRisks: [],
+    recommendedShotCount: 6,
+  }
 }

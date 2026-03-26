@@ -19,7 +19,7 @@ function normalizeLocationText(value: string): string {
   return value
     .toLowerCase()
     .replace(/^(int\.?|ext\.?|int\.?\/ext\.?|ext\.?\/int\.?|i\/e\.?)\s*/i, "")
-    .replace(/[—–-]\s*(утро|день|вечер|ночь).*$/i, "")
+    .replace(/[—–-]\s*(утро|день|вечер|ночь|dawn|morning|day|afternoon|evening|night|dusk|sunset|sunrise).*$/i, "")
     .trim()
 }
 
@@ -123,16 +123,16 @@ function buildImageStyleSuffix(style: string): string {
 
 export function buildImagePrompt(
   shot: TimelineShot,
-  allShots: TimelineShot[],
   characters: CharacterEntry[],
   locations: LocationEntry[],
   style?: string
 ): string {
-  void allShots
   const artStyle = style || DEFAULT_PROJECT_STYLE
   const shotCharacters = getCharactersForShot(shot, characters)
   const charRefs = formatCharacterRefs(shotCharacters)
   const location = getLocationForShot(shot, locations)
+  const timeOfDay = location?.timeOfDay || ""
+  const lightingHint = timeOfDay ? `Lighting: ${timeOfDay}.` : ""
 
   if (shot.imagePrompt) {
     return [
@@ -141,6 +141,7 @@ export function buildImagePrompt(
       location?.appearancePrompt ? `Environment reference: ${location.appearancePrompt}` : "",
       hasCharacterVisualAnchors(shotCharacters) ? "Preserve recurring character identity from the provided visual references." : "",
       hasLocationVisualAnchors(location) ? "Preserve recurring environment design from the provided visual references." : "",
+      lightingHint,
       buildImageStyleSuffix(artStyle),
     ].filter(Boolean).join("\n")
   }
@@ -153,6 +154,7 @@ export function buildImagePrompt(
       location?.appearancePrompt ? `Setting: ${location.appearancePrompt}.` : "",
       hasCharacterVisualAnchors(shotCharacters) ? "Preserve recurring character identity from the provided visual references." : "",
       hasLocationVisualAnchors(location) ? "Preserve recurring environment design from the provided visual references." : "",
+      lightingHint,
       buildImageStyleSuffix(artStyle),
     ].filter(Boolean).join(" ")
   }
@@ -164,6 +166,7 @@ export function buildImagePrompt(
     location?.appearancePrompt ? `Setting: ${location.appearancePrompt}.` : "",
     hasCharacterVisualAnchors(shotCharacters) ? "Preserve recurring character identity from the provided visual references." : "",
     hasLocationVisualAnchors(location) ? "Preserve recurring environment design from the provided visual references." : "",
+    lightingHint,
     buildImageStyleSuffix(artStyle),
   ].filter(Boolean).join(" ")
 }

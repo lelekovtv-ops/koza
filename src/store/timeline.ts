@@ -1,6 +1,12 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
 
+export interface GenerationHistoryEntry {
+  url: string
+  blobKey: string | null
+  timestamp: number
+}
+
 export interface TimelineShot {
   id: string
   order: number
@@ -10,6 +16,8 @@ export interface TimelineShot {
   originalUrl: string | null
   thumbnailBlobKey: string | null
   originalBlobKey: string | null
+  generationHistory: GenerationHistoryEntry[]
+  activeHistoryIndex: number | null
   sceneId: string | null
   label: string
   notes: string
@@ -173,6 +181,8 @@ export const createTimelineShot = (partial: Partial<TimelineShot> = {}): Timelin
   originalUrl: partial.originalUrl ?? null,
   thumbnailBlobKey: partial.thumbnailBlobKey ?? null,
   originalBlobKey: partial.originalBlobKey ?? null,
+  generationHistory: partial.generationHistory ?? [],
+  activeHistoryIndex: partial.activeHistoryIndex ?? null,
   sceneId: partial.sceneId ?? null,
   label: partial.label?.trim() || "Untitled Shot",
   notes: partial.notes ?? "",

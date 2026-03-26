@@ -22,7 +22,7 @@ export function buildScenePromptDrafts(
   projectStyle: string,
 ): GeneratedScenePrompt[] {
   return sceneShots.map((shot) => {
-    const baseImagePrompt = buildImagePrompt(shot, sceneShots, characters, locations, projectStyle)
+    const baseImagePrompt = buildImagePrompt(shot, characters, locations, projectStyle)
     const baseVideoPrompt = buildVideoPrompt(shot, characters, locations, projectStyle)
 
     return {
