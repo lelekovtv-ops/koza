@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { ArrowDownToLine, ArrowLeft, Sparkles, Trash2 } from "lucide-react"
+import { ArrowDownToLine, ArrowLeft, Clipboard, Settings, Sparkles, Trash2 } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Fragment, Suspense, useMemo, useState } from "react"
 import type { LogEntry, LogEntryType } from "@/store/devlog"
@@ -422,6 +422,20 @@ function DevConsoleContent() {
             >
               <Sparkles className="h-4 w-4" />
               Configurator Sandbox
+            </Link>
+            <Link
+              href="/dev/settings"
+              className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/4 px-3 py-2 text-sm text-white/70 transition hover:text-white"
+            >
+              <Settings className="h-4 w-4" />
+              Settings
+            </Link>
+            <Link
+              href="/production"
+              className="inline-flex items-center gap-2 rounded-full border border-[#D4A853]/20 bg-[#D4A853]/8 px-3 py-2 text-sm text-[#E6C887]/70 transition hover:text-[#E6C887]"
+            >
+              <Clipboard className="h-4 w-4" />
+              Production
             </Link>
             <div>
               <h1 className="text-lg font-semibold tracking-[0.24em] text-white/90">KOZA DEV CONSOLE</h1>
