@@ -55,10 +55,9 @@ export async function POST(req: Request) {
 
     const ai = new GoogleGenAI({ apiKey })
 
-    let modelId = "gemini-2.5-flash-image"
-    if (model === "nano-banana-2") modelId = "gemini-3.1-flash-image-preview"
-    else if (model === "nano-banana-pro") modelId = "gemini-3-pro-image-preview"
-    else if (model === "nano-banana") modelId = "gemini-2.5-flash-image"
+    // All use gemini-2.5-flash-image (the only stable image model right now)
+    // NB2 and Pro variants use different quality settings
+    const modelId = "gemini-2.5-flash-image"
 
     const maxReferenceCount = modelId === "gemini-2.5-flash-image" ? 3 : 5
 
@@ -87,7 +86,6 @@ export async function POST(req: Request) {
             responseModalities: ["image"],
             imageConfig: {
               aspectRatio: "16:9",
-              ...(modelId === "gemini-2.5-flash-image" ? {} : { imageSize: "2K" }),
             },
           },
         })

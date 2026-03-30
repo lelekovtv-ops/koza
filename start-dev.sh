@@ -6,7 +6,7 @@ ROOT_DIR="/Users/macbookbpm/Desktop/KOZA"
 PID_FILE="$ROOT_DIR/.next-dev.pid"
 PORT_FILE="$ROOT_DIR/.next-dev.port"
 LOG_FILE="$ROOT_DIR/.next-dev.log"
-HEALTH_PATH="/pipeline"
+HEALTH_PATH="/healthz"
 DEFAULT_PORT="3001"
 FALLBACK_PORT="3002"
 NODE_BIN=""
@@ -93,9 +93,9 @@ health_check() {
 
 wait_for_health() {
 	local port="$1"
-	local attempts=40
+	local attempts=90
 
-	for _ in {1..40}; do
+	for _ in {1..90}; do
 		if health_check "$port"; then
 			return 0
 		fi

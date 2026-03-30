@@ -1,5 +1,6 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
+import { safeStorage } from "@/lib/safeStorage"
 import type {
   DirectorPreset,
   CinematographerPreset,
@@ -692,6 +693,7 @@ export const usePipelineStore = create<PipelineState>()(
     }),
     {
       name: "koza-pipeline-v1",
+      storage: safeStorage,
       partialize: (state) => ({
         activeConfig: state.activeConfig,
         configBaseline: state.configBaseline,

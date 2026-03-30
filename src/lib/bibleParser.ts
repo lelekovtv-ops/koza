@@ -35,6 +35,18 @@ export interface LocationEntry {
   sceneIds: string[]
 }
 
+export interface PropEntry {
+  id: string
+  name: string
+  description: string
+  sceneIds: string[]
+  referenceImages: BibleReferenceImage[]
+  canonicalImageId: string | null
+  generatedImageUrl: string | null
+  imageBlobKey: string | null
+  appearancePrompt: string
+}
+
 type ParsedHeading = {
   name: string
   fullHeading: string
@@ -217,4 +229,145 @@ export function linkCharactersToScenes(
     ...character,
     sceneIds: Array.from(sceneIdsByCharacterId.get(character.id) ?? []).sort(),
   }))
+}
+
+// ── Props Parser ──
+
+/**
+ * Ключевые слова-маркеры которые указывают на предмет взаимодействия в action-блоках.
+ * Предметы выделяются из контекста действий: "берёт трубку", "смотрит на экран", "роняет стакан".
+ */
+const PROP_PATTERNS: Array<{ pattern: RegExp; extract: (match: RegExpMatchArray) => string }> = [
+  // Транспорт
+  { pattern: /(?:чёрн(?:ая|ый)|бел(?:ая|ый)|стар(?:ая|ый))?\s*(машин[аыу]|автомобил[ьяю]|авто|фургон|такси|мотоцикл)/gi, extract: (m) => m[1] },
+  // Оружие
+  { pattern: /(пистолет|нож|ружь[ёе]|револьвер|дробовик|винтовк[аиу])/gi, extract: (m) => m[1] },
+  // Связь
+  { pattern: /(телефон|трубк[аиу]|мобильн(?:ый|ик)|смартфон|рации[яюи]?)/gi, extract: (m) => m[1] },
+  // Документы
+  { pattern: /(документ[ыа]?|бумаг[иа]|письм[оа]|конверт|паспорт|удостоверени[ея]|папк[аиу])/gi, extract: (m) => m[1] },
+  // Мебель/интерьер
+  { pattern: /(пепельниц[аыу]|стакан|бутылк[аиу]|стол|стул|кресл[оа]|диван|кроват[ьи]|шкаф|зеркал[оа])/gi, extract: (m) => m[1] },
+  // Электроника
+  { pattern: /(телевизор|экран|монитор|компьютер|ноутбук|фонар[ьяи]к?|камер[аыу]|фотографи[яию])/gi, extract: (m) => m[1] },
+  // Одежда/аксессуары
+  { pattern: /(куртк[аиу]|пальто|шляп[аыу]|очки|сумк[аиу]|рюкзак|чемодан|ключ[ии]?)/gi, extract: (m) => m[1] },
+  // Еда/напитки
+  { pattern: /(сигарет[аыу]|окур(?:ок|ки)|кофе|чай|бокал|рюмк[аиу])/gi, extract: (m) => m[1] },
+  // Misc
+  { pattern: /(дверь|окно|штор[аыу]|забор|лестниц[аыу]|верёвк[аиу]|цеп[ьи])/gi, extract: (m) => m[1] },
+]
+
+function normalizePropName(raw: string): string {
+  // Привести к именительному падежу (упрощённо — убрать окончания)
+  return raw
+    .replace(/[уюыиаое]$/i, "")
+    .replace(/ок$/i, "ок") // окурок
+    .replace(/к$/i, "к")
+    .trim()
+    .toLowerCase()
+    .replace(/^./, (c) => c.toUpperCase())
+}
+
+function extractSentence(text: string, matchIndex: number): string {
+  // Find sentence boundaries around the match
+  const before = text.slice(0, matchIndex)
+  const after = text.slice(matchIndex)
+
+  const sentenceStart = Math.max(
+    before.lastIndexOf(".") + 1,
+    before.lastIndexOf("!") + 1,
+    before.lastIndexOf("?") + 1,
+    before.lastIndexOf("\n") + 1,
+    0,
+  )
+
+  const endOffsets = [
+    after.indexOf("."),
+    after.indexOf("!"),
+    after.indexOf("?"),
+    after.indexOf("\n"),
+  ].filter((i) => i >= 0)
+
+  const sentenceEnd = endOffsets.length > 0
+    ? matchIndex + Math.min(...endOffsets) + 1
+    : text.length
+
+  return text.slice(sentenceStart, sentenceEnd).trim()
+}
+
+export function parseProps(blocks: Block[], scenes: Scene[], existingProps?: PropEntry[]): PropEntry[] {
+  const props = new Map<string, PropEntry>()
+  const mentions = new Map<string, string[]>()
+
+  // Preserve existing entries
+  if (existingProps) {
+    for (const p of existingProps) {
+      props.set(p.id, { ...p })
+    }
+  }
+
+  for (const block of blocks) {
+    // Only parse action blocks and scene headings (not dialogue/character)
+    if (block.type !== "action" && block.type !== "scene_heading") continue
+
+    const text = block.text
+    const scene = getSceneForBlockId(scenes, block.id)
+
+    for (const { pattern, extract } of PROP_PATTERNS) {
+      // Reset lastIndex for global patterns
+      pattern.lastIndex = 0
+      let match: RegExpExecArray | null
+      while ((match = pattern.exec(text)) !== null) {
+        const rawName = extract(match)
+        if (!rawName || rawName.length < 2) continue
+
+        const normalized = normalizePropName(rawName)
+        const id = slugify(normalized)
+        if (!id) continue
+
+        const existing = props.get(id)
+        const sceneIds = uniqueStrings([
+          ...(existing?.sceneIds ?? []),
+          scene?.id ?? "",
+        ])
+
+        // Collect contextual mention
+        const sentence = extractSentence(text, match.index)
+        if (sentence) {
+          const existing_mentions = mentions.get(id) ?? []
+          if (!existing_mentions.includes(sentence)) {
+            existing_mentions.push(sentence)
+            mentions.set(id, existing_mentions)
+          }
+        }
+
+        if (!existing) {
+          props.set(id, {
+            id,
+            name: normalized,
+            description: "",
+            sceneIds,
+            referenceImages: [],
+            canonicalImageId: null,
+            generatedImageUrl: null,
+            imageBlobKey: null,
+            appearancePrompt: "",
+          })
+        } else {
+          props.set(id, { ...existing, sceneIds })
+        }
+      }
+    }
+  }
+
+  // Auto-fill description from script mentions (only if user hasn't written one)
+  for (const [id, prop] of props) {
+    if (!prop.description && mentions.has(id)) {
+      const lines = mentions.get(id)!.slice(0, 3)
+      props.set(id, { ...prop, description: lines.join(" · ") })
+    }
+  }
+
+  return Array.from(props.values()).sort((a, b) => a.name.localeCompare(b.name, "ru"))
 }

@@ -4,28 +4,28 @@
 		{
 			"label": "build koza",
 			"type": "shell",
-			"command": "rm -rf .next && npm run build",
+			"command": "./safe-build.sh",
 			"isBackground": false,
 			"group": "build"
 		},
 		{
 			"label": "build koza retry",
 			"type": "shell",
-			"command": "rm -rf .next && npm run build",
+			"command": "./safe-build.sh",
 			"isBackground": false,
 			"group": "build"
 		},
 		{
 			"label": "build koza perf fix",
 			"type": "shell",
-			"command": "rm -rf .next && npm run build",
+			"command": "./safe-build.sh",
 			"isBackground": false,
 			"group": "build"
 		},
 		{
 			"label": "build koza inspector",
 			"type": "shell",
-			"command": "rm -rf .next && npm run build",
+			"command": "./safe-build.sh",
 			"isBackground": false,
 			"group": "build"
 		}

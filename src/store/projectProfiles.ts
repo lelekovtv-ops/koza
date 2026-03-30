@@ -1,5 +1,6 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
+import { safeStorage } from "@/lib/safeStorage"
 
 export type LucBessonProjectCharacterOverride = {
   name: string
@@ -74,6 +75,7 @@ export const useProjectProfilesStore = create<ProjectProfilesState>()(
     }),
     {
       name: "koza-project-profiles-v1",
+      storage: safeStorage,
     },
   ),
 )

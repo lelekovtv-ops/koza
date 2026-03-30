@@ -30,17 +30,18 @@ export default function PromptNode({ data }: NodeProps) {
   const shot = useTimelineStore((state) => state.shots.find((s) => s.id === shotId))
   const characters = useBibleStore((state) => state.characters)
   const locations = useBibleStore((state) => state.locations)
+  const bibleProps = useBibleStore((state) => state.props)
   const projectStyle = useBoardStore((state) => state.projectStyle)
 
   const prompt = useMemo(() => {
     if (!shot) return ''
-    return buildImagePrompt(shot, characters, locations, projectStyle)
-  }, [shot, characters, locations, projectStyle])
+    return buildImagePrompt(shot, characters, locations, projectStyle, bibleProps)
+  }, [shot, characters, locations, projectStyle, bibleProps])
 
   const bibleRefs = useMemo(() => {
-    if (!shot) return { characters: [], location: null }
-    return getReferencedBibleEntries(shot, characters, locations)
-  }, [shot, characters, locations])
+    if (!shot) return { characters: [], location: null, props: [] }
+    return getReferencedBibleEntries(shot, characters, locations, bibleProps)
+  }, [shot, characters, locations, bibleProps])
 
   const bibleBadge = useMemo(() => {
     const charNames = bibleRefs.characters

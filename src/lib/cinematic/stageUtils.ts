@@ -4,6 +4,7 @@ import type { ProjectStyleBible } from "@/types/cinematic"
 export interface CinematicBibleContext {
   characters: Array<{ name: string; description: string; appearancePrompt: string }>
   locations: Array<{ name: string; description: string; appearancePrompt: string; intExt: string }>
+  props?: Array<{ name: string; description: string; appearancePrompt: string }>
 }
 
 export type CinematicStyleContext = string | ProjectStyleBible | undefined
@@ -40,7 +41,13 @@ export function buildBibleContextPrompt(bible?: CinematicBibleContext): string {
     )).join("\n")
     : "No locations defined yet."
 
-  return `\nPROJECT BIBLE:\nCHARACTERS:\n${characters}\n\nLOCATIONS:\n${locations}`
+  const props = bible.props && bible.props.length > 0
+    ? bible.props.map((prop) => (
+      `- ${prop.name}: ${prop.description || "No description yet"}${prop.appearancePrompt ? ` [Visual: ${prop.appearancePrompt}]` : ""}`
+    )).join("\n")
+    : null
+
+  return `\nPROJECT BIBLE:\nCHARACTERS:\n${characters}\n\nLOCATIONS:\n${locations}${props ? `\n\nPROPS:\n${props}` : ""}`
 }
 
 export function extractJsonObject(rawText: string): string {

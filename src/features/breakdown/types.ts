@@ -13,9 +13,16 @@ export type BreakdownBibleLocationContext = {
   intExt: LocationEntry["intExt"]
 }
 
+export type BreakdownBiblePropContext = {
+  name: string
+  description: string
+  appearancePrompt: string
+}
+
 export type BreakdownBibleContext = {
   characters: BreakdownBibleCharacterContext[]
   locations: BreakdownBibleLocationContext[]
+  props?: BreakdownBiblePropContext[]
 }
 
 export type BreakdownTextModelId = "claude-sonnet-4-20250514" | "gpt-4o" | "gemini-1.5-pro"

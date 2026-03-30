@@ -1,10 +1,3 @@
-import {
-  breakdownSceneDetailed,
-  breakdownScenePlanningDetailed,
-  buildJenkinsShotsFromPromptPackages,
-  composePromptPackagesDetailed,
-  type BreakdownDetailedResult,
-} from "@/lib/jenkins"
 import type { ScreenplaySceneContext } from "@/lib/cinematic/contextRouter"
 import { parseScenes, type Scene } from "@/lib/sceneParser"
 import { parseTextToBlocks } from "@/lib/screenplayFormat"
@@ -14,11 +7,19 @@ import type { PipelineConfig, PipelineStageId, NormalizedRunResult } from "@/typ
 import { usePipelineStore } from "@/store/pipeline"
 import { useBibleStore } from "@/store/bible"
 import { useScenesStore } from "@/store/scenes"
-import { superviseShotContinuity } from "@/lib/cinematic/continuitySupervisor"
 import { applyDraftToShotSpecs, buildPromptComposerEditorialNotes, createPipelineBreakdownDraft } from "@/lib/pipeline/breakdownDraft"
 import { buildPromptOptimizationPreview, extractPipelinePromptEntries } from "@/lib/pipeline/imageGenerator"
+import { enrichPropsFromBreakdown } from "@/lib/pipeline/propEnricher"
 
 const CLAUDE_KEY_MISSING_MESSAGE = "ANTHROPIC_API_KEY is missing"
+
+async function loadJenkinsModule() {
+  return import("@/lib/jenkins")
+}
+
+async function loadContinuitySupervisorModule() {
+  return import("@/lib/cinematic/continuitySupervisor")
+}
 
 function buildClaudeFallbackConfig(config: PipelineConfig): PipelineConfig {
   return {
@@ -43,7 +44,8 @@ async function executePipelineBreakdown(
     currentScene: ScreenplaySceneContext | null
     nextScene: ScreenplaySceneContext | null
   },
-): Promise<BreakdownDetailedResult> {
+) {
+  const { breakdownSceneDetailed } = await loadJenkinsModule()
   const breakdownConfig = pipelineConfigToBreakdownConfig(config)
   const stylePrompt = buildPipelineStylePrompt(config)
   const modelId = getStageModelId(config, "sceneAnalyst")
@@ -70,6 +72,7 @@ async function executePipelinePlanning(
     nextScene: ScreenplaySceneContext | null
   },
 ) {
+  const { breakdownScenePlanningDetailed } = await loadJenkinsModule()
   const breakdownConfig = pipelineConfigToBreakdownConfig(config)
   const stylePrompt = buildPipelineStylePrompt(config)
   const modelId = getStageModelId(config, "sceneAnalyst")
@@ -232,7 +235,13 @@ export async function runPipelineBreakdown(
 
     // ── Simulate sequential stage completion ──
     await simulatePlanningStageProgress(result, startStageIdx, stageStartTime)
-    store.completeBreakdownPhase(createPipelineBreakdownDraft(result, sceneText))
+    const draft = createPipelineBreakdownDraft(result, sceneText)
+    store.completeBreakdownPhase(draft)
+
+    // Fire-and-forget: enrich Bible props with appearancePrompts from breakdown
+    enrichPropsFromBreakdown(result.analysis, sceneText, draft.sceneId).catch((err) =>
+      console.warn("[propEnricher] non-critical:", err),
+    )
   } catch (error) {
     const currentStage = usePipelineStore.getState().runState.currentStage
     store.failRun(
@@ -244,6 +253,8 @@ export async function runPipelineBreakdown(
 }
 
 export async function composePipelinePrompts(): Promise<NormalizedRunResult> {
+  const { buildJenkinsShotsFromPromptPackages, composePromptPackagesDetailed } = await loadJenkinsModule()
+  const { superviseShotContinuity } = await loadContinuitySupervisorModule()
   const store = usePipelineStore.getState()
   const bible = useBibleStore.getState()
   const draft = store.breakdownDraft
@@ -307,7 +318,7 @@ export async function composePipelinePrompts(): Promise<NormalizedRunResult> {
       composed = await runPromptComposition(effectiveConfig)
     }
 
-    const fullResult: BreakdownDetailedResult = {
+    const fullResult = {
       sceneId: draft.sceneId,
       analysis: draft.analysis,
       actionSplit: draft.actionSplit,

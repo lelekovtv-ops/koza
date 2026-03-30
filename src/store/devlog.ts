@@ -57,7 +57,7 @@ const isDevMode = process.env.NODE_ENV === "development"
 
 export const useDevLogStore = create<DevLogState>()((set, get) => ({
   entries: [],
-  enabled: isDevMode,
+  enabled: true,
   maxEntries: 500,
 
   log: (entry) => {

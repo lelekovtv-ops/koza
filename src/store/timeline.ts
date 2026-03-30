@@ -1,10 +1,14 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
+import { safeStorage } from "@/lib/safeStorage"
+
+export type HistoryEntrySource = "generate" | "edit" | "crop" | "color" | "loading"
 
 export interface GenerationHistoryEntry {
   url: string
   blobKey: string | null
   timestamp: number
+  source?: HistoryEntrySource
 }
 
 export interface TimelineShot {
@@ -33,6 +37,9 @@ export interface TimelineShot {
   blockRange: [string, string] | null
   locked: boolean
   sourceText: string
+  customReferenceUrls?: string[]
+  excludedBibleIds?: string[]
+  bakedPrompt?: boolean
 }
 
 export interface AudioClip {
@@ -127,6 +134,8 @@ const normalizeShots = (shots: TimelineShot[]) =>
       shotSize: shot.shotSize ?? "",
       cameraMotion: shot.cameraMotion ?? "",
       sourceText: shot.sourceText ?? "",
+      customReferenceUrls: shot.customReferenceUrls ?? [],
+      excludedBibleIds: shot.excludedBibleIds ?? [],
     }))
 
 const normalizeAudioClips = (clips: AudioClip[]) =>
@@ -198,6 +207,9 @@ export const createTimelineShot = (partial: Partial<TimelineShot> = {}): Timelin
   blockRange: partial.blockRange ?? null,
   locked: partial.locked ?? false,
   sourceText: partial.sourceText ?? "",
+  customReferenceUrls: partial.customReferenceUrls ?? [],
+  excludedBibleIds: partial.excludedBibleIds ?? [],
+  bakedPrompt: partial.bakedPrompt ?? false,
 })
 
 export const createAudioClip = (partial: Partial<AudioClip> = {}): AudioClip => ({
@@ -457,31 +469,63 @@ export const useTimelineStore = create<TimelineState>()(
     }),
     {
       name: "koza-timeline-v2",
+      storage: safeStorage,
       partialize: (state) => ({
-        shots: state.shots,
+        shots: state.shots.map((s) => ({
+          ...s,
+          generationHistory: s.generationHistory.filter((e) => e.blobKey),
+          activeHistoryIndex: s.activeHistoryIndex,
+        })),
         audioClips: state.audioClips,
         zoom: state.zoom,
         playbackRate: state.playbackRate,
         activeProjectId: state.activeProjectId,
-        projectTimelines: state.projectTimelines,
+        projectTimelines: Object.fromEntries(
+          Object.entries(state.projectTimelines).map(([k, v]) => [k, {
+            ...v,
+            shots: v.shots.map((s) => ({
+              ...s,
+              generationHistory: s.generationHistory.filter((e) => e.blobKey),
+              activeHistoryIndex: s.activeHistoryIndex,
+            })),
+          }])
+        ),
       }),
       onRehydrateStorage: () => (state) => {
         if (!state) return
-        const shotsWithBlobs = state.shots.filter((s) => s.thumbnailBlobKey)
+        const shotsWithBlobs = state.shots.filter((s) => s.thumbnailBlobKey || s.generationHistory.some((e) => e.blobKey))
         if (shotsWithBlobs.length === 0) return
 
         Promise.all(
           shotsWithBlobs.map(async (shot) => {
             try {
               const { loadBlob } = await import("@/lib/fileStorage")
-              const url = await loadBlob(shot.thumbnailBlobKey!)
-              if (url) {
-                useTimelineStore.setState((current) => ({
-                  shots: current.shots.map((s) =>
-                    s.id === shot.id ? { ...s, thumbnailUrl: url } : s
-                  ),
-                }))
+
+              // Restore thumbnail
+              let thumbUrl = shot.thumbnailUrl
+              if (shot.thumbnailBlobKey) {
+                const url = await loadBlob(shot.thumbnailBlobKey)
+                if (url) thumbUrl = url
               }
+
+              // Restore generation history URLs
+              const restoredHistory = await Promise.all(
+                shot.generationHistory.map(async (entry) => {
+                  if (!entry.blobKey) return entry
+                  try {
+                    const url = await loadBlob(entry.blobKey)
+                    return url ? { ...entry, url } : entry
+                  } catch {
+                    return entry
+                  }
+                })
+              )
+
+              useTimelineStore.setState((current) => ({
+                shots: current.shots.map((s) =>
+                  s.id === shot.id ? { ...s, thumbnailUrl: thumbUrl, generationHistory: restoredHistory } : s
+                ),
+              }))
             } catch {
               // Ignore missing blobs
             }

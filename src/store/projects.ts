@@ -1,5 +1,6 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
+import { safeStorage } from "@/lib/safeStorage"
 
 export interface Project {
   id: string
@@ -96,6 +97,7 @@ export const useProjectsStore = create<ProjectsState>()(
     }),
     {
       name: "koza-projects",
+      storage: safeStorage,
     }
   )
 )

@@ -74,7 +74,7 @@ export function ScriptViewer({ onSceneClick, selectedSceneId, fontSize }: Script
   }, [resolvedFontSize, scheduleFontSize])
 
   return (
-    <div className="h-full overflow-hidden bg-[#1A1816] text-[#E5E0DB]">
+    <div className="relative h-full overflow-hidden bg-[#1A1816] text-[#E5E0DB]">
       <div
         ref={containerRef}
         className="h-full overflow-y-auto px-6 py-4 text-[#E5E0DB]"
@@ -84,12 +84,12 @@ export function ScriptViewer({ onSceneClick, selectedSceneId, fontSize }: Script
           lineHeight: 1.55,
         }}
       >
-        <div className="sticky top-0 z-10 -mx-6 mb-4 flex justify-end bg-[#1A1816]/95 px-6 py-2 backdrop-blur-sm">
-          <div className="flex items-center gap-2 rounded-md border border-white/10 bg-white/5 p-1 text-[#D4A853]">
+        <div className="pointer-events-none absolute right-4 top-3 z-10">
+          <div className="pointer-events-auto flex items-center gap-1 rounded-md border border-white/10 bg-[#1A1816]/90 p-1 text-[#D4A853] backdrop-blur-sm">
             <button
               type="button"
               onClick={zoomOut}
-              className="rounded px-2 py-1 text-[10px] transition-colors hover:bg-white/8 hover:text-[#E8C98A]"
+              className="rounded px-1.5 py-0.5 text-[10px] transition-colors hover:bg-white/8 hover:text-[#E8C98A]"
               aria-label="Zoom out script"
             >
               A
@@ -97,7 +97,7 @@ export function ScriptViewer({ onSceneClick, selectedSceneId, fontSize }: Script
             <button
               type="button"
               onClick={zoomIn}
-              className="rounded px-2 py-1 text-[14px] leading-none transition-colors hover:bg-white/8 hover:text-[#E8C98A]"
+              className="rounded px-1.5 py-0.5 text-[14px] leading-none transition-colors hover:bg-white/8 hover:text-[#E8C98A]"
               aria-label="Zoom in script"
             >
               A

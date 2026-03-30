@@ -2,9 +2,10 @@
 
 import Image from "next/image"
 import { useRouter } from "next/navigation"
-import { AlertTriangle, BookOpen, Camera, ChevronLeft, ChevronRight, Clapperboard, Copy, Film, Grid, Image as ImageIcon, List, Loader2, MoreHorizontal, Pencil, Play, Plus, RefreshCw, Settings, Trash2, Video, Wand2, X } from "lucide-react"
+import { AlertTriangle, BookOpen, Camera, ChevronLeft, ChevronRight, Clapperboard, Copy, Crop, Download, Film, FlipHorizontal2, FlipVertical2, Grid, Image as ImageIcon, List, Loader2, Maximize, Minimize, MoreHorizontal, Pause, Pencil, Play, Plus, RefreshCw, RotateCcw, RotateCw, Settings, SkipBack, SkipForward, Sparkles, Trash2, Video, Wand2, X } from "lucide-react"
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { breakdownScene, buildBreakdownBibleContext, buildScenePromptDrafts, createSceneTimelineShotsFromBreakdown } from "@/features/breakdown"
+import { breakdownSceneFincher } from "@/lib/fincher"
 import { getTotalDuration, useTimelineStore } from "@/store/timeline"
 import type { TimelineShot } from "@/store/timeline"
 import { timelineShotToStoryboardView, createShotFromStoryboardDefaults } from "@/lib/storyboardBridge"
@@ -12,9 +13,12 @@ import { useScriptStore } from "@/store/script"
 import { useScenesStore } from "@/store/scenes"
 import { useNavigationStore } from "@/store/navigation"
 import { trySaveBlob } from "@/lib/fileStorage"
+import { applyColorTransfer, imageUrlToCanvas } from "@/lib/colorTransfer"
 import { convertReferenceImagesToDataUrls, getShotGenerationReferenceImages } from "@/lib/imageGenerationReferences"
 import { PromptLab, PromptLabPanel } from "./PromptLab"
 import { buildImagePrompt, buildVideoPrompt, getReferencedBibleEntries } from "@/lib/promptBuilder"
+import { ImageEditOverlay } from "@/components/ui/ImageEditOverlay"
+import { ShotStudio } from "@/components/editor/ShotStudio"
 import { ProjectStylePicker } from "@/components/ui/ProjectStylePicker"
 import { ScriptViewer } from "@/components/editor/screenplay/ScriptViewer"
 import { useBibleStore } from "@/store/bible"
@@ -25,12 +29,13 @@ import { devlog } from "@/store/devlog"
 import { useLibraryStore } from "@/store/library"
 import { useProjectsStore } from "@/store/projects"
 import { useProjectProfilesStore } from "@/store/projectProfiles"
-import { slugify, type CharacterEntry, type LocationEntry } from "@/lib/bibleParser"
+import { slugify, type CharacterEntry, type LocationEntry, type PropEntry } from "@/lib/bibleParser"
+import { generateBibleImageFromModal, EditableDuration, SceneBibleBubble } from "./StoryboardShared"
 
 const SHOT_SIZE_OPTIONS = ["WIDE", "MEDIUM", "CLOSE", "EXTREME CLOSE", "OVER SHOULDER", "POV", "INSERT", "AERIAL", "TWO SHOT"] as const
 const CAMERA_MOTION_OPTIONS = ["Static", "Pan Left", "Pan Right", "Pan Up", "Tilt Down", "Push In", "Pull Out", "Track Left", "Track Right", "Track Around", "Dolly In", "Crane Up", "Crane Down", "Drone In", "Handheld", "Steadicam"] as const
 
-type ViewMode = "scenes" | "board" | "list" | "inspector" | "director" | "prompt"
+// ViewMode type is now imported from navigation store via StoryboardViewMode
 type EditableShotField = "caption" | "directorNote" | "cameraNote" | "imagePrompt" | "videoPrompt"
 type DirectorFieldVisibility = "all" | "action" | "director" | "camera"
 
@@ -611,6 +616,17 @@ function DirectorShotCard({
   onSelect,
   onUpdate,
   onEnhance,
+  onBuild,
+  isBuilding,
+  bibleChars,
+  bibleLocs,
+  bibleProps,
+  onOpenBible,
+  onSmartScan,
+  isScanning,
+  onGenerate,
+  isGenerating,
+  onOpenStudio,
   onDelete,
   onDuplicate,
 }: {
@@ -619,17 +635,30 @@ function DirectorShotCard({
   selected: boolean
   canDuplicate: boolean
   isEnhancing: boolean
+  isBuilding: boolean
+  isScanning: boolean
   autoFocusAction: boolean
   showThumbnail: boolean
   fieldVisibility: DirectorFieldVisibility
+  bibleChars: CharacterEntry[]
+  bibleLocs: LocationEntry[]
+  bibleProps: PropEntry[]
   cardRef?: (node: HTMLElement | null) => void
   onSelect: () => void
   onUpdate: (patch: Partial<TimelineShot>) => void
   onEnhance: () => void
+  onBuild: () => void
+  onOpenBible: () => void
+  onSmartScan: () => void
+  onGenerate: () => void
+  isGenerating: boolean
+  onOpenStudio: () => void
   onDelete: () => void
   onDuplicate: () => void
 }) {
   const previewSrc = shot.thumbnailUrl || shot.svg || null
+  const [promptExpanded, setPromptExpanded] = useState(false)
+  const [showFullPrompt, setShowFullPrompt] = useState(false)
   const showAction = fieldVisibility === "all" || fieldVisibility === "action"
   const showDirector = fieldVisibility === "all" || fieldVisibility === "director"
   const showCamera = fieldVisibility === "all" || fieldVisibility === "camera"
@@ -665,14 +694,17 @@ function DirectorShotCard({
           dataFocusId: undefined,
         }
   const previewPanel = showThumbnail ? (
-    <div className={`relative overflow-hidden rounded-xl border border-white/8 bg-[#0E1014] ${isSingleFieldMode ? "h-full aspect-video shrink-0" : "w-72 shrink-0 self-start aspect-video"}`}>
+    <div
+      className={`relative overflow-hidden rounded-xl border border-white/8 bg-[#0E1014] ${previewSrc ? "cursor-pointer" : ""} ${isSingleFieldMode ? "h-full aspect-video shrink-0" : "w-72 shrink-0 self-start aspect-video"}`}
+      onClick={(e) => { if (previewSrc) { e.stopPropagation(); onOpenStudio() } }}
+    >
       {previewSrc ? (
         <Image
           src={previewSrc}
-          alt={shot.label || `Shot ${index + 1}`}
+          alt=""
           fill
           unoptimized
-          className="object-cover"
+          className="object-cover transition-transform hover:scale-105"
         />
       ) : (
         <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_58%),linear-gradient(180deg,#151922_0%,#0E1014_100%)] px-3 text-center">
@@ -704,6 +736,15 @@ function DirectorShotCard({
           >
             {isEnhancing ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />}
             Enhance
+          </button>
+          <button
+            type="button"
+            onClick={(event) => { event.stopPropagation(); onBuild() }}
+            disabled={isBuilding || !shot.caption.trim()}
+            className="flex h-8 items-center gap-1 rounded-md border border-[#D4A853]/20 bg-[#D4A853]/8 px-2 text-[10px] uppercase tracking-[0.14em] text-[#D4A853] transition-colors hover:bg-[#D4A853]/15 disabled:cursor-not-allowed disabled:opacity-40"
+          >
+            {isBuilding ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />}
+            Build
           </button>
           <button
             type="button"
@@ -791,10 +832,153 @@ function DirectorShotCard({
               />
             </div>
             ) : null}
+
+            {/* ── Bible pills: toggle entities for this shot ── */}
+            {!isSingleFieldMode && (() => {
+              const excluded = new Set(shot.excludedBibleIds ?? [])
+              const allEntries = [
+                ...bibleChars.map((c) => ({ id: `char-${c.id}`, label: c.name, type: "char" as const, imageUrl: c.generatedPortraitUrl, prompt: c.appearancePrompt })),
+                ...bibleLocs.map((l) => ({ id: `loc-${l.id}`, label: l.name, type: "loc" as const, imageUrl: l.generatedImageUrl, prompt: l.appearancePrompt })),
+                ...bibleProps.map((p) => ({ id: `prop-${p.id}`, label: p.name, type: "prop" as const, imageUrl: p.generatedImageUrl, prompt: p.appearancePrompt })),
+              ]
+              if (allEntries.length === 0) return null
+              return (
+                <div className="mt-1.5 flex flex-wrap items-center gap-1">
+                  {allEntries.map((entry) => {
+                    const isOff = excluded.has(entry.id)
+                    return (
+                      <div key={entry.id} className="group/pill relative">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            const next = new Set(excluded)
+                            if (isOff) next.delete(entry.id)
+                            else next.add(entry.id)
+                            onUpdate({ excludedBibleIds: Array.from(next) })
+                          }}
+                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] transition-colors ${
+                            isOff
+                              ? "bg-white/3 text-white/20 line-through"
+                              : entry.type === "char" ? "bg-[#D4A853]/10 text-[#D4A853]/80"
+                              : entry.type === "loc" ? "bg-emerald-500/10 text-emerald-400/70"
+                              : "bg-sky-500/10 text-sky-400/70"
+                          }`}
+                        >
+                          {entry.imageUrl && <span className="inline-block h-1.5 w-1.5 rounded-full bg-current opacity-60" />}
+                          {entry.label}
+                        </button>
+                        {/* Hover preview */}
+                        <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 -translate-x-1/2 rounded-lg border border-white/10 bg-black/90 p-1.5 opacity-0 shadow-xl backdrop-blur-xl transition-opacity group-hover/pill:opacity-100">
+                          {entry.imageUrl ? (
+                            <img src={entry.imageUrl} alt={entry.label} className="h-16 w-16 rounded-md object-cover" />
+                          ) : (
+                            <div className="flex h-16 w-16 items-center justify-center rounded-md bg-white/5 text-[8px] text-white/30">No image</div>
+                          )}
+                          <p className="mt-1 max-w-[120px] truncate text-center text-[8px] text-white/50">{entry.prompt || entry.label}</p>
+                        </div>
+                      </div>
+                    )
+                  })}
+                  {/* Smart Scan — find props from shot text */}
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); onSmartScan() }}
+                    disabled={isScanning || !shot.caption.trim()}
+                    className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/8 text-white/25 transition-colors hover:bg-[#D4A853]/10 hover:text-[#D4A853]/60 disabled:opacity-30"
+                    title="Smart Scan — найти пропсы в тексте шота"
+                  >
+                    {isScanning ? <Loader2 size={9} className="animate-spin" /> : <Sparkles size={9} />}
+                  </button>
+                  {/* Open Bible for this scene */}
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); onOpenBible() }}
+                    className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/8 text-white/25 transition-colors hover:bg-white/8 hover:text-white/50"
+                    title="Открыть библию сцены"
+                  >
+                    <BookOpen size={9} />
+                  </button>
+                </div>
+              )
+            })()}
             </div>
           </div>
 
           {previewPanel}
+        </div>
+      )}
+
+      {/* ── Expandable prompt block ── */}
+      {!isSingleFieldMode && shot.imagePrompt && (
+        <div className="mt-1.5">
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setPromptExpanded((v) => !v) }}
+            className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1 text-[9px] uppercase tracking-[0.12em] text-white/25 transition-colors hover:bg-white/3 hover:text-white/40"
+          >
+            <ChevronRight size={10} className={`transition-transform ${promptExpanded ? "rotate-90" : ""}`} />
+            Prompt
+            <span className="ml-auto text-[8px] tabular-nums text-white/15">{shot.imagePrompt.length} chars</span>
+          </button>
+          {promptExpanded && (() => {
+            const fullPrompt = buildImagePrompt(shot, bibleChars, bibleLocs, useBoardStore.getState().projectStyle, bibleProps)
+            const displayPrompt = showFullPrompt ? fullPrompt : shot.imagePrompt
+            return (
+              <div className="mt-1 rounded-xl border border-white/6 bg-white/2 px-3 py-2">
+                {showFullPrompt ? (
+                  <DebouncedTextarea
+                    value={fullPrompt}
+                    onCommit={(value) => onUpdate({ imagePrompt: value })}
+                    rows={4}
+                    autoGrow
+                    className="w-full resize-none bg-transparent font-[system-ui] text-[11px] leading-[1.6] text-white/60 outline-none placeholder:text-white/20"
+                    placeholder="Full prompt..."
+                  />
+                ) : (
+                  <DebouncedTextarea
+                    value={shot.imagePrompt}
+                    onCommit={(value) => onUpdate({ imagePrompt: value })}
+                    rows={3}
+                    autoGrow
+                    className="w-full resize-none bg-transparent font-[system-ui] text-[11px] leading-[1.6] text-white/50 outline-none placeholder:text-white/20"
+                    placeholder="Image prompt..."
+                  />
+                )}
+                <div className="mt-2 flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); onGenerate() }}
+                    disabled={isGenerating}
+                    className="flex h-7 items-center gap-1 rounded-md bg-[#D4A853]/15 px-3 text-[9px] uppercase tracking-[0.12em] text-[#D4A853] transition-colors hover:bg-[#D4A853]/25 disabled:opacity-40"
+                  >
+                    {isGenerating ? <Loader2 size={10} className="animate-spin" /> : <Wand2 size={10} />}
+                    Generate
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); setShowFullPrompt((v) => !v) }}
+                    className={`flex h-7 items-center rounded-md px-2 text-[9px] uppercase tracking-[0.12em] transition-colors ${showFullPrompt ? "bg-white/8 text-white/50" : "text-white/20 hover:text-white/40"}`}
+                  >
+                    {showFullPrompt ? "Base" : "Full"}
+                  </button>
+                  {showFullPrompt && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); onUpdate({ imagePrompt: fullPrompt, bakedPrompt: true }); setShowFullPrompt(false) }}
+                      className="flex h-7 items-center rounded-md px-2 text-[9px] uppercase tracking-[0.12em] text-white/20 transition-colors hover:text-white/40"
+                    >
+                      Bake
+                    </button>
+                  )}
+                  {shot.videoPrompt && (
+                    <span className="text-[8px] text-white/15">+ video prompt</span>
+                  )}
+                  <span className="ml-auto text-[8px] tabular-nums text-white/15">{displayPrompt.length} chars</span>
+                </div>
+              </div>
+            )
+          })()}
         </div>
       )}
     </article>
@@ -806,14 +990,14 @@ function DirectorShotCard({
 async function generateShotImage(
   shot: TimelineShot,
 ): Promise<{ objectUrl: string; blobKey: string | null }> {
-  const { characters, locations } = useBibleStore.getState()
+  const { characters, locations, props: bibleProps } = useBibleStore.getState()
   const { selectedImageGenModel, projectStyle } = useBoardStore.getState()
   const selectedModel = selectedImageGenModel || "nano-banana-2"
   const start = Date.now()
   const group = `generate-${shot.id}`
   const references = getShotGenerationReferenceImages(shot, characters, locations)
   const referenceImages = await convertReferenceImagesToDataUrls(references)
-  const { characters: mentionedChars, location } = getReferencedBibleEntries(shot, characters, locations)
+  const { characters: mentionedChars, location } = getReferencedBibleEntries(shot, characters, locations, bibleProps)
   const charRefs = mentionedChars
     .map((character) => `${character.name}: ${character.appearancePrompt || character.description || "no description"}`)
     .join("\n")
@@ -829,7 +1013,7 @@ async function generateShotImage(
     ? "Use the provided reference images as hard visual anchors. Preserve the exact face identity, hair, costume silhouette, proportions, and environment design from those references. Do not redesign recurring characters or locations."
     : ""
   const prompt = [
-    buildImagePrompt(shot, characters, locations, projectStyle),
+    buildImagePrompt(shot, characters, locations, projectStyle, bibleProps),
     referenceInstruction,
   ].filter(Boolean).join("\n\n")
 
@@ -869,11 +1053,20 @@ async function generateShotImage(
 
     if (!response.ok) {
       const err = await response.json().catch(() => ({}))
-      throw new Error(err.error || `Generation failed: ${response.status}`)
+      throw new Error((err as { error?: string }).error || `Generation failed: ${response.status}`)
+    }
+
+    const contentType = response.headers.get("content-type") || ""
+    if (contentType.includes("application/json")) {
+      const err = await response.json()
+      throw new Error((err as { error?: string }).error || "API returned JSON instead of image")
     }
 
     const blob = await response.blob()
-    const blobKey = `shot-thumb-${shot.id}`
+    if (blob.size < 1000) {
+      throw new Error(`Image too small (${blob.size} bytes), likely an error response`)
+    }
+    const blobKey = `shot-thumb-${shot.id}-${Date.now()}`
     const persisted = await trySaveBlob(blobKey, blob)
 
     const projectId = useProjectsStore.getState().activeProjectId || "global"
@@ -948,10 +1141,55 @@ export function StoryboardPanel({
   const reorderShots = useTimelineStore((state) => state.reorderShots)
   const selectedShotId = useTimelineStore((state) => state.selectedShotId)
   const selectShot = useTimelineStore((state) => state.selectShot)
+  const openShotStudioId = useNavigationStore((s) => s.openShotStudioId)
+  const setOpenShotStudioId = useNavigationStore((s) => s.setOpenShotStudioId)
+  const [lightbox, setLightboxRaw] = useState<{ src: string; shotId: string } | null>(null)
+  const setLightbox = useCallback((val: { src: string; shotId: string } | null) => {
+    setLightboxRaw(val)
+    setOpenShotStudioId(val?.shotId ?? null)
+  }, [setOpenShotStudioId])
+  const [lbPlaying, setLbPlaying] = useState(false)
+  const [lbFullscreen, setLbFullscreen] = useState(false)
+  const lbContainerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const handler = () => setLbFullscreen(!!document.fullscreenElement)
+    document.addEventListener("fullscreenchange", handler)
+    return () => document.removeEventListener("fullscreenchange", handler)
+  }, [])
+  const [lbPlayStartTime, setLbPlayStartTime] = useState(0)
+  const [lbPlayBaseMs, setLbPlayBaseMs] = useState(0)
+  const [lbTickMs, setLbTickMs] = useState(0)
+  const lbPlayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lbTickRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // Restore ShotStudio on mount if it was open
+  useEffect(() => {
+    if (openShotStudioId && !lightbox) {
+      const s = shots.find((x) => x.id === openShotStudioId)
+      if (s?.thumbnailUrl) {
+        setLightboxRaw({ src: s.thumbnailUrl, shotId: s.id })
+      } else {
+        setOpenShotStudioId(null)
+      }
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+  const [lightboxTransform, setLightboxTransform] = useState<{ flipH: boolean; flipV: boolean; rotate: number }>({ flipH: false, flipV: false, rotate: 0 })
+  const [cropMode, setCropMode] = useState(false)
+  const [cropRect, setCropRect] = useState<{ x: number; y: number; w: number; h: number } | null>(null)
+  const [cropDrag, setCropDrag] = useState<{ type: "move" | "nw" | "ne" | "sw" | "se"; startX: number; startY: number; startRect: { x: number; y: number; w: number; h: number } } | null>(null)
+  const [cropFreeAspect, setCropFreeAspect] = useState(false)
+  const [colorMatchPicker, setColorMatchPicker] = useState(false)
+  const [colorMatchProgress, setColorMatchProgress] = useState(0) // 0 = idle, 0.01-0.99 = working, 1 = done
+  const lightboxCanvasRef = useRef<HTMLCanvasElement>(null)
+  const lightboxImgRef = useRef<HTMLImageElement>(null)
   const [recentInsertedFrameId, setRecentInsertedFrameId] = useState<string | null>(null)
   const [draggedFrameId, setDraggedFrameId] = useState<string | null>(null)
   const [dropTargetIndex, setDropTargetIndex] = useState<number | null>(null)
-  const [viewMode, setViewMode] = useState<ViewMode>("scenes")
+  const [dropSlotOpen, setDropSlotOpen] = useState<number | null>(null)
+  const dropTimerRef = useRef<number | null>(null)
+  const viewMode = useNavigationStore((s) => s.storyboardViewMode)
+  const setViewMode = useNavigationStore((s) => s.setStoryboardViewMode)
   const [expandedShotId, setExpandedShotId] = useState<string | null>(null)
   const [expandedSceneShotIds, setExpandedSceneShotIds] = useState<Set<string>>(new Set())
   const [editingShotField, setEditingShotField] = useState<{ shotId: string; field: EditableShotField } | null>(null)
@@ -960,6 +1198,8 @@ export function StoryboardPanel({
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set())
   const [promptLabShotId, setPromptLabShotId] = useState<string | null>(null)
   const [enhancingIds, setEnhancingIds] = useState<Set<string>>(new Set())
+  const [buildingPromptIds, setBuildingPromptIds] = useState<Set<string>>(new Set())
+  const [scanningIds, setScanningIds] = useState<Set<string>>(new Set())
   const [pendingActionFocusShotId, setPendingActionFocusShotId] = useState<string | null>(null)
   const [isSplitScreen, setIsSplitScreen] = useState(false)
   const [directorFieldVisibility, setDirectorFieldVisibility] = useState<DirectorFieldVisibility>("all")
@@ -983,14 +1223,72 @@ export function StoryboardPanel({
   const isLucBessonBreakdownMode = workflowProfile === "legacy-luc-besson" && !!lucBessonProfile
   const characters = useBibleStore((state) => state.characters)
   const locations = useBibleStore((state) => state.locations)
+  const bibleProps = useBibleStore((state) => state.props)
   const updateDirectorVision = useBibleStore((state) => state.updateDirectorVision)
+  const [bibleBubbleSceneId, setBibleBubbleSceneId] = useState<string | null>(null)
   const cardScale = 90
-  const frames = useMemo(() => shots.map((shot, index) => timelineShotToStoryboardView(shot, index)), [shots])
+  // Sort shots by scene order then by shot order within scene
+  const sortedShots = useMemo(() => {
+    const sceneOrder = new Map<string, number>()
+    scenes.forEach((s, i) => sceneOrder.set(s.id, i))
+    return [...shots].sort((a, b) => {
+      const sa = sceneOrder.get(a.sceneId || "") ?? 999
+      const sb = sceneOrder.get(b.sceneId || "") ?? 999
+      if (sa !== sb) return sa - sb
+      return a.order - b.order
+    })
+  }, [shots, scenes])
+  const frames = useMemo(() => sortedShots.map((shot, index) => timelineShotToStoryboardView(shot, index)), [sortedShots])
+
+  // Build "S1.01" labels: scene number + shot index within scene
+  const shotLabel = useMemo(() => {
+    const sceneOrder = new Map<string, number>()
+    scenes.forEach((s, i) => sceneOrder.set(s.id, i + 1))
+    const countPerScene = new Map<string, number>()
+    const labels = new Map<string, string>()
+    for (const shot of sortedShots) {
+      const sid = shot.sceneId || ""
+      const sceneNum = sceneOrder.get(sid) ?? 0
+      const shotInScene = (countPerScene.get(sid) || 0) + 1
+      countPerScene.set(sid, shotInScene)
+      labels.set(shot.id, sceneNum > 0
+        ? `S${sceneNum}.${String(shotInScene).padStart(2, "0")}`
+        : `Shot ${String(shotInScene).padStart(2, "0")}`)
+    }
+    return (shotId: string) => labels.get(shotId) || "Shot"
+  }, [sortedShots, scenes])
+
+  // Setup grouping: same shotSize+cameraMotion within a scene = same Setup letter
+  const setupLabel = useMemo(() => {
+    const labels = new Map<string, string>()
+    const LETTERS = "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    // Group shots by scene
+    const shotsByScene = new Map<string, typeof shots>()
+    for (const shot of sortedShots) {
+      const sid = shot.sceneId || "_none"
+      const arr = shotsByScene.get(sid) || []
+      arr.push(shot)
+      shotsByScene.set(sid, arr)
+    }
+    for (const sceneShots of shotsByScene.values()) {
+      const setupKeys = new Map<string, string>() // "Wide|Static" → "A"
+      let nextLetter = 0
+      for (const shot of sceneShots) {
+        const key = `${(shot.shotSize || "").toLowerCase().trim()}|${(shot.cameraMotion || "").toLowerCase().trim()}`
+        if (!setupKeys.has(key)) {
+          setupKeys.set(key, LETTERS[nextLetter % 26] || "?")
+          nextLetter++
+        }
+        labels.set(shot.id, `Setup ${setupKeys.get(key)}`)
+      }
+    }
+    return (shotId: string) => labels.get(shotId) || ""
+  }, [sortedShots])
   const totalShotDurationMs = useMemo(() => getTotalDuration(shots), [shots])
   const shotsBySceneId = useMemo(() => {
     const buckets = new Map<string, TimelineShot[]>()
 
-    for (const shot of shots) {
+    for (const shot of sortedShots) {
       if (!shot.sceneId) continue
       const existing = buckets.get(shot.sceneId)
       if (existing) {
@@ -1005,6 +1303,7 @@ export function StoryboardPanel({
   const scenario = useScriptStore((state) => state.scenario)
   const [jenkinsLoading, setJenkinsLoading] = useState(false)
   const [breakdownLoadingSceneId, setBreakdownLoadingSceneId] = useState<string | null>(null)
+  const [breakdownStage, setBreakdownStage] = useState<{ progress: number; message: string }>({ progress: 0, message: "" })
   const [promptLoadingSceneId, setPromptLoadingSceneId] = useState<string | null>(null)
   const [configPanelOpen, setConfigPanelOpen] = useState(false)
   const [videoGeneratingIds, setVideoGeneratingIds] = useState<Set<string>>(new Set())
@@ -1107,9 +1406,8 @@ export function StoryboardPanel({
     if (!text || jenkinsLoading) return
     setJenkinsLoading(true)
     try {
-      const bible = buildBreakdownBibleContext(characters, locations)
-      const breakdownConfig = useBreakdownConfigStore.getState().getConfigForScene("global")
-      const { shots: jenkinsShots, diagnostics } = await breakdownScene(text, { bible, style: projectStyle, config: breakdownConfig })
+      const bible = buildBreakdownBibleContext(characters, locations, bibleProps)
+      const { shots: jenkinsShots, diagnostics } = await breakdownSceneFincher(text, { bible, style: projectStyle })
 
       if (diagnostics.usedFallback && shots.length > 0) {
         const warning = "Breakdown switched to fallback mode. Existing storyboard shots were preserved to avoid overwriting the stronger result."
@@ -1164,24 +1462,47 @@ export function StoryboardPanel({
 
     if (breakdownLoadingSceneId) return
     setBreakdownLoadingSceneId(scene.id)
+
+    // Animated progress stages
+    const stages = [
+      { progress: 0.05, message: "Читаю сцену..." },
+      { progress: 0.12, message: "Погружаюсь в атмосферу..." },
+      { progress: 0.22, message: "Анализирую драматургию..." },
+      { progress: 0.32, message: "Разбиваю на действия..." },
+      { progress: 0.42, message: "Выстраиваю пространство сцены..." },
+      { progress: 0.52, message: "Ищу режиссёрское решение..." },
+      { progress: 0.62, message: "Проверяю допустимые границы..." },
+      { progress: 0.72, message: "Планирую кадры..." },
+      { progress: 0.82, message: "Слежу за непрерывностью..." },
+      { progress: 0.90, message: "Сочиняю визуальные промпты..." },
+    ]
+    let stageIdx = 0
+    setBreakdownStage(stages[0])
+    const progressTimer = setInterval(() => {
+      stageIdx++
+      if (stageIdx < stages.length) {
+        setBreakdownStage(stages[stageIdx])
+      }
+    }, 3200)
+
     try {
       const sceneText = scene.blockIds
         .map((bid) => scriptBlocks.find((b) => b.id === bid)?.text)
         .filter(Boolean)
         .join("\n")
       if (!sceneText.trim()) {
+        clearInterval(progressTimer)
+        setBreakdownStage({ progress: 0, message: "" })
         setBreakdownWarning(`Сцена ${scene.title} пустая. Для breakdown нужен текст внутри scene blocks.`)
         return
       }
-      const bible = buildBreakdownBibleContext(characters, locations)
-      const breakdownConfig = useBreakdownConfigStore.getState().getConfigForScene(scene.id)
-      const { shots: jenkinsShots, diagnostics } = await breakdownScene(sceneText, {
+      const bible = buildBreakdownBibleContext(characters, locations, bibleProps)
+      const { shots: jenkinsShots, diagnostics } = await breakdownSceneFincher(sceneText, {
         sceneId: scene.id,
-        blockIds: scene.blockIds,
         bible,
         style: projectStyle,
-        config: breakdownConfig,
       })
+      clearInterval(progressTimer)
 
       if (jenkinsShots.length === 0) {
         const warning = `Breakdown для сцены ${scene.title} вернул 0 shots. Проверь текст сцены и Bible context.`
@@ -1199,12 +1520,15 @@ export function StoryboardPanel({
       if (useBreakdownConfigStore.getState().autoPromptBuild) {
         const sceneShots = useTimelineStore.getState().shots.filter((s) => s.sceneId === scene.id).sort((a, b) => a.order - b.order)
         if (sceneShots.length > 0) {
-          const promptDrafts = buildScenePromptDrafts(sceneShots, characters, locations, projectStyle)
+          const promptDrafts = buildScenePromptDrafts(sceneShots, characters, locations, projectStyle, bibleProps)
           promptDrafts.forEach((draft) => {
             updateShot(draft.shotId, { imagePrompt: draft.imagePrompt, videoPrompt: draft.videoPrompt })
           })
         }
       }
+
+      setBreakdownStage({ progress: 1, message: "Готово!" })
+      setTimeout(() => setBreakdownStage({ progress: 0, message: "" }), 1200)
 
       setBreakdownWarning(
         diagnostics.usedFallback
@@ -1212,6 +1536,8 @@ export function StoryboardPanel({
           : null,
       )
     } catch (error) {
+      clearInterval(progressTimer)
+      setBreakdownStage({ progress: 0, message: "" })
       console.error("Scene breakdown error:", error)
       setBreakdownWarning(`Breakdown failed: ${error instanceof Error ? error.message : String(error)}`)
     } finally {
@@ -1231,7 +1557,7 @@ export function StoryboardPanel({
     setPromptLoadingSceneId(scene.id)
 
     try {
-      const promptDrafts = buildScenePromptDrafts(sceneShots, characters, locations, projectStyle)
+      const promptDrafts = buildScenePromptDrafts(sceneShots, characters, locations, projectStyle, bibleProps)
 
       promptDrafts.forEach((draft) => {
         updateShot(draft.shotId, {
@@ -1328,15 +1654,17 @@ export function StoryboardPanel({
   }, [createShotForScene])
 
   const handleGenerateImage = useCallback(async (shotId: string) => {
-    const shot = shots.find((s) => s.id === shotId)
+    const shot = useTimelineStore.getState().shots.find((s) => s.id === shotId)
     if (!shot || generatingIds.has(shotId)) return
     setGeneratingIds((prev) => new Set(prev).add(shotId))
     setFailedIds((prev) => { const next = new Set(prev); next.delete(shotId); return next })
     try {
       const result = await generateShotImage(shot)
 
-      const entry = { url: result.objectUrl, blobKey: result.blobKey, timestamp: Date.now() }
-      const history = [...(shot.generationHistory || []), entry]
+      // Read fresh shot from store (not stale closure)
+      const freshShot = useTimelineStore.getState().shots.find((s) => s.id === shotId)
+      const entry = { url: result.objectUrl, blobKey: result.blobKey, timestamp: Date.now(), source: "generate" as const }
+      const history = [...(freshShot?.generationHistory || []), entry]
 
       updateShot(shotId, {
         thumbnailUrl: result.objectUrl,
@@ -1350,7 +1678,7 @@ export function StoryboardPanel({
     } finally {
       setGeneratingIds((prev) => { const next = new Set(prev); next.delete(shotId); return next })
     }
-  }, [shots, generatingIds, updateShot])
+  }, [generatingIds, updateShot])
 
   const handleHistoryNav = useCallback((shotId: string, direction: -1 | 1) => {
     const shot = shots.find((s) => s.id === shotId)
@@ -1368,21 +1696,48 @@ export function StoryboardPanel({
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (!selectedShotId) return
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+
+      // Cmd+F / Ctrl+F — open fullscreen lightbox for selected shot
+      if (e.key === "f" && (e.metaKey || e.ctrlKey) && !lightbox) {
+        e.preventDefault()
+        const sid = selectedShotId
+        if (!sid) return
+        const shot = shots.find((s) => s.id === sid)
+        if (shot?.thumbnailUrl) {
+          setLightbox({ src: shot.thumbnailUrl, shotId: shot.id })
+          setLightboxTransform({ flipH: false, flipV: false, rotate: 0 })
+          // Request fullscreen after lightbox renders
+          setTimeout(() => {
+            lbContainerRef.current?.requestFullscreen().then(() => setLbFullscreen(true)).catch(() => {})
+          }, 100)
+        }
+        return
+      }
+
+      if (!selectedShotId) return
+      if (lightbox) return // lightbox has its own key handler
       if (e.key === "ArrowLeft") { e.preventDefault(); handleHistoryNav(selectedShotId, -1) }
       if (e.key === "ArrowRight") { e.preventDefault(); handleHistoryNav(selectedShotId, 1) }
+      if (e.key === " ") {
+        e.preventDefault()
+        const shot = shots.find((s) => s.id === selectedShotId)
+        if (shot?.thumbnailUrl) {
+          setLightbox({ src: shot.thumbnailUrl, shotId: shot.id })
+          setLightboxTransform({ flipH: false, flipV: false, rotate: 0 })
+        }
+      }
     }
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
-  }, [selectedShotId, handleHistoryNav])
+  }, [selectedShotId, handleHistoryNav, lightbox, shots])
 
   const handleGenerateVideo = useCallback(async (shotId: string) => {
     const shot = shots.find((s) => s.id === shotId)
     if (!shot || videoGeneratingIds.has(shotId)) return
     setVideoGeneratingIds((prev) => new Set(prev).add(shotId))
     try {
-      const videoPrompt = shot.videoPrompt || buildVideoPrompt(shot, characters, locations, projectStyle)
+      const videoPrompt = shot.videoPrompt || buildVideoPrompt(shot, characters, locations, projectStyle, bibleProps)
       console.info("[Video Generate] Shot:", shotId, "Prompt:", videoPrompt.slice(0, 120))
       // TODO: call video generation API when ready
       // For now, save the generated prompt to the shot
@@ -1412,7 +1767,7 @@ export function StoryboardPanel({
     setEditInstruction("")
 
     try {
-      const { characters: chars, locations: locs } = useBibleStore.getState()
+      const { characters: chars, locations: locs, props: propsState } = useBibleStore.getState()
       const { projectStyle: style } = useBoardStore.getState()
       const reEditCfg = useReEditConfigStore.getState().config
       const selectedModel = reEditCfg.model === "auto"
@@ -1448,7 +1803,7 @@ export function StoryboardPanel({
       const allReferenceImages = refs.slice(0, reEditCfg.maxReferenceImages)
 
       // 2. Build re-edit prompt
-      const basePrompt = shot.imagePrompt || buildImagePrompt(shot, chars, locs, style)
+      const basePrompt = shot.imagePrompt || buildImagePrompt(shot, chars, locs, style, propsState)
       const rulesLines = [
         "- Apply the instruction above to modify the shot composition.",
         "- Keep ALL other elements intact: characters, costumes, lighting, environment, color palette, mood.",
@@ -1486,13 +1841,19 @@ export function StoryboardPanel({
       }
 
       const blob = await response.blob()
-      const blobKey = `shot-thumb-${shotId}`
+      const blobKey = `shot-thumb-${shotId}-${Date.now()}`
       const persisted = await trySaveBlob(blobKey, blob)
       const objectUrl = URL.createObjectURL(blob)
+
+      const freshShot = useTimelineStore.getState().shots.find((s) => s.id === shotId)
+      const editEntry = { url: objectUrl, blobKey: persisted ? blobKey : null, timestamp: Date.now(), source: "edit" as const }
+      const editHistory = [...(freshShot?.generationHistory || []), editEntry]
 
       updateShot(shotId, {
         thumbnailUrl: objectUrl,
         thumbnailBlobKey: persisted ? blobKey : null,
+        generationHistory: editHistory,
+        activeHistoryIndex: editHistory.length - 1,
       })
 
       // Add to library
@@ -1521,6 +1882,31 @@ export function StoryboardPanel({
       setEditingIds((prev) => { const next = new Set(prev); next.delete(shotId); return next })
     }
   }, [editOverlayShotId, editInstruction, shots, editingIds, updateShot])
+
+  const handleShotReEditFromOverlay = async (shotId: string, blob: Blob) => {
+    setEditOverlayShotId(null)
+    setEditingIds((prev) => new Set(prev).add(shotId))
+    try {
+      const blobKey = `shot-thumb-${shotId}-${Date.now()}`
+      const persisted = await trySaveBlob(blobKey, blob)
+      const objectUrl = URL.createObjectURL(blob)
+
+      const freshShot = useTimelineStore.getState().shots.find((s) => s.id === shotId)
+      const editEntry = { url: objectUrl, blobKey: persisted ? blobKey : null, timestamp: Date.now(), source: "edit" as const }
+      const editHistory = [...(freshShot?.generationHistory || []), editEntry]
+
+      updateShot(shotId, {
+        thumbnailUrl: objectUrl,
+        thumbnailBlobKey: persisted ? blobKey : null,
+        generationHistory: editHistory,
+        activeHistoryIndex: editHistory.length - 1,
+      })
+    } catch (error) {
+      console.error("Shot re-edit error:", error)
+    } finally {
+      setEditingIds((prev) => { const next = new Set(prev); next.delete(shotId); return next })
+    }
+  }
 
   const handleDirectorShotUpdate = useCallback((shotId: string, patch: Partial<TimelineShot>) => {
     updateShot(shotId, patch)
@@ -1616,6 +2002,144 @@ export function StoryboardPanel({
     }
   }, [characters, enhancingIds, locations, selectedSceneContext, selectedSceneId, updateShot])
 
+  const handleBuildShotPrompt = useCallback(async (shotArg: TimelineShot) => {
+    if (!shotArg.caption.trim() || buildingPromptIds.has(shotArg.id)) return
+
+    setBuildingPromptIds((prev) => new Set(prev).add(shotArg.id))
+
+    try {
+      const { buildShotPromptsWithAI } = await import("@/lib/promptAI")
+
+      // Read fresh shot from store (debounced fields may have updated)
+      const shot = useTimelineStore.getState().shots.find((s) => s.id === shotArg.id) ?? shotArg
+      const sceneId = shot.sceneId || selectedSceneId || ""
+      const scene = scenes.find((s) => s.id === sceneId)
+
+      const shotChars = characters.filter((c) =>
+        c.sceneIds.includes(sceneId) || shot.caption.toLowerCase().includes(c.name.toLowerCase()),
+      )
+      const shotLocs = locations.filter((l) => l.sceneIds.includes(sceneId))
+      const shotProps = bibleProps.filter((p) =>
+        p.sceneIds.includes(sceneId) || shot.caption.toLowerCase().includes(p.name.toLowerCase()),
+      )
+
+      const result = await buildShotPromptsWithAI({
+        sceneTitle: scene?.title,
+        caption: shot.caption,
+        directorNote: shot.directorNote,
+        cameraNote: shot.cameraNote,
+        shotSize: shot.shotSize,
+        cameraMotion: shot.cameraMotion,
+        characters: shotChars,
+        locations: shotLocs,
+        props: shotProps,
+        projectStyle,
+        storyHistory: useBibleStore.getState().storyHistory,
+        directorVision: useBibleStore.getState().directorVision,
+        excludedBibleIds: shot.excludedBibleIds,
+      })
+
+      // Fill all fields — only overwrite empty ones for director/camera
+      const patch: Partial<TimelineShot> = {
+        imagePrompt: result.imagePrompt,
+        videoPrompt: result.videoPrompt,
+        bakedPrompt: false,
+      }
+      if (!shot.directorNote.trim() && result.directorNote) patch.directorNote = result.directorNote
+      if (!shot.cameraNote.trim() && result.cameraNote) patch.cameraNote = result.cameraNote
+      updateShot(shotArg.id, patch)
+    } catch (err) {
+      console.error("Build prompt error:", err)
+    } finally {
+      setBuildingPromptIds((prev) => {
+        const next = new Set(prev)
+        next.delete(shotArg.id)
+        return next
+      })
+    }
+  }, [buildingPromptIds, characters, locations, bibleProps, projectStyle, scenes, selectedSceneId, updateShot])
+
+  const handleShotSmartScan = useCallback(async (shot: TimelineShot) => {
+    if (!shot.caption.trim() || scanningIds.has(shot.id)) return
+    const sceneId = shot.sceneId || selectedSceneId || ""
+
+    setScanningIds((prev) => new Set(prev).add(shot.id))
+    try {
+      const shotText = [shot.caption, shot.directorNote, shot.cameraNote, shot.visualDescription].filter(Boolean).join("\n")
+
+      const existingNames = [
+        ...characters.filter((c) => c.sceneIds.includes(sceneId)).map((c) => c.name),
+        ...locations.filter((l) => l.sceneIds.includes(sceneId)).map((l) => l.name),
+        ...bibleProps.filter((p) => p.sceneIds.includes(sceneId)).map((p) => p.name),
+      ]
+
+
+      const res = await fetch("/api/chat", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          messages: [{
+            role: "user",
+            content: `Ты — ассистент реквизитора для кино. Найди ВСЕ физические предметы в тексте кадра.
+
+ПРАВИЛА:
+- Любой предмет, который можно потрогать или увидеть — это реквизит: мебель, одежда, еда, документы, техника, аксессуары и т.д.
+- Если предмет подразумевается действием — тоже добавь (например "пишет" → ручка, бумага)
+- НЕ добавляй людей и локации
+- НЕ дублируй те что уже есть (учитывай синонимы)
+
+Уже есть: ${existingNames.join(", ") || "ничего"}
+
+Текст кадра:
+${shotText}
+
+Верни JSON массив:
+[{"name": "название предмета", "appearancePrompt": "визуальное описание: материал, цвет, форма, состояние, эпоха"}]
+
+ВАЖНО: Верни ТОЛЬКО JSON массив, без markdown, без пояснений. Если нечего — [].`,
+          }],
+          temperature: 0.3,
+        }),
+      })
+
+      if (!res.ok) return
+      const reader = res.body?.getReader()
+      if (!reader) return
+      const chunks: string[] = []
+      // eslint-disable-next-line no-constant-condition
+      while (true) { const { done, value } = await reader.read(); if (done) break; chunks.push(new TextDecoder().decode(value)) }
+      const raw = chunks.join("").trim()
+
+      const jsonMatch = raw.match(/\[[\s\S]*\]/)
+      if (!jsonMatch) return
+
+      const parsed = JSON.parse(jsonMatch[0]) as Array<{ name: string; appearancePrompt: string }>
+      if (!Array.isArray(parsed)) return
+
+
+      const { addProp } = useBibleStore.getState()
+      for (const item of parsed) {
+        if (!item.name?.trim() || !item.appearancePrompt?.trim()) continue
+        const id = item.name.toLowerCase().replace(/\s+/g, "-").replace(/[^a-zа-яё0-9-]/gi, "")
+        addProp({
+          id,
+          name: item.name,
+          description: "",
+          sceneIds: [sceneId],
+          referenceImages: [],
+          canonicalImageId: null,
+          generatedImageUrl: null,
+          imageBlobKey: null,
+          appearancePrompt: item.appearancePrompt,
+        })
+      }
+    } catch (err) {
+      console.error("Shot smart scan error:", err)
+    } finally {
+      setScanningIds((prev) => { const n = new Set(prev); n.delete(shot.id); return n })
+    }
+  }, [scanningIds, characters, locations, bibleProps, selectedSceneId])
+
   const nextFrameLabel = `shot ${frames.length + 1}`
 
   useEffect(() => {
@@ -1635,13 +2159,47 @@ export function StoryboardPanel({
     setDropTargetIndex(null)
   }
 
-  const handleDragStart = (frameId: string) => {
+  const handleDragStart = (frameId: string, e: React.DragEvent) => {
     setDraggedFrameId(frameId)
+    setDropSlotOpen(null)
+    setDropTargetIndex(null)
+    // Create a clean ghost — semi-transparent clone
+    const el = e.currentTarget as HTMLElement
+    const ghost = el.cloneNode(true) as HTMLElement
+    ghost.style.width = `${el.offsetWidth}px`
+    ghost.style.opacity = "0.85"
+    ghost.style.transform = "scale(1.04) rotate(1.5deg)"
+    ghost.style.boxShadow = "0 30px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(212,168,83,0.3)"
+    ghost.style.borderRadius = "14px"
+    ghost.style.position = "fixed"
+    ghost.style.top = "-9999px"
+    ghost.style.left = "-9999px"
+    ghost.style.zIndex = "99999"
+    ghost.style.pointerEvents = "none"
+    document.body.appendChild(ghost)
+    e.dataTransfer.setDragImage(ghost, el.offsetWidth / 2, 30)
+    requestAnimationFrame(() => document.body.removeChild(ghost))
   }
 
   const handleDragEnd = () => {
+    if (draggedFrameId && dropTargetIndex !== null) {
+      reorderShot(draggedFrameId, dropTargetIndex)
+    }
     setDraggedFrameId(null)
     setDropTargetIndex(null)
+    setDropSlotOpen(null)
+  }
+
+  const handleDragOverIndex = (index: number) => {
+    if (!draggedFrameId) return
+    if (dropTargetIndex === index) return
+    setDropTargetIndex(index)
+    // Immediately open slot for Apple-style instant feedback
+    setDropSlotOpen(index)
+  }
+
+  const handleDragLeaveSlot = () => {
+    // Don't clear immediately — only clear on dragEnd or new dragOver
   }
 
   const handleDropAtIndex = (index: number) => {
@@ -1649,12 +2207,13 @@ export function StoryboardPanel({
     reorderShot(draggedFrameId, index)
     setDraggedFrameId(null)
     setDropTargetIndex(null)
+    setDropSlotOpen(null)
   }
 
   const minCardWidth = isExpanded
-    ? Math.round(248 + ((cardScale - 72) / 32) * 74)
-    : Math.round(224 + ((cardScale - 72) / 32) * 30)
-  const cardGap = isExpanded ? 14 : 12
+    ? Math.round(298 + ((cardScale - 72) / 32) * 88)
+    : Math.round(269 + ((cardScale - 72) / 32) * 36)
+  const cardGap = isExpanded ? 17 : 14
   const sceneTitle = selectedScene?.title || "Storyboard Workspace"
   const isDirectorWorkflow = viewMode === "scenes" || viewMode === "director"
   const isDuoMode = isExpanded && isSplitScreen
@@ -1692,9 +2251,9 @@ export function StoryboardPanel({
           const isGeneratingPrompts = promptLoadingSceneId === scene.id
 
           return (
-            <div key={scene.id} className="flex flex-col gap-3">
+            <div key={scene.id} className="flex flex-col">
               <div
-                className={`flex items-stretch gap-3 rounded-lg px-3 py-2 text-left transition-colors cursor-pointer ${
+                className={`relative flex items-stretch gap-3 rounded-lg px-3 py-2 text-left transition-colors cursor-pointer overflow-hidden ${
                   isSelected
                     ? "bg-white/5 border-l-2"
                     : "hover:bg-white/3 border-l-2 border-transparent"
@@ -1716,56 +2275,107 @@ export function StoryboardPanel({
                   }
                 }}
               >
+                {/* Breakdown progress bar — full width behind content */}
+                {isBreaking && breakdownStage.progress > 0 && (
+                  <div className="absolute inset-0 z-0 pointer-events-none">
+                    <div
+                      className="h-full rounded-lg"
+                      style={{
+                        width: `${breakdownStage.progress * 100}%`,
+                        background: "linear-gradient(90deg, rgba(212,168,83,0.08) 0%, rgba(212,168,83,0.18) 60%, rgba(212,168,83,0.06) 100%)",
+                        transition: "width 1.2s cubic-bezier(0.22, 1, 0.36, 1)",
+                      }}
+                    />
+                  </div>
+                )}
+
                 <div
-                  className="w-1 shrink-0 rounded-full"
+                  className="z-[1] w-1 shrink-0 rounded-full"
                   style={{ backgroundColor: scene.color }}
                 />
-                <div className="min-w-0 flex-1">
+                <div className="z-[1] min-w-0 flex-1">
                   <p className="text-[10px] uppercase tracking-[0.18em] text-[#8D919B]">
                     Scene {scene.index}
                   </p>
                   <p className="mt-0.5 truncate text-[13px] font-medium text-[#E7E3DC]">
                     {scene.title}
                   </p>
-                  <div className="mt-1 flex items-center gap-3 text-[10px] text-[#7F8590]">
-                    <span>{scene.blockIds.length} blocks</span>
-                    <span>{relatedShots.length} shots</span>
-                    {relatedShots.length > 0 ? <span>{isShotsExpanded ? "shots open" : "double click to open"}</span> : null}
-                  </div>
+                  {isBreaking && breakdownStage.message ? (
+                    <p className="mt-1 text-[11px] text-[#D4A853] animate-pulse">
+                      {breakdownStage.message}
+                    </p>
+                  ) : (
+                    <div className="mt-1 flex items-center gap-3 text-[10px] text-[#7F8590]">
+                      <span>{scene.blockIds.length} blocks</span>
+                      <span>{relatedShots.length} shots</span>
+                      {relatedShots.length > 0 ? <span>{isShotsExpanded ? "shots open" : "double click to open"}</span> : null}
+                    </div>
+                  )}
                 </div>
-                <div className="flex shrink-0 items-center gap-1">
-                  <span className="rounded-md border border-white/8 bg-white/3 px-2 py-1 text-[9px] uppercase tracking-[0.14em] text-[#9FA4AE]">
-                    Enter
-                  </span>
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); handleSceneQuickAdd(scene) }}
-                    className="flex h-7 w-7 items-center justify-center rounded-md border border-[#D4A853]/22 bg-[#D4A853]/8 text-[#DAB56A] transition-colors hover:bg-[#D4A853]/16 hover:text-[#E8C98A]"
-                    aria-label={`Create shot for scene ${scene.index}`}
-                    title="Create shot for this scene"
-                  >
-                    <Plus size={12} />
-                  </button>
+                <div className="z-[1] flex shrink-0 items-center gap-1 relative">
+                  {!isBreaking && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setBibleBubbleSceneId(bibleBubbleSceneId === scene.id ? null : scene.id)
+                        }}
+                        className={`flex h-6 w-6 items-center justify-center rounded-md transition-colors ${
+                          bibleBubbleSceneId === scene.id
+                            ? "bg-[#D4A853]/15 text-[#D4A853]"
+                            : "text-[#7F8590] hover:bg-white/5 hover:text-white"
+                        }`}
+                        aria-label={`Bible for scene ${scene.index}`}
+                        title="Scene Bible"
+                      >
+                        <BookOpen size={10} />
+                      </button>
+                      <span className="rounded-md border border-white/8 bg-white/3 px-2 py-1 text-[9px] uppercase tracking-[0.14em] text-[#9FA4AE]">
+                        Enter
+                      </span>
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); handleSceneQuickAdd(scene) }}
+                        className="flex h-7 w-7 items-center justify-center rounded-md border border-[#D4A853]/22 bg-[#D4A853]/8 text-[#DAB56A] transition-colors hover:bg-[#D4A853]/16 hover:text-[#E8C98A]"
+                        aria-label={`Create shot for scene ${scene.index}`}
+                        title="Create shot for this scene"
+                      >
+                        <Plus size={12} />
+                      </button>
+                    </>
+                  )}
                   <button
                     type="button"
                     onClick={(e) => { e.stopPropagation(); handleSceneBreakdown(scene) }}
                     disabled={isBreaking}
-                    className="flex h-6 items-center gap-1 rounded-md px-1.5 text-[9px] uppercase tracking-[0.12em] text-[#7F8590] transition-colors hover:bg-white/5 hover:text-white disabled:opacity-40"
+                    className={`flex h-6 items-center gap-1 rounded-md px-1.5 text-[9px] uppercase tracking-[0.12em] transition-colors ${
+                      isBreaking
+                        ? "text-[#D4A853]"
+                        : "text-[#7F8590] hover:bg-white/5 hover:text-white"
+                    } disabled:cursor-default`}
                     aria-label={`${isLucBessonBreakdownMode ? "Luc Besson breakdown" : "Breakdown"} scene ${scene.index}`}
                   >
                     {isBreaking ? <Loader2 size={10} className="animate-spin" /> : <Clapperboard size={10} />}
-                    {isLucBessonBreakdownMode ? (relatedShots.length > 0 ? "Re-Besson" : "Besson") : (relatedShots.length > 0 ? "Re-breakdown" : "Breakdown")}
+                    {isBreaking
+                      ? `${Math.round(breakdownStage.progress * 100)}%`
+                      : isLucBessonBreakdownMode
+                        ? (relatedShots.length > 0 ? "Re-Besson" : "Besson")
+                        : (relatedShots.length > 0 ? "Re-breakdown" : "Breakdown")
+                    }
                   </button>
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); handleScenePromptGeneration(scene) }}
-                    disabled={isGeneratingPrompts || relatedShots.length === 0}
-                    className="flex h-6 items-center gap-1 rounded-md px-1.5 text-[9px] uppercase tracking-[0.12em] text-[#CBB892] transition-colors hover:bg-[#D4A853]/10 hover:text-[#E7D1A4] disabled:opacity-40"
-                    aria-label={`Generate prompts for scene ${scene.index}`}
-                  >
-                    {isGeneratingPrompts ? <Loader2 size={10} className="animate-spin" /> : <Wand2 size={10} />}
-                    Prompts
-                  </button>
+                  {!isBreaking && (
+                    <button
+                      type="button"
+                      onClick={(e) => { e.stopPropagation(); handleScenePromptGeneration(scene) }}
+                      disabled={isGeneratingPrompts || relatedShots.length === 0}
+                      className="flex h-6 items-center gap-1 rounded-md px-1.5 text-[9px] uppercase tracking-[0.12em] text-[#CBB892] transition-colors hover:bg-[#D4A853]/10 hover:text-[#E7D1A4] disabled:opacity-40"
+                      aria-label={`Generate prompts for scene ${scene.index}`}
+                    >
+                      {isGeneratingPrompts ? <Loader2 size={10} className="animate-spin" /> : <Wand2 size={10} />}
+                      Prompts
+                    </button>
+                  )}
                 </div>
               </div>
 
@@ -1779,9 +2389,13 @@ export function StoryboardPanel({
                       selected={selectedShotId === shot.id}
                       canDuplicate={relatedShots.length < MAX_DIRECTOR_SHOTS_PER_SCENE}
                       isEnhancing={enhancingIds.has(shot.id)}
+                      isBuilding={buildingPromptIds.has(shot.id)}
                       autoFocusAction={pendingActionFocusShotId === shot.id}
                       showThumbnail={!isDuoMode}
                       fieldVisibility={directorFieldVisibility}
+                      bibleChars={characters.filter((c) => c.sceneIds.includes(scene.id))}
+                      bibleLocs={locations.filter((l) => l.sceneIds.includes(scene.id))}
+                      bibleProps={bibleProps.filter((p) => p.sceneIds.includes(scene.id))}
                       cardRef={bindDirectorShotCardRef(shot.id)}
                       onSelect={() => {
                         selectScene(scene.id)
@@ -1789,6 +2403,17 @@ export function StoryboardPanel({
                       }}
                       onUpdate={(patch) => handleDirectorShotUpdate(shot.id, patch)}
                       onEnhance={() => void handleEnhanceDirectorShot(shot)}
+                      onBuild={() => void handleBuildShotPrompt(shot)}
+                      onOpenBible={() => setBibleBubbleSceneId(scene.id)}
+                      onSmartScan={() => void handleShotSmartScan(shot)}
+                      isScanning={scanningIds.has(shot.id)}
+                      onGenerate={() => void handleGenerateImage(shot.id)}
+                      isGenerating={generatingIds.has(shot.id)}
+                      onOpenStudio={() => {
+                        if (shot.thumbnailUrl) {
+                          setLightbox({ src: shot.thumbnailUrl, shotId: shot.id })
+                        }
+                      }}
                       onDelete={() => removeShot(shot.id)}
                       onDuplicate={() => handleDuplicateSceneShot(shot)}
                     />
@@ -1804,64 +2429,56 @@ export function StoryboardPanel({
 
   const workspaceChrome = (
     <div className={isDuoMode ? "sticky top-0 z-30 bg-[#0E1016]" : ""}>
-      <div className="border-b border-white/6 px-4 py-3 text-[#E5E0DB]">
-        <div className="flex flex-wrap items-center justify-between gap-3 text-[#9FA4AE]">
-          <div className="flex flex-wrap items-center gap-2">
+      <div className="border-b border-white/6 px-5 py-3 text-[#E5E0DB]">
+        <div className="flex flex-wrap items-center justify-between gap-4 text-[#9FA4AE]">
+          <div className="flex flex-wrap items-center gap-2.5">
             <button
               type="button"
               onClick={() => setViewMode("scenes")}
-              className={`flex items-center gap-1 rounded-md px-2 py-1 text-[10px] uppercase tracking-[0.14em] transition-colors ${isDirectorWorkflow ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] uppercase tracking-[0.14em] transition-colors ${isDirectorWorkflow ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
             >
-              <Camera size={10} />
+              <Camera size={13} />
               Director Cut
             </button>
             <button
               type="button"
               onClick={() => setViewMode("board")}
-              className={`flex items-center gap-1 rounded-md px-2 py-1 text-[10px] uppercase tracking-[0.14em] transition-colors ${viewMode === "board" ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] uppercase tracking-[0.14em] transition-colors ${viewMode === "board" ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
             >
-              <Grid size={10} />
+              <Grid size={13} />
               Board
             </button>
             <button
               type="button"
               onClick={() => setViewMode("list")}
-              className={`flex items-center gap-1 rounded-md px-2 py-1 text-[10px] uppercase tracking-[0.14em] transition-colors ${viewMode === "list" ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] uppercase tracking-[0.14em] transition-colors ${viewMode === "list" ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
             >
-              <List size={10} />
+              <List size={13} />
               Shot List
             </button>
             <button
               type="button"
               onClick={() => setViewMode("inspector")}
-              className={`flex items-center gap-1 rounded-md px-2 py-1 text-[10px] uppercase tracking-[0.14em] transition-colors ${viewMode === "inspector" ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] uppercase tracking-[0.14em] transition-colors ${viewMode === "inspector" ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
             >
-              <BookOpen size={10} />
+              <BookOpen size={13} />
               Inspector
             </button>
             <button
               type="button"
               onClick={() => setViewMode("prompt")}
-              className={`flex items-center gap-1 rounded-md px-2 py-1 text-[10px] uppercase tracking-[0.14em] transition-colors ${viewMode === "prompt" ? "bg-[#D4A853]/15 border border-[#D4A853]/30 text-[#E6C887]" : "text-white/40 hover:text-white/60"}`}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] uppercase tracking-[0.14em] transition-colors ${viewMode === "prompt" ? "bg-[#D4A853]/15 border border-[#D4A853]/30 text-[#E6C887]" : "text-white/40 hover:text-white/60"}`}
             >
-              <Wand2 size={10} />
+              <Wand2 size={13} />
               Prompt Lab
-            </button>
-            <button
-              type="button"
-              onClick={handleToggleSplitScreen}
-              className={`flex items-center gap-1 rounded-md border px-2 py-1 text-[10px] uppercase tracking-[0.14em] transition-colors ${isDuoMode ? "border-[#D4A853]/35 bg-[#D4A853]/12 text-[#E6C887]" : "border-white/10 bg-white/3 text-white/50 hover:bg-white/6 hover:text-white/80"}`}
-            >
-              <Film size={10} />
-              {isDuoMode ? "Close Split Screen" : "Split Screen"}
             </button>
           </div>
 
-          <div className="flex items-center gap-2 text-[10px] uppercase tracking-[0.16em] text-[#7F8590]">
+          <div className="flex items-center gap-2.5 text-[12px] uppercase tracking-[0.16em] text-[#7F8590]">
             <span>{scenes.length} scenes</span>
-            <span className="h-3 w-px bg-white/8" />
+            <span className="h-3.5 w-px bg-white/8" />
             <span>{frames.length} frames</span>
-            <span className="h-3 w-px bg-white/8" />
+            <span className="h-3.5 w-px bg-white/8" />
             <span>{formatSummaryTime(totalShotDurationMs)}</span>
           </div>
         </div>
@@ -1877,7 +2494,23 @@ export function StoryboardPanel({
 
   const directorWorkspaceContent = parsedScenesContent
 
+  const bibleBubbleScene = bibleBubbleSceneId ? scenes.find((s) => s.id === bibleBubbleSceneId) : null
+
   return (
+    <>
+    {bibleBubbleScene && (
+      <SceneBibleBubble
+        sceneId={bibleBubbleScene.id}
+        sceneIndex={bibleBubbleScene.index}
+        sceneTitle={bibleBubbleScene.title}
+        sceneBlockIds={bibleBubbleScene.blockIds}
+        characters={characters}
+        locations={locations}
+        props={bibleProps}
+        blocks={scriptBlocks}
+        onClose={() => setBibleBubbleSceneId(null)}
+      />
+    )}
     <aside
       aria-hidden={!isOpen}
       className="absolute inset-y-0 right-0 z-3 overflow-hidden transition-[width,transform,opacity] duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]"
@@ -1898,112 +2531,98 @@ export function StoryboardPanel({
           boxShadow: "inset 0 1px 0 rgba(255,255,255,0.03)",
         }}
       >
-        <div className="flex items-center justify-between border-b border-white/8 px-4 py-3 text-[#E5E0DB]">
-          <div className="min-w-0 pr-4">
-            <p className="text-[10px] uppercase tracking-[0.22em] text-[#8D919B]">Scene Engine</p>
-            <p className="mt-1 truncate text-[16px] font-medium tracking-[0.01em] text-[#E7E3DC]">{sceneTitle}</p>
+        <div className="flex items-center justify-between border-b border-white/8 px-5 py-3">
+          {/* Left — scene title */}
+          <div className="min-w-0 pr-5">
+            <p className="truncate text-[17px] font-medium tracking-[0.01em] text-[#E7E3DC]">{sceneTitle}</p>
           </div>
 
+          {/* Center — primary actions */}
           <div className="flex items-center gap-2">
             <button
               type="button"
               onClick={handleJenkinsBreakdown}
               disabled={jenkinsLoading || !scenario.trim()}
-              className="flex items-center gap-1.5 rounded-xl border border-[#D4A853]/22 bg-[#D4A853]/10 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] text-[#E1C489] transition-colors hover:bg-[#D4A853]/16 hover:text-[#F0D7A7] disabled:cursor-not-allowed disabled:opacity-40"
-              aria-label="Jenkins shot breakdown"
+              className="flex items-center gap-2 rounded-lg border border-[#D4A853]/20 bg-[#D4A853]/8 px-4 py-2 text-[12px] uppercase tracking-[0.12em] text-[#D4A853] transition-colors hover:bg-[#D4A853]/14 disabled:opacity-35"
             >
-              {jenkinsLoading ? <Loader2 size={12} className="animate-spin" /> : <Clapperboard size={12} />}
-              {jenkinsLoading ? "Breaking down…" : "Jenkins Breakdown"}
+              {jenkinsLoading ? <Loader2 size={14} className="animate-spin" /> : <Clapperboard size={14} />}
+              Breakdown
             </button>
-            <button
-              type="button"
-              onClick={() => router.push("/bible")}
-              className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] text-[#E5E0DB] transition-colors hover:bg-white/8"
-              aria-label="Open bible page"
-            >
-              <BookOpen size={12} />
-              Bible
-            </button>
-            <button
-              type="button"
-              onClick={() => router.push("/timeline")}
-              className="flex items-center gap-1.5 rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] text-[#E5E0DB] transition-colors hover:bg-white/8"
-              aria-label="Open timeline page"
-            >
-              <Film size={12} />
-              Timeline
-            </button>
+            {lucBessonProfile && (
+              <button
+                type="button"
+                onClick={handleLucBessonBreakdown}
+                className="flex items-center gap-2 rounded-lg border border-[#8b5cf6]/20 bg-[#8b5cf6]/8 px-4 py-2 text-[12px] uppercase tracking-[0.12em] text-[#c4b5fd] transition-colors hover:bg-[#8b5cf6]/14"
+              >
+                <Wand2 size={14} />
+                Fincher
+              </button>
+            )}
 
-            <button
-              type="button"
-              onClick={handleLucBessonBreakdown}
-              disabled={!lucBessonProfile}
-              className="flex items-center gap-1.5 rounded-xl border border-[#8b5cf6]/24 bg-[#8b5cf6]/10 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] text-[#E8DEFF] transition-colors hover:bg-[#8b5cf6]/16 hover:text-white disabled:cursor-not-allowed disabled:opacity-40"
-              aria-label="Apply Luc Besson profile to selected scene"
-            >
-              <Wand2 size={12} />
-              Luc Besson Breakdown
-            </button>
-            <div className="flex items-center gap-1 rounded-xl border border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,0.12)_0%,rgba(255,255,255,0.04)_100%)] px-1 shadow-[inset_0_1px_0_rgba(255,255,255,0.22),0_12px_24px_rgba(0,0,0,0.14)] backdrop-blur-lg">
-              <span className="px-1 text-[8px] uppercase tracking-wider text-white/30">Model:</span>
+            {/* Model selector */}
+            <div className="flex items-center rounded-lg border border-white/8 bg-white/4">
               {IMAGE_GEN_MODELS.map((model) => (
                 <button
                   key={model.id}
                   type="button"
                   onClick={() => setSelectedImageGenModel(model.id)}
                   title={`${model.label} ${model.price}`}
-                  className={`rounded-[10px] px-2 py-1 text-[9px] transition-all duration-300 ${
+                  className={`px-2.5 py-1.5 text-[11px] font-medium transition-all ${
                     selectedImageGenModel === model.id
-                      ? "bg-[linear-gradient(135deg,rgba(228,200,157,0.28),rgba(255,255,255,0.08))] text-[#F2D8AB] shadow-[inset_0_1px_0_rgba(255,244,220,0.24),0_8px_18px_rgba(0,0,0,0.16)]"
-                      : "text-white/40 hover:bg-white/8 hover:text-white/75"
+                      ? "bg-white/8 text-[#D4A853]"
+                      : "text-white/25 hover:text-white/50"
                   }`}
                 >
                   {model.label}
                 </button>
               ))}
             </div>
+
             <ProjectStylePicker projectStyle={projectStyle} setProjectStyle={setProjectStyle} />
+          </div>
+
+          {/* Right — utility */}
+          <div className="flex items-center gap-1.5">
+            <button
+              type="button"
+              onClick={handleToggleSplitScreen}
+              className={`flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[10px] uppercase tracking-[0.1em] transition-colors ${
+                isDuoMode
+                  ? "border-[#D4A853]/25 bg-[#D4A853]/10 text-[#D4A853]"
+                  : "border-white/8 text-white/25 hover:text-white/50"
+              }`}
+              title="Split Screen"
+            >
+              <Film size={13} />
+              Split
+            </button>
             <button
               type="button"
               onClick={() => setConfigPanelOpen((v) => !v)}
-              className={`flex h-8 w-8 items-center justify-center rounded-xl border transition-all duration-300 ${
+              className={`flex h-8 w-8 items-center justify-center rounded-lg border transition-colors ${
                 configPanelOpen
-                  ? "border-[#D4A853]/30 bg-[#D4A853]/15 text-[#E8C778]"
-                  : "border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,0.12)_0%,rgba(255,255,255,0.04)_100%)] text-[#BDAF9F] shadow-[inset_0_1px_0_rgba(255,255,255,0.22),0_12px_24px_rgba(0,0,0,0.14)] backdrop-blur-lg hover:border-white/22 hover:text-white"
+                  ? "border-[#D4A853]/25 bg-[#D4A853]/10 text-[#D4A853]"
+                  : "border-white/8 text-white/25 hover:text-white/50"
               }`}
-              aria-label="Breakdown engine config"
-              title="Breakdown Engine Config"
+              title="Config"
             >
-              <Settings size={15} />
-            </button>
-            <button
-              type="button"
-              className="flex h-8 w-8 items-center justify-center rounded-xl border border-white/12 bg-[linear-gradient(180deg,rgba(255,255,255,0.12)_0%,rgba(255,255,255,0.04)_100%)] text-[#BDAF9F] shadow-[inset_0_1px_0_rgba(255,255,255,0.22),0_12px_24px_rgba(0,0,0,0.14)] backdrop-blur-lg transition-all duration-300 hover:border-white/22 hover:bg-[linear-gradient(180deg,rgba(255,255,255,0.17)_0%,rgba(255,255,255,0.06)_100%)] hover:text-white"
-              aria-label="More storyboard actions"
-            >
-              <MoreHorizontal size={16} />
-            </button>
-            <button
-              type="button"
-              onClick={onToggleExpanded}
-              className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] text-[#E5E0DB] transition-colors hover:bg-white/8"
-            >
-              {isExpanded ? "Collapse" : "Expand"}
+              <Settings size={16} />
             </button>
             <button
               type="button"
               onClick={onClose}
-              className="rounded-xl border border-white/10 bg-white/5 px-3 py-1.5 text-[10px] uppercase tracking-[0.16em] text-[#E5E0DB] transition-colors hover:bg-white/8"
+              className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/8 text-white/25 transition-colors hover:text-white/50"
+              title="Close"
             >
-              Close
+              <X size={16} />
             </button>
           </div>
         </div>
 
         {configPanelOpen && (
-          <div className="border-b border-white/8 bg-[#0D0F12] px-4 py-3">
-            <div className="flex flex-wrap items-center gap-3">
-              <span className="text-[9px] uppercase tracking-[0.2em] text-[#8D919B]">Engine Config</span>
+          <div className="border-b border-white/8 bg-[#0D0F12] px-5 py-3.5">
+            <div className="flex flex-wrap items-center gap-3.5">
+              <span className="text-[11px] uppercase tracking-[0.2em] text-[#8D919B]">Engine Config</span>
               {([
                 { key: "shotDensity" as const, label: "Density", options: ["lean", "balanced", "dense"] },
                 { key: "continuityStrictness" as const, label: "Continuity", options: ["flexible", "standard", "strict"] },
@@ -2012,15 +2631,15 @@ export function StoryboardPanel({
                 { key: "fallbackMode" as const, label: "Fallback", options: ["balanced", "prefer_speed", "fail_fast"] },
                 { key: "keyframePolicy" as const, label: "Keyframes", options: ["opening_anchor", "story_turns", "every_major_shift"] },
               ] as const).map(({ key, label, options }) => (
-                <div key={key} className="flex items-center gap-1.5">
-                  <span className="text-[9px] text-white/40">{label}</span>
+                <div key={key} className="flex items-center gap-2">
+                  <span className="text-[11px] text-white/40">{label}</span>
                   <div className="flex rounded-lg border border-white/8 bg-white/4">
                     {options.map((opt) => (
                       <button
                         key={opt}
                         type="button"
                         onClick={() => setBreakdownGlobalConfig({ [key]: opt })}
-                        className={`px-2 py-1 text-[9px] transition-all ${
+                        className={`px-2.5 py-1.5 text-[11px] transition-all ${
                           breakdownConfig[key] === opt
                             ? "bg-[#D4A853]/18 text-[#E8C778]"
                             : "text-white/35 hover:text-white/60"
@@ -2038,7 +2657,7 @@ export function StoryboardPanel({
 
         {!isDuoMode ? workspaceChrome : null}
 
-        <div className={isDuoMode ? "flex-1 overflow-hidden" : "flex-1 overflow-y-auto px-4 py-4"} style={isDuoMode ? undefined : { overscrollBehaviorY: "contain" }}>
+        <div className={isDuoMode ? "flex-1 overflow-hidden" : "flex-1 overflow-y-auto px-5 py-5"} style={isDuoMode ? undefined : { overscrollBehaviorY: "contain" }}>
           {isDuoMode ? (
           <div className="flex h-full">
             <div className="w-1/2 overflow-hidden border-r border-white/8">
@@ -2071,65 +2690,90 @@ export function StoryboardPanel({
                   }}
                 >
                   {frames.map((frame, index) => {
-                    const shot = shots[index]
+                    const shot = sortedShots[index]
                     const isGenerating = shot ? (generatingIds.has(shot.id) || videoGeneratingIds.has(shot.id)) : false
                     const isFailed = shot ? failedIds.has(shot.id) : false
                     const previewSrc = shot?.thumbnailUrl || frame.svg || null
                     return (
                     <Fragment key={frame.id}>
                       <div
-                        className={`group relative overflow-hidden rounded-[14px] border border-white/6 bg-[#111317] p-2 shadow-[0_20px_45px_rgba(0,0,0,0.28)] transition-all duration-200 ${recentInsertedFrameId === frame.id ? "storyboard-card-enter" : ""} ${dropTargetIndex === index || dropTargetIndex === index + 1 ? "border-[#D8C4A5]/40 shadow-[0_0_0_1px_rgba(216,196,165,0.18),0_20px_45px_rgba(0,0,0,0.34)]" : "hover:-translate-y-px hover:border-white/10 hover:bg-[#14171C]"}`}
+                        className={`group relative overflow-hidden rounded-[14px] border bg-[#111317] p-2 shadow-[0_20px_45px_rgba(0,0,0,0.28)] transition-all duration-200 ${recentInsertedFrameId === frame.id ? "storyboard-card-enter" : ""} ${selectedShotId === shot?.id ? "border-[#D4A853]/40 ring-1 ring-[#D4A853]/20" : "border-white/6"} ${dropTargetIndex === index || dropTargetIndex === index + 1 ? "border-[#D8C4A5]/40 shadow-[0_0_0_1px_rgba(216,196,165,0.18),0_20px_45px_rgba(0,0,0,0.34)]" : "hover:-translate-y-px hover:border-white/10 hover:bg-[#14171C]"}`}
                         draggable
-                        onDragStart={() => handleDragStart(frame.id)}
+                        onDragStart={(e) => handleDragStart(frame.id, e)}
                         onDragEnd={handleDragEnd}
                         onDragOver={(event) => {
                           event.preventDefault()
                           if (!draggedFrameId || draggedFrameId === frame.id) return
-                          setDropTargetIndex(index + (event.nativeEvent.offsetX > event.currentTarget.clientWidth / 2 ? 1 : 0))
+                          const targetIdx = index + (event.nativeEvent.offsetX > event.currentTarget.clientWidth / 2 ? 1 : 0)
+                          handleDragOverIndex(targetIdx)
                         }}
+                        onDragLeave={handleDragLeaveSlot}
                         onDrop={(event) => {
                           event.preventDefault()
-                          handleDropAtIndex(index + (event.nativeEvent.offsetX > event.currentTarget.clientWidth / 2 ? 1 : 0))
+                          const targetIdx = dropSlotOpen ?? (index + (event.nativeEvent.offsetX > event.currentTarget.clientWidth / 2 ? 1 : 0))
+                          handleDropAtIndex(targetIdx)
                         }}
                         style={{
-                          opacity: draggedFrameId === frame.id ? 0.46 : 1,
-                          transition: "box-shadow 240ms ease, transform 240ms ease, border-color 240ms ease, background-color 240ms ease",
+                          opacity: draggedFrameId === frame.id ? 0.3 : 1,
+                          transform: draggedFrameId === frame.id ? "scale(0.96)" : undefined,
+                          marginLeft: dropSlotOpen === index ? minCardWidth + cardGap : 0,
+                          transition: "box-shadow 300ms cubic-bezier(0.22,1,0.36,1), transform 300ms cubic-bezier(0.22,1,0.36,1), border-color 240ms ease, background-color 240ms ease, opacity 200ms ease, margin-left 400ms cubic-bezier(0.22,1,0.36,1)",
                         }}
                       >
                         <div className="relative flex h-full flex-col text-[#E5E0DB]">
-                          <div className="relative overflow-hidden rounded-[10px] border border-white/8 bg-[#0E1014] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]" style={{ aspectRatio: "16 / 8.7" }}>
+                          <div
+                            className="relative overflow-hidden rounded-[10px] border border-white/8 bg-[#0E1014] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
+                            style={{ aspectRatio: "16 / 8.7" }}
+                            onClick={() => { if (shot) selectShot(shot.id) }}
+                            onDoubleClick={() => { if (previewSrc && shot) { setLightbox({ src: previewSrc, shotId: shot.id }); setLightboxTransform({ flipH: false, flipV: false, rotate: 0 }) } }}
+                          >
                             {previewSrc ? (
                               <Image
                                 src={previewSrc}
-                                alt={`${frame.meta.shot} frame preview`}
+                                alt=""
                                 width={320}
                                 height={320}
                                 unoptimized
-                                className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                                className="h-full w-full cursor-zoom-in object-cover transition-transform duration-300 group-hover:scale-[1.02]"
                                 draggable={false}
                               />
                             ) : (
                               <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_58%),linear-gradient(180deg,#151922_0%,#0E1014_100%)] px-6 text-center">
                                 <div>
-                                  <p className="text-[10px] uppercase tracking-[0.18em] text-[#8D919B]">No image yet</p>
-                                  <p className="mt-1 text-[11px] text-[#C3B8AA]">Run Breakdown or Generate to create shot artwork.</p>
+                                  <p className="text-[12px] uppercase tracking-[0.18em] text-[#8D919B]">No image yet</p>
+                                  <p className="mt-1.5 text-[13px] text-[#C3B8AA]">Run Breakdown or Generate to create shot artwork.</p>
                                 </div>
                               </div>
                             )}
                             <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(8,10,14,0.04)_0%,rgba(8,10,14,0.12)_52%,rgba(8,10,14,0.34)_100%)]" />
-                            <div className="absolute left-2 top-2 rounded-md border border-white/10 bg-black/30 px-1.5 py-1 text-[9px] uppercase tracking-[0.18em] text-[#EAE2D7] backdrop-blur-sm">
-                              Shot {String(index + 1).padStart(2, "0")}
+                            <div className="absolute left-2.5 top-2.5 flex items-center gap-2">
+                              <div className="rounded-md border border-white/10 bg-black/30 px-2 py-1 text-[11px] uppercase tracking-[0.18em] text-[#EAE2D7] backdrop-blur-sm">
+                                {shot ? shotLabel(shot.id) : `Shot ${String(index + 1).padStart(2, "0")}`}
+                              </div>
+                              {shot && setupLabel(shot.id) && (
+                                <div className="rounded-md border border-[#D4A853]/25 bg-[#D4A853]/15 px-2 py-1 text-[11px] uppercase tracking-[0.14em] text-[#D4A853] backdrop-blur-sm">
+                                  {setupLabel(shot.id)}
+                                </div>
+                              )}
                             </div>
 
                             {shot && (shot.generationHistory?.length ?? 0) > 1 && !isGenerating && (() => {
                               const total = shot.generationHistory.length
-                              const current = (shot.activeHistoryIndex ?? total - 1) + 1
+                              const idx = shot.activeHistoryIndex ?? total - 1
+                              const current = idx + 1
+                              const entry = shot.generationHistory[idx]
+                              const src = entry?.source || "generate"
+                              const sourceLabel = src === "edit" ? "E" : src === "crop" ? "C" : src === "color" ? "M" : "G"
+                              const sourceColor = src === "edit" ? "bg-purple-400" : src === "crop" ? "bg-blue-400" : src === "color" ? "bg-amber-400" : "bg-emerald-400"
                               return (
                                 <div className="absolute bottom-2 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-full border border-white/15 bg-black/60 px-1 py-0.5 backdrop-blur-sm">
                                   <button type="button" onClick={(e) => { e.stopPropagation(); handleHistoryNav(shot.id, -1) }} disabled={current <= 1} className="flex h-5 w-5 items-center justify-center rounded-full text-white/70 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-30">
                                     <ChevronLeft size={12} />
                                   </button>
-                                  <span className="min-w-[32px] text-center text-[10px] tabular-nums text-white/80">{current}/{total}</span>
+                                  <div className="flex items-center gap-1">
+                                    <span className={`inline-flex h-3.5 w-3.5 items-center justify-center rounded-full text-[7px] font-bold text-black ${sourceColor}`}>{sourceLabel}</span>
+                                    <span className="min-w-[32px] text-center text-[10px] tabular-nums text-white/80">{current}/{total}</span>
+                                  </div>
                                   <button type="button" onClick={(e) => { e.stopPropagation(); handleHistoryNav(shot.id, 1) }} disabled={current >= total} className="flex h-5 w-5 items-center justify-center rounded-full text-white/70 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-30">
                                     <ChevronRight size={12} />
                                   </button>
@@ -2175,7 +2819,7 @@ export function StoryboardPanel({
                                 <button
                                   type="button"
                                   onClick={() => shot && handleGenerateImage(shot.id)}
-                                  className="flex items-center gap-1.5 rounded-lg border border-white/15 bg-black/50 px-3 py-1.5 text-[10px] uppercase tracking-[0.14em] text-white/90 backdrop-blur-sm transition-colors hover:bg-white/10"
+                                  className="flex items-center gap-1.5 rounded-lg border border-white/15 bg-black/50 px-3.5 py-2 text-[12px] uppercase tracking-[0.14em] text-white/90 backdrop-blur-sm transition-colors hover:bg-white/10"
                                 >
                                   <ImageIcon size={13} />
                                   Photo
@@ -2184,7 +2828,7 @@ export function StoryboardPanel({
                                   type="button"
                                   onClick={() => shot && handleGenerateVideo(shot.id)}
                                   disabled={videoGeneratingIds.has(shot?.id ?? "")}
-                                  className="flex items-center gap-1.5 rounded-lg border border-[#7C6FD8]/30 bg-[#7C6FD8]/15 px-3 py-1.5 text-[10px] uppercase tracking-[0.14em] text-[#C4BBEF] backdrop-blur-sm transition-colors hover:bg-[#7C6FD8]/25 disabled:opacity-40"
+                                  className="flex items-center gap-1.5 rounded-lg border border-[#7C6FD8]/30 bg-[#7C6FD8]/15 px-3.5 py-2 text-[12px] uppercase tracking-[0.14em] text-[#C4BBEF] backdrop-blur-sm transition-colors hover:bg-[#7C6FD8]/25 disabled:opacity-40"
                                 >
                                   <Video size={13} />
                                   Video
@@ -2192,7 +2836,7 @@ export function StoryboardPanel({
                                 <button
                                   type="button"
                                   onClick={() => shot && setPromptLabShotId(shot.id)}
-                                  className="flex items-center gap-1.5 rounded-lg border border-[#D4A853]/30 bg-[#D4A853]/15 px-3 py-1.5 text-[10px] uppercase tracking-[0.14em] text-[#E6C887] backdrop-blur-sm transition-colors hover:bg-[#D4A853]/25"
+                                  className="flex items-center gap-1.5 rounded-lg border border-[#D4A853]/30 bg-[#D4A853]/15 px-3.5 py-2 text-[12px] uppercase tracking-[0.14em] text-[#E6C887] backdrop-blur-sm transition-colors hover:bg-[#D4A853]/25"
                                 >
                                   <Wand2 size={13} />
                                   Edit
@@ -2211,34 +2855,20 @@ export function StoryboardPanel({
                             )}
                           </div>
 
-                          <div className="mt-3 flex items-start justify-between gap-3 px-1 pb-1 pt-1 text-[#D7CDC1]">
-                            <div className="min-w-0 flex-1">
-                              <div className="flex flex-wrap items-center text-[14px] uppercase tracking-[0.08em] text-[#ECE5D8]">
-                                <InlineSelect value={frame.meta.shot} options={SHOT_SIZE_OPTIONS} onChange={(v) => shot && updateShot(shot.id, { shotSize: v })} />
-                                <span className="mx-1.5 text-white/20">-</span>
-                                <span className="normal-case tracking-normal text-[14px] text-[#B9AEA0]">
-                                  <InlineSelect value={frame.meta.motion} options={CAMERA_MOTION_OPTIONS} onChange={(v) => shot && updateShot(shot.id, { cameraMotion: v })} />
-                                </span>
-                                <span className="mx-1.5 text-white/20">-</span>
-                                <span className="normal-case tracking-normal text-[14px] text-[#B9AEA0]">
-                                  <InlineDuration value={frame.meta.duration} onChange={(ms) => shot && updateShot(shot.id, { duration: ms })} />
-                                </span>
-                              </div>
-                              <div className="mt-2 text-[20px] leading-7 text-[#D2D7DE]">
-                                <InlineText value={frame.meta.caption} onChange={(v) => shot && updateShot(shot.id, { caption: v, label: `${frame.meta.shot} — ${v}` })} placeholder="Shot caption..." className="font-medium" />
-                              </div>
-                              <div className="mt-2 text-[15px] leading-6 text-[#8A929D]">
-                                <InlineText value={shot?.notes || ""} onChange={(v) => shot && updateShot(shot.id, { notes: v })} placeholder="Director's notes..." multiline />
-                              </div>
-                            </div>
-                            <div className="flex shrink-0 items-center gap-1">
-                              <button type="button" onClick={() => router.push("/timeline")} className="flex h-7 items-center gap-1 rounded-md px-2 text-[10px] uppercase tracking-[0.12em] transition-colors text-[#8C93A0] hover:bg-white/5 hover:text-white" aria-label={`Go to timeline for shot ${index + 1}`}>
-                                <Film size={11} />
-                                Timeline
-                              </button>
-                              <button type="button" className="flex h-7 w-7 items-center justify-center rounded-md text-[#8C93A0] transition-colors hover:bg-white/5 hover:text-white" aria-label={`More actions for shot ${index + 1}`}>
-                                <MoreHorizontal size={15} />
-                              </button>
+                          <div className="mt-2.5 px-2 pb-2">
+                            {/* Action line */}
+                            <p className="text-[14px] leading-snug text-[#C8CDD5]">{frame.meta.caption || shot?.label || "—"}</p>
+                            {/* Tech badge */}
+                            <div className="mt-2 flex items-center gap-2 text-[12px] text-[#6B7280]">
+                              <span>{frame.meta.shot}</span>
+                              <span className="text-white/10">·</span>
+                              <span>{frame.meta.motion || "static"}</span>
+                              <span className="text-white/10">·</span>
+                              {shot ? (
+                                <EditableDuration durationMs={shot.duration} onChange={(ms) => updateShot(shot.id, { duration: ms })} />
+                              ) : (
+                                <span>{((d) => Number.isNaN(d) ? "3.0" : d.toFixed(1))(Number(frame.meta.duration) / 1000)}s</span>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -2271,7 +2901,7 @@ export function StoryboardPanel({
                         <Plus size={15} />
                       </span>
                       <div>
-                        <p className="text-[11px] uppercase tracking-[0.2em] text-[#E7E3DC]">Add Shot</p>
+                        <p className="text-[13px] uppercase tracking-[0.2em] text-[#E7E3DC]">Add Shot</p>
                         <p className="mt-1 text-[10px] text-[#7F8590]">Insert {nextFrameLabel} to the sequence</p>
                       </div>
                     </div>
@@ -2290,18 +2920,18 @@ export function StoryboardPanel({
                       const resolvedShot = editingShotField?.shotId === shot.id
                         ? { ...shot, [editingShotField.field]: editingShotDraft }
                         : shot
-                      const imagePrompt = buildImagePrompt(resolvedShot, characters, locations, projectStyle)
-                      const videoPrompt = buildVideoPrompt(resolvedShot, characters, locations, projectStyle)
+                      const imagePrompt = buildImagePrompt(resolvedShot, characters, locations, projectStyle, bibleProps)
+                      const videoPrompt = buildVideoPrompt(resolvedShot, characters, locations, projectStyle, bibleProps)
                       const refs = getReferencedBibleEntries(resolvedShot, characters, locations)
                       const previewSrc = shot.thumbnailUrl || shot.svg || null
-                      const durationLabel = `${(shot.duration / 1000).toFixed(1)}s`
+                      const durationLabel = null // replaced by EditableDuration
 
                       return (
                         <div key={shot.id} className={`mb-2 overflow-hidden rounded-xl border transition-colors ${isExpanded ? "border-white/15 bg-white/3" : "border-white/8 bg-white/2 hover:bg-white/4"}`}>
                           <button type="button" onClick={() => setExpandedShotId(isExpanded ? null : shot.id)} className="flex w-full items-center gap-3 px-3 py-3 text-left">
                             <div className="relative h-9 w-16 overflow-hidden rounded-md border border-white/8 bg-white/3">
                               {previewSrc ? (
-                                <Image src={previewSrc} alt={shot.label || `Shot ${index + 1}`} fill unoptimized className="object-cover" />
+                                <Image src={previewSrc} alt="" fill unoptimized className="object-cover" />
                               ) : (
                                 <div className="flex h-full w-full items-center justify-center text-[9px] uppercase tracking-[0.16em] text-white/25">No Img</div>
                               )}
@@ -2309,7 +2939,7 @@ export function StoryboardPanel({
                             <div className="w-8 shrink-0 text-[16px] font-medium tracking-[0.14em] text-[#E7E3DC]">{String(index + 1).padStart(2, "0")}</div>
                             <div className="min-w-0 flex-1">
                               <p className="truncate text-[13px] font-medium text-[#E7E3DC]">{shot.label || `Shot ${index + 1}`}</p>
-                              <p className="mt-1 truncate text-[10px] text-white/35">{shot.shotSize || "WIDE"} · {shot.cameraMotion || "Static"} · {durationLabel}</p>
+                              <p className="mt-1 flex items-center gap-1 truncate text-[10px] text-white/35">{shot.shotSize || "WIDE"} · {shot.cameraMotion || "Static"} · <EditableDuration durationMs={shot.duration} onChange={(ms) => updateShot(shot.id, { duration: ms })} /></p>
                             </div>
                             <div className={`shrink-0 text-[16px] text-white/40 transition-transform ${isExpanded ? "rotate-90" : "rotate-0"}`}>▸</div>
                           </button>
@@ -2389,7 +3019,7 @@ export function StoryboardPanel({
                     </thead>
                     <tbody>
                       {frames.map((frame, index) => {
-                        const shot = shots[index]
+                        const shot = sortedShots[index]
                         return (
                           <tr key={frame.id} className="border-b border-white/5 transition-colors hover:bg-white/3">
                             <td className="px-2 py-1.5 text-[#7F8590]">{String(index + 1).padStart(2, "0")}</td>
@@ -2428,7 +3058,7 @@ export function StoryboardPanel({
             }}
           >
             {frames.map((frame, index) => {
-              const shot = shots[index]
+              const shot = sortedShots[index]
               const isGenerating = shot ? (generatingIds.has(shot.id) || videoGeneratingIds.has(shot.id)) : false
               const isFailed = shot ? failedIds.has(shot.id) : false
               const previewSrc = shot?.thumbnailUrl || frame.svg || null
@@ -2437,32 +3067,41 @@ export function StoryboardPanel({
                 <div
                   className={`group relative overflow-hidden rounded-[14px] border border-white/6 bg-[#111317] p-2 shadow-[0_20px_45px_rgba(0,0,0,0.28)] transition-all duration-200 ${recentInsertedFrameId === frame.id ? "storyboard-card-enter" : ""} ${dropTargetIndex === index || dropTargetIndex === index + 1 ? "border-[#D8C4A5]/40 shadow-[0_0_0_1px_rgba(216,196,165,0.18),0_20px_45px_rgba(0,0,0,0.34)]" : "hover:-translate-y-px hover:border-white/10 hover:bg-[#14171C]"}`}
                   draggable
-                  onDragStart={() => handleDragStart(frame.id)}
+                  onDragStart={(e) => handleDragStart(frame.id, e)}
                   onDragEnd={handleDragEnd}
                   onDragOver={(event) => {
                     event.preventDefault()
                     if (!draggedFrameId || draggedFrameId === frame.id) return
-                    setDropTargetIndex(index + (event.nativeEvent.offsetX > event.currentTarget.clientWidth / 2 ? 1 : 0))
+                    const targetIdx = index + (event.nativeEvent.offsetX > event.currentTarget.clientWidth / 2 ? 1 : 0)
+                    handleDragOverIndex(targetIdx)
                   }}
+                  onDragLeave={handleDragLeaveSlot}
                   onDrop={(event) => {
                     event.preventDefault()
-                    handleDropAtIndex(index + (event.nativeEvent.offsetX > event.currentTarget.clientWidth / 2 ? 1 : 0))
+                    const targetIdx = dropSlotOpen ?? (index + (event.nativeEvent.offsetX > event.currentTarget.clientWidth / 2 ? 1 : 0))
+                    handleDropAtIndex(targetIdx)
                   }}
                   style={{
-                    opacity: draggedFrameId === frame.id ? 0.46 : 1,
-                    transition: "box-shadow 240ms ease, transform 240ms ease, border-color 240ms ease, background-color 240ms ease",
+                    opacity: draggedFrameId === frame.id ? 0.3 : 1,
+                    transform: draggedFrameId === frame.id ? "scale(0.96)" : undefined,
+                    marginLeft: dropSlotOpen === index ? minCardWidth + cardGap : 0,
+                    transition: "box-shadow 300ms cubic-bezier(0.22,1,0.36,1), transform 300ms cubic-bezier(0.22,1,0.36,1), border-color 240ms ease, background-color 240ms ease, opacity 200ms ease, margin-left 400ms cubic-bezier(0.22,1,0.36,1)",
                   }}
                 >
                   <div className="relative flex h-full flex-col text-[#E5E0DB]">
-                    <div className="relative overflow-hidden rounded-[10px] border border-white/8 bg-[#0E1014] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]" style={{ aspectRatio: "16 / 8.7" }}>
+                    <div
+                      className="relative overflow-hidden rounded-[10px] border border-white/8 bg-[#0E1014] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
+                      style={{ aspectRatio: "16 / 8.7" }}
+                      onDoubleClick={() => { if (previewSrc && shot) { setLightbox({ src: previewSrc, shotId: shot.id }); setLightboxTransform({ flipH: false, flipV: false, rotate: 0 }) } }}
+                    >
                       {previewSrc ? (
                         <Image
                           src={previewSrc}
-                          alt={`${frame.meta.shot} frame preview`}
+                          alt=""
                           width={320}
                           height={320}
                           unoptimized
-                          className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.02]"
+                          className="h-full w-full cursor-zoom-in object-cover transition-transform duration-300 group-hover:scale-[1.02]"
                           draggable={false}
                         />
                       ) : (
@@ -2474,19 +3113,34 @@ export function StoryboardPanel({
                         </div>
                       )}
                       <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(8,10,14,0.04)_0%,rgba(8,10,14,0.12)_52%,rgba(8,10,14,0.34)_100%)]" />
-                      <div className="absolute left-2 top-2 rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-[11px] font-medium uppercase tracking-[0.18em] text-[#EAE2D7] backdrop-blur-sm">
-                        Shot {String(index + 1).padStart(2, "0")}
+                      <div className="absolute left-2 top-2 flex items-center gap-1.5">
+                        <div className="rounded-md border border-white/10 bg-black/30 px-2 py-1.5 text-[11px] font-medium uppercase tracking-[0.18em] text-[#EAE2D7] backdrop-blur-sm">
+                          {shot ? shotLabel(shot.id) : `Shot ${String(index + 1).padStart(2, "0")}`}
+                        </div>
+                        {shot && setupLabel(shot.id) && (
+                          <div className="rounded-md border border-[#D4A853]/25 bg-[#D4A853]/15 px-1.5 py-1.5 text-[10px] font-medium uppercase tracking-[0.14em] text-[#D4A853] backdrop-blur-sm">
+                            {setupLabel(shot.id)}
+                          </div>
+                        )}
                       </div>
 
                       {shot && (shot.generationHistory?.length ?? 0) > 1 && !isGenerating && (() => {
                         const total = shot.generationHistory.length
-                        const current = (shot.activeHistoryIndex ?? total - 1) + 1
+                        const idx = shot.activeHistoryIndex ?? total - 1
+                        const current = idx + 1
+                        const entry = shot.generationHistory[idx]
+                        const src = entry?.source || "generate"
+                        const sourceLabel = src === "edit" ? "E" : src === "crop" ? "C" : src === "color" ? "M" : "G"
+                        const sourceColor = src === "edit" ? "bg-purple-400" : src === "crop" ? "bg-blue-400" : src === "color" ? "bg-amber-400" : "bg-emerald-400"
                         return (
                           <div className="absolute bottom-2 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-full border border-white/15 bg-black/60 px-1 py-0.5 backdrop-blur-sm">
                             <button type="button" onClick={(e) => { e.stopPropagation(); handleHistoryNav(shot.id, -1) }} disabled={current <= 1} className="flex h-5 w-5 items-center justify-center rounded-full text-white/70 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-30">
                               <ChevronLeft size={12} />
                             </button>
-                            <span className="min-w-[32px] text-center text-[10px] tabular-nums text-white/80">{current}/{total}</span>
+                            <div className="flex items-center gap-1">
+                              <span className={`inline-flex h-3.5 w-3.5 items-center justify-center rounded-full text-[7px] font-bold text-black ${sourceColor}`}>{sourceLabel}</span>
+                              <span className="min-w-[32px] text-center text-[10px] tabular-nums text-white/80">{current}/{total}</span>
+                            </div>
                             <button type="button" onClick={(e) => { e.stopPropagation(); handleHistoryNav(shot.id, 1) }} disabled={current >= total} className="flex h-5 w-5 items-center justify-center rounded-full text-white/70 transition-colors hover:bg-white/10 hover:text-white disabled:opacity-30">
                               <ChevronRight size={12} />
                             </button>
@@ -2532,7 +3186,7 @@ export function StoryboardPanel({
                           <button
                             type="button"
                             onClick={() => shot && handleGenerateImage(shot.id)}
-                            className="flex items-center gap-1.5 rounded-lg border border-white/15 bg-black/50 px-3 py-1.5 text-[10px] uppercase tracking-[0.14em] text-white/90 backdrop-blur-sm transition-colors hover:bg-white/10"
+                            className="flex items-center gap-1.5 rounded-lg border border-white/15 bg-black/50 px-3.5 py-2 text-[12px] uppercase tracking-[0.14em] text-white/90 backdrop-blur-sm transition-colors hover:bg-white/10"
                           >
                             <ImageIcon size={13} />
                             Photo
@@ -2541,7 +3195,7 @@ export function StoryboardPanel({
                             type="button"
                             onClick={() => shot && handleGenerateVideo(shot.id)}
                             disabled={videoGeneratingIds.has(shot?.id ?? "")}
-                            className="flex items-center gap-1.5 rounded-lg border border-[#7C6FD8]/30 bg-[#7C6FD8]/15 px-3 py-1.5 text-[10px] uppercase tracking-[0.14em] text-[#C4BBEF] backdrop-blur-sm transition-colors hover:bg-[#7C6FD8]/25 disabled:opacity-40"
+                            className="flex items-center gap-1.5 rounded-lg border border-[#7C6FD8]/30 bg-[#7C6FD8]/15 px-3.5 py-2 text-[12px] uppercase tracking-[0.14em] text-[#C4BBEF] backdrop-blur-sm transition-colors hover:bg-[#7C6FD8]/25 disabled:opacity-40"
                           >
                             <Video size={13} />
                             Video
@@ -2549,7 +3203,7 @@ export function StoryboardPanel({
                           <button
                             type="button"
                             onClick={() => shot && setPromptLabShotId(shot.id)}
-                            className="flex items-center gap-1.5 rounded-lg border border-[#D4A853]/30 bg-[#D4A853]/15 px-3 py-1.5 text-[10px] uppercase tracking-[0.14em] text-[#E6C887] backdrop-blur-sm transition-colors hover:bg-[#D4A853]/25"
+                            className="flex items-center gap-1.5 rounded-lg border border-[#D4A853]/30 bg-[#D4A853]/15 px-3.5 py-2 text-[12px] uppercase tracking-[0.14em] text-[#E6C887] backdrop-blur-sm transition-colors hover:bg-[#D4A853]/25"
                           >
                             <Wand2 size={13} />
                             Edit
@@ -2568,64 +3222,19 @@ export function StoryboardPanel({
                       )}
                     </div>
 
-                    {/* Editable metadata */}
-                    <div className="mt-2.5 flex items-start justify-between gap-3 px-0.5 pb-1 pt-1 text-[#D7CDC1]">
-                      <div className="min-w-0 flex-1">
-                        <div className="flex flex-wrap items-center text-[13px] uppercase tracking-[0.08em] text-[#ECE5D8]">
-                          <InlineSelect
-                            value={frame.meta.shot}
-                            options={SHOT_SIZE_OPTIONS}
-                            onChange={(v) => shot && updateShot(shot.id, { shotSize: v })}
-                          />
-                          <span className="mx-1.5 text-white/20">-</span>
-                          <span className="normal-case tracking-normal text-[13px] text-[#B9AEA0]">
-                            <InlineSelect
-                              value={frame.meta.motion}
-                              options={CAMERA_MOTION_OPTIONS}
-                              onChange={(v) => shot && updateShot(shot.id, { cameraMotion: v })}
-                            />
-                          </span>
-                          <span className="mx-1.5 text-white/20">-</span>
-                          <span className="normal-case tracking-normal text-[13px] text-[#B9AEA0]">
-                            <InlineDuration
-                              value={frame.meta.duration}
-                              onChange={(ms) => shot && updateShot(shot.id, { duration: ms })}
-                            />
-                          </span>
-                        </div>
-                        <div className="mt-2 text-[13px] leading-6 text-[#A8AFBA]">
-                          <InlineText
-                            value={frame.meta.caption}
-                            onChange={(v) => shot && updateShot(shot.id, { caption: v, label: `${frame.meta.shot} — ${v}` })}
-                            placeholder="Shot caption..."
-                          />
-                        </div>
-                        <div className="mt-1.5 text-[12px] leading-5 text-[#6E7580]">
-                          <InlineText
-                            value={shot?.notes || ""}
-                            onChange={(v) => shot && updateShot(shot.id, { notes: v })}
-                            placeholder="Director's notes..."
-                            multiline
-                          />
-                        </div>
-                      </div>
-                      <div className="flex shrink-0 items-center gap-1">
-                        <button
-                          type="button"
-                          onClick={() => router.push("/timeline")}
-                          className="flex h-7 items-center gap-1 rounded-md px-2 text-[10px] uppercase tracking-[0.12em] transition-colors text-[#8A909B] hover:bg-white/5 hover:text-white"
-                          aria-label={`Go to timeline for shot ${index + 1}`}
-                        >
-                          <Film size={11} />
-                          Timeline
-                        </button>
-                        <button
-                          type="button"
-                          className="flex h-7 w-7 items-center justify-center rounded-md text-[#8A909B] transition-colors hover:bg-white/5 hover:text-white"
-                          aria-label={`More actions for shot ${index + 1}`}
-                        >
-                          <MoreHorizontal size={15} />
-                        </button>
+                    {/* Metadata */}
+                    <div className="mt-2 px-1.5 pb-1.5">
+                      <p className="text-[12px] leading-snug text-[#C8CDD5]">{frame.meta.caption || shot?.label || "—"}</p>
+                      <div className="mt-1.5 flex items-center gap-1.5 text-[10px] text-[#6B7280]">
+                        <span>{frame.meta.shot}</span>
+                        <span className="text-white/10">·</span>
+                        <span>{frame.meta.motion || "static"}</span>
+                        <span className="text-white/10">·</span>
+                        {shot ? (
+                          <EditableDuration durationMs={shot.duration} onChange={(ms) => updateShot(shot.id, { duration: ms })} />
+                        ) : (
+                          <span>{((d) => Number.isNaN(d) ? "3.0" : d.toFixed(1))(Number(frame.meta.duration) / 1000)}s</span>
+                        )}
                       </div>
                     </div>
                   </div>
@@ -2658,7 +3267,7 @@ export function StoryboardPanel({
                   <Plus size={15} />
                 </span>
                 <div>
-                  <p className="text-[11px] uppercase tracking-[0.2em] text-[#E7E3DC]">Add Shot</p>
+                  <p className="text-[13px] uppercase tracking-[0.2em] text-[#E7E3DC]">Add Shot</p>
                   <p className="mt-1 text-[10px] text-[#7F8590]">Insert {nextFrameLabel} to the sequence</p>
                 </div>
               </div>
@@ -2677,12 +3286,10 @@ export function StoryboardPanel({
                 const resolvedShot = editingShotField?.shotId === shot.id
                   ? { ...shot, [editingShotField.field]: editingShotDraft }
                   : shot
-                const imagePrompt = buildImagePrompt(resolvedShot, characters, locations, projectStyle)
-                const videoPrompt = buildVideoPrompt(resolvedShot, characters, locations, projectStyle)
+                const imagePrompt = buildImagePrompt(resolvedShot, characters, locations, projectStyle, bibleProps)
+                const videoPrompt = buildVideoPrompt(resolvedShot, characters, locations, projectStyle, bibleProps)
                 const refs = getReferencedBibleEntries(resolvedShot, characters, locations)
                 const previewSrc = shot.thumbnailUrl || shot.svg || null
-                const durationLabel = `${(shot.duration / 1000).toFixed(1)}s`
-
                 return (
                   <div
                     key={shot.id}
@@ -2695,7 +3302,7 @@ export function StoryboardPanel({
                     >
                       <div className="relative h-9 w-16 overflow-hidden rounded-md border border-white/8 bg-white/3">
                         {previewSrc ? (
-                          <Image src={previewSrc} alt={shot.label || `Shot ${index + 1}`} fill unoptimized className="object-cover" />
+                          <Image src={previewSrc} alt="" fill unoptimized className="object-cover" />
                         ) : (
                           <div className="flex h-full w-full items-center justify-center text-[9px] uppercase tracking-[0.16em] text-white/25">
                             No Img
@@ -2709,8 +3316,8 @@ export function StoryboardPanel({
                         <p className="truncate text-[13px] font-medium text-[#E7E3DC]">
                           {shot.label || `Shot ${index + 1}`}
                         </p>
-                        <p className="mt-1 truncate text-[10px] text-white/35">
-                          {shot.shotSize || "WIDE"} · {shot.cameraMotion || "Static"} · {durationLabel}
+                        <p className="mt-1 flex items-center gap-1 truncate text-[10px] text-white/35">
+                          {shot.shotSize || "WIDE"} · {shot.cameraMotion || "Static"} · <EditableDuration durationMs={shot.duration} onChange={(ms) => updateShot(shot.id, { duration: ms })} />
                         </p>
                       </div>
                       <div className={`shrink-0 text-[16px] text-white/40 transition-transform ${isExpanded ? "rotate-90" : "rotate-0"}`}>
@@ -2921,7 +3528,7 @@ export function StoryboardPanel({
                   let lastSceneId: string | null = null
                   let globalIdx = 0
                   return frames.map((frame, index) => {
-                    const shot = shots[index]
+                    const shot = sortedShots[index]
                     const sceneId = shot?.sceneId || null
                     const showSceneHeader = sceneId !== lastSceneId
                     lastSceneId = sceneId
@@ -3019,87 +3626,38 @@ export function StoryboardPanel({
       {/* ─── Glass Edit Overlay ─── */}
       {editOverlayShotId && (() => {
         const overlayShot = shots.find(s => s.id === editOverlayShotId)
+        if (!overlayShot?.thumbnailUrl) return null
         return (
-          <div
-            className="fixed inset-0 z-[100] flex items-center justify-center"
-            onClick={() => setEditOverlayShotId(null)}
-            style={{ animation: "editOverlayIn 0.25s ease-out" }}
-          >
-            {/* backdrop */}
-            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
-
-            {/* glass bar */}
-            <div
-              className="relative flex w-[540px] items-center gap-3 rounded-2xl border border-white/[0.12] bg-white/[0.06] px-4 py-3 shadow-2xl backdrop-blur-2xl"
-              onClick={(e) => e.stopPropagation()}
-              style={{ animation: "editBarIn 0.3s cubic-bezier(0.16,1,0.3,1)" }}
-            >
-              {/* shot thumbnail preview */}
-              {overlayShot?.thumbnailUrl && (
-                <img
-                  src={overlayShot.thumbnailUrl}
-                  alt=""
-                  className="h-12 w-[72px] flex-shrink-0 rounded-lg border border-white/10 object-cover"
-                />
-              )}
-
-              {/* input */}
-              <input
-                ref={editInputRef}
-                type="text"
-                value={editInstruction}
-                onChange={(e) => setEditInstruction(e.target.value)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" && editInstruction.trim()) {
-                    handleShotReEdit()
-                  }
-                  if (e.key === "Escape") {
-                    setEditOverlayShotId(null)
-                  }
-                }}
-                placeholder="Измени ракурс, сделай общий план..."
-                className="flex-1 bg-transparent text-sm text-white/90 placeholder-white/30 outline-none"
-                autoFocus
-              />
-
-              {/* submit */}
-              <button
-                type="button"
-                onClick={() => editInstruction.trim() && handleShotReEdit()}
-                disabled={!editInstruction.trim()}
-                className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg bg-white/10 text-white/70 transition-colors hover:bg-white/20 hover:text-white disabled:opacity-30"
-              >
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12h14"/><path d="m12 5 7 7-7 7"/></svg>
-              </button>
-
-              {/* close */}
-              <button
-                type="button"
-                onClick={() => setEditOverlayShotId(null)}
-                className="flex h-8 w-8 flex-shrink-0 items-center justify-center rounded-lg text-white/40 transition-colors hover:bg-white/10 hover:text-white/70"
-              >
-                <X size={14} />
-              </button>
-            </div>
-          </div>
+          <ImageEditOverlay
+            imageUrl={overlayShot.thumbnailUrl}
+            model={useBoardStore.getState().selectedImageGenModel || "nano-banana-2"}
+            onComplete={(blob) => void handleShotReEditFromOverlay(overlayShot.id, blob)}
+            onClose={() => setEditOverlayShotId(null)}
+          />
         )
       })()}
-
-      <style>{`
-        @keyframes editOverlayIn {
-          from { opacity: 0 }
-          to { opacity: 1 }
-        }
-        @keyframes editBarIn {
-          from { opacity: 0; transform: translateY(12px) scale(0.96) }
-          to { opacity: 1; transform: translateY(0) scale(1) }
-        }
-      `}</style>
 
       {/* ─── Prompt Lab Bottom Panel ─── */}
       {promptLabShotId && (
         <PromptLabPanel shotId={promptLabShotId} onClose={() => setPromptLabShotId(null)} />
       )}
+
+      {/* Shot Studio (replaces old lightbox) */}
+      {lightbox && (
+        <ShotStudio
+          shotId={lightbox.shotId}
+          onClose={() => { setLbPlaying(false); setLightbox(null); setCropMode(false); setCropRect(null) }}
+          onNavigate={(id) => {
+            const s = shots.find((x) => x.id === id)
+            if (s?.thumbnailUrl) {
+              setLightbox({ src: s.thumbnailUrl, shotId: s.id })
+              setLightboxTransform({ flipH: false, flipV: false, rotate: 0 })
+            }
+          }}
+        />
+      )}
+
     </aside>
+    </>
   )
 }

@@ -309,12 +309,12 @@ export default function LibraryPanel({ projectId, hidden = false }: LibraryPanel
                 </div>
               ) : (
                 <div className='grid grid-cols-2 gap-3'>
-                  {filteredFiles.map((file) => {
+                  {filteredFiles.map((file, fileIndex) => {
                     const canPreviewImage = file.type === 'image' && Boolean(file.url)
 
                     return (
                       <div
-                        key={file.id}
+                        key={`${file.id}-${fileIndex}`}
                         className={`group overflow-hidden rounded-xl border transition ${
                           isDark
                             ? 'border-gray-800 bg-gray-900/80 hover:border-gray-700'

@@ -574,7 +574,17 @@ Rules:
 - imagePromptBase and videoPromptBase are structured foundations, not final polished prompts.
 - Keep the number of shots near the recommended shot count unless the analysis strongly implies otherwise.
 - IMPORTANT: Always respond in the same language as the screenplay text. Write ALL fields in the screenplay language, including imagePromptBase and videoPromptBase. If the scene is in Russian, write everything in Russian. If in English, write in English. Match the language of the input exactly.
-- MANDATORY ANCHORS: Every shot MUST reference characters and locations by their exact names from the PROJECT BIBLE. The "subject" field must name the specific character(s) from the Bible. The "environment" field must name the specific location. characterIds must list the exact Bible character names present in that shot. locationId must match a Bible location. Do not use generic descriptions like "a man" or "the room" when a Bible entry exists — always use the anchor name.
+
+CREATIVE CAMERA MANDATE:
+- NEVER use generic static wide establishing shots to open a scene. ALWAYS open with a creative, atmospheric, indirect shot that reveals the world before showing the character.
+- Opening shots MUST use one of these techniques: reflection (TV screen, mirror, window, puddle, glass), POV through an object (through a fan, door crack, keyhole, shelf, bottle), extreme detail (hands, object, texture) that pulls out, tracking along a surface (wall, table, floor) that discovers the subject, overhead/bird's eye that creates geography.
+- EVERY shot must have a specific motivated camera position — never "just a camera pointed at the actor". Ask: WHERE is the camera physically? WHY is it there? What OBSTACLE or FRAME is between camera and subject?
+- Use foreground elements: door frames, furniture edges, curtains, steam, smoke, glass, bars, plants, objects on shelves.
+- The Creative Planner has provided specific ideas — you MUST incorporate at least 2-3 of them into actual shots, not ignore them.
+- Camera should feel like it DISCOVERS the scene, not just RECORDS it.
+- "subject" MUST describe the visible ACTION of the character, not just the name. Example: "БОРИС сидит за столом, нервно перебирает фотографии" — NOT "INT. КВАРТИРА БОРИСА" or just "БОРИС". Always include WHAT the character is DOING.
+- "environment" describes the visible setting details, NOT the scene heading. Example: "Тёмная комната, свет лампы на столе, бутылки, беспорядок" — NOT "INT. КВАРТИРА БОРИСА — НОЧЬ".
+- MANDATORY ANCHORS: Every shot MUST reference characters and locations by their exact names from the PROJECT BIBLE. characterIds must list the exact Bible character names. locationId must match a Bible location. Do not use generic descriptions like "a man" or "the room" — always use the anchor name.
 
 ${DEAKINS_RULES}
 ${SHOT_TRANSITION_RULES}

@@ -1,5 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
+import { safeStorage } from '@/lib/safeStorage'
 import { restoreAllBlobs } from '@/lib/fileStorage'
 
 export type LibraryFile = {
@@ -42,7 +43,9 @@ export const useLibraryStore = create<LibraryState>()(
       isOpen: false,
       searchQuery: '',
       addFile: (file) => {
-        set((state) => ({ files: [file, ...state.files] }))
+        set((state) => ({
+          files: [file, ...state.files.filter((f) => f.id !== file.id)],
+        }))
       },
       addFiles: (files) => {
         set((state) => {
@@ -84,6 +87,7 @@ export const useLibraryStore = create<LibraryState>()(
     }),
     {
       name: 'koza-library',
+      storage: safeStorage,
       partialize: (state) => {
         const persistedFiles: PersistedLibraryFile[] = state.files.map((file) => ({
           id: file.id,

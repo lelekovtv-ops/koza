@@ -1,10 +1,9 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { Maximize2, Minimize2, Upload } from "lucide-react"
+import { Upload } from "lucide-react"
 import { useAutosave } from "@/hooks/useAutosave"
 import SlateScreenplayEditor from "@/components/editor/SlateScreenplayEditor"
-import { StoryboardPanel } from "@/components/editor/screenplay/StoryboardPanel"
 import {
   SCREENPLAY_OVERLAY_PAGE_ZOOM,
   SCREENPLAY_PAGE_HEIGHT_PX,
@@ -85,8 +84,6 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
   const [isBackdropVisible, setBackdropVisible] = useState(false)
   const [openMotionStarted, setOpenMotionStarted] = useState(false)
   const [floatingFromRect, setFloatingFromRect] = useState<NodeScreenRect | null>(null)
-  const [isStoryboardPanelOpen, setIsStoryboardPanelOpen] = useState(false)
-  const [isStoryboardPanelExpanded, setIsStoryboardPanelExpanded] = useState(false)
 
   const titleInputRef = useRef<HTMLInputElement>(null)
   const uploadInputRef = useRef<HTMLInputElement>(null)
@@ -121,10 +118,6 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
   const [aiStatus, setAiStatus] = useState<string>("Applying AI edit...")
   const [aiRippleRange, setAiRippleRange] = useState<AiRippleRange | null>(null)
   const [uploadError, setUploadError] = useState<string | null>(null)
-  const storyboardPanelWidth = useMemo(
-    () => Math.min(348, Math.max(292, Math.round(viewport.width * 0.26))),
-    [viewport.width]
-  )
 
   const scrollToWorkspaceTop = useCallback(() => {
     if (scrollContainerRef.current) {
@@ -334,11 +327,12 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
     // Read title directly from store so this effect only runs on activation,
     // not on every keystroke while the user types a new title.
     const storeTitle = useScriptStore.getState().title
-    const hasExistingTitle = storeTitle.trim().length > 0 && storeTitle !== "UNTITLED"
-    setTitleCommitted(hasExistingTitle)
+    const storeBlocks = useScriptStore.getState().blocks
+    const hasContent = (storeTitle.trim().length > 0 && storeTitle !== "UNTITLED") || storeBlocks.length > 1
+    setTitleCommitted(hasContent)
     setShowStartHint(false)
-    setShowSecondPage(hasExistingTitle)
-    setSecondPageVisible(hasExistingTitle)
+    setShowSecondPage(hasContent)
+    setSecondPageVisible(hasContent)
   }, [active, type])
 
   useEffect(() => {
@@ -349,12 +343,6 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
     setSecondPageVisible(true)
   }, [active, type])
 
-  useEffect(() => {
-    if (!active || phase !== "open" || !showSecondPage) {
-      setIsStoryboardPanelOpen(false)
-      setIsStoryboardPanelExpanded(false)
-    }
-  }, [active, phase, showSecondPage])
 
   const isCyrillicTitle = /[\u0400-\u04FF]/.test(title)
   const writtenByLabel = isCyrillicTitle ? "Автор" : "Written by"
@@ -396,16 +384,6 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
   const overlayPageZoom = PAGE_ZOOM
   const overlayPageBottomGap = Math.max(10, Math.round(PAGE_HEIGHT * Math.max(0, overlayPageZoom - 1)))
 
-  const handleToggleStoryboardFullscreen = () => {
-    if (isStoryboardPanelOpen && isStoryboardPanelExpanded) {
-      setIsStoryboardPanelOpen(false)
-      setIsStoryboardPanelExpanded(false)
-      return
-    }
-
-    setIsStoryboardPanelOpen(true)
-    setIsStoryboardPanelExpanded(true)
-  }
 
   useEffect(() => {
     return () => {
@@ -415,7 +393,6 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
   }, [])
 
   const showFloatingSheet = phase === "opening"
-  const showStoryboardOnTitlePage = phase === "open" && type === "new" && !showSecondPage
 
   const revealMeta = titleCommitted && title.trim().length > 0
 
@@ -481,20 +458,6 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
       />
 
       <div ref={scrollContainerRef} className="fixed inset-0 z-2 overflow-hidden">
-        <div className="fixed right-16 top-5 z-4 flex items-center gap-2">
-          {phase === "open" && (
-            <button
-              type="button"
-              onClick={handleToggleStoryboardFullscreen}
-              className="flex h-9 items-center justify-center rounded-md border border-white/12 bg-[#35322F] px-3 text-[11px] uppercase tracking-[0.18em] text-[#D8CEC2] transition-colors hover:bg-[#403B37] hover:text-white"
-              aria-label={isStoryboardPanelOpen && isStoryboardPanelExpanded ? "Close storyboard" : "Open storyboard fullscreen"}
-              title={isStoryboardPanelOpen && isStoryboardPanelExpanded ? "Close storyboard" : "Open storyboard fullscreen"}
-            >
-              <span className="mr-2 flex items-center">{isStoryboardPanelOpen && isStoryboardPanelExpanded ? <Minimize2 size={14} /> : <Maximize2 size={14} />}</span>
-              {isStoryboardPanelOpen && isStoryboardPanelExpanded ? "Close Storyboard" : "Storyboard"}
-            </button>
-          )}
-        </div>
 
         <div
           className="relative z-2 h-full px-6"
@@ -511,12 +474,7 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
               }}
             >
               <div
-                className="relative flex h-full w-full items-stretch justify-center overflow-visible transition-[transform,opacity] duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]"
-                style={{
-                  opacity: showStoryboardOnTitlePage && isStoryboardPanelExpanded ? 0 : 1,
-                  transform: "translateX(0)",
-                  pointerEvents: showStoryboardOnTitlePage && isStoryboardPanelExpanded ? "none" : "auto",
-                }}
+                className="relative flex h-full w-full items-stretch justify-center overflow-visible"
               >
                 <div
                   ref={screenplayPaneRef}
@@ -524,16 +482,11 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
                   style={{ overscrollBehaviorY: "contain" }}
                 >
                   <div
-                    className="flex min-h-full items-start justify-center px-6 pb-10 transition-transform duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]"
-                    style={{
-                      transform: showStoryboardOnTitlePage && isStoryboardPanelOpen && !isStoryboardPanelExpanded
-                        ? `translateX(-${Math.round(storyboardPanelWidth / 2)}px)`
-                        : "translateX(0)",
-                    }}
+                    className="flex min-h-full items-start justify-center px-6 pb-10"
                   >
                     <div
                       ref={openSheetRef}
-                      className="relative rounded-[3px] border border-[#E5E0DB] bg-white shadow-[0_8px_60px_rgba(0,0,0,0.4)] transition-transform duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]"
+                      className="relative rounded-[3px] border border-[#E5E0DB] bg-white shadow-[0_8px_60px_rgba(0,0,0,0.4)]"
                       style={{
                         width: PAGE_WIDTH,
                         minHeight: PAGE_HEIGHT,
@@ -543,81 +496,77 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
                       }}
                     >
                       {type === "new" && (
-                        <div className="relative w-full" style={{ height: PAGE_HEIGHT }}>
-                          <div className="absolute left-1/2 top-[40%] w-[78%] -translate-x-1/2 -translate-y-1/2 text-center">
-                            <input
-                              ref={titleInputRef}
-                              value={title === "UNTITLED" && !titleCommitted ? "" : title}
-                              onChange={(event) => {
-                                setTitle(event.target.value.toUpperCase())
-                              }}
-                              onKeyDown={handleTitleEnter}
-                              placeholder="Write film title"
-                              className="w-full bg-transparent text-center text-[28px] font-normal text-[#1a1a1a] outline-none placeholder:text-[#C4B9AC]"
-                              style={{ fontFamily: '"PT Serif", "Times New Roman", serif' }}
-                            />
+                        <div className="relative w-full" style={{ height: PAGE_HEIGHT, fontFamily: '"Courier New", Courier, monospace' }}>
+                          {/* Title — centered at ~40% from top (standard screenplay) */}
+                          <div className="absolute left-0 right-0" style={{ top: "33%" }}>
+                            <div className="mx-auto text-center" style={{ paddingLeft: 108, paddingRight: 72 }}>
+                              <input
+                                ref={titleInputRef}
+                                value={title === "UNTITLED" && !titleCommitted ? "" : title}
+                                onChange={(event) => {
+                                  setTitle(event.target.value.toUpperCase())
+                                }}
+                                onKeyDown={handleTitleEnter}
+                                placeholder="TITLE"
+                                className="w-full bg-transparent text-center text-[12pt] font-bold uppercase text-[#1a1a1a] outline-none placeholder:text-[#C4B9AC]"
+                                style={{ fontFamily: '"Courier New", Courier, monospace', lineHeight: "1" }}
+                              />
+                            </div>
+                          </div>
 
-                            <div
-                              className={`mx-auto mt-10 flex w-full max-w-[360px] flex-col items-center text-center transition-opacity duration-300 ${revealMeta ? "opacity-100" : "opacity-0"}`}
-                            >
-                              <p className="text-[16px] font-normal text-[#8A8178]" style={{ fontFamily: '"PT Serif", "Times New Roman", serif' }}>
+                          {/* Written by + Author — centered, below title */}
+                          <div
+                            className={`absolute left-0 right-0 transition-opacity duration-300 ${revealMeta ? "opacity-100" : "opacity-0"}`}
+                            style={{ top: "40%" }}
+                          >
+                            <div className="mx-auto text-center" style={{ paddingLeft: 108, paddingRight: 72 }}>
+                              <p className="text-[12pt] text-[#1a1a1a]" style={{ fontFamily: '"Courier New", Courier, monospace', lineHeight: "2" }}>
                                 {writtenByLabel}
                               </p>
                               <input
                                 value={author}
                                 onChange={(event) => setAuthor(event.target.value)}
                                 placeholder={isCyrillicTitle ? "Имя автора" : "Author name"}
-                                className="mt-3 w-full bg-transparent text-center text-[18px] font-normal text-[#1a1a1a] outline-none placeholder:text-[#C4B9AC]"
-                                style={{ fontFamily: '"PT Serif", "Times New Roman", serif' }}
+                                className="w-full bg-transparent text-center text-[12pt] text-[#1a1a1a] outline-none placeholder:text-[#C4B9AC]"
+                                style={{ fontFamily: '"Courier New", Courier, monospace', lineHeight: "1" }}
                               />
-                              <input
-                                value={date}
-                                onChange={(event) => setDate(event.target.value)}
-                                className="mt-10 w-full bg-transparent text-center text-[14px] font-normal text-[#A09890] outline-none"
-                                style={{ fontFamily: '"PT Serif", "Times New Roman", serif' }}
-                              />
-                              <div className="mt-3 flex flex-col items-center gap-1 text-center">
-                                <span className="text-[14px] font-normal text-[#A09890]" style={{ fontFamily: '"PT Serif", "Times New Roman", serif' }}>
-                                  {draftLabel}
-                                </span>
+                            </div>
+                          </div>
+
+                          {/* Draft + Date — bottom left (standard screenplay placement) */}
+                          <div
+                            className={`absolute transition-opacity duration-300 ${revealMeta ? "opacity-100" : "opacity-0"}`}
+                            style={{ bottom: 72, left: 108 }}
+                          >
+                            <div className="flex flex-col gap-0 text-left">
+                              <div className="flex items-baseline gap-0">
                                 <input
                                   value={draft}
                                   onChange={(event) => setDraft(event.target.value)}
-                                  className="w-[170px] bg-transparent text-center text-[14px] font-normal text-[#A09890] outline-none"
-                                  style={{ fontFamily: '"PT Serif", "Times New Roman", serif' }}
+                                  className="bg-transparent text-left text-[12pt] text-[#1a1a1a] outline-none"
+                                  style={{ fontFamily: '"Courier New", Courier, monospace', lineHeight: "2", width: 200 }}
                                 />
                               </div>
+                              <input
+                                value={date}
+                                onChange={(event) => setDate(event.target.value)}
+                                className="bg-transparent text-left text-[12pt] text-[#1a1a1a] outline-none"
+                                style={{ fontFamily: '"Courier New", Courier, monospace', lineHeight: "2", width: 200 }}
+                              />
                             </div>
-
-                            {showStartHint && (
-                              <div className="mt-6 text-center text-[12px] text-[#B5ABA0]" style={{ fontFamily: '"PT Serif", "Times New Roman", serif' }}>
-                                {startWritingLabel}
-                              </div>
-                            )}
                           </div>
+
+                          {showStartHint && (
+                            <div className="absolute bottom-6 left-0 right-0 text-center text-[10pt] text-[#B5ABA0]" style={{ fontFamily: '"Courier New", Courier, monospace' }}>
+                              {startWritingLabel}
+                            </div>
+                          )}
                         </div>
                       )}
                     </div>
                   </div>
                 </div>
               </div>
-
-              {showStoryboardOnTitlePage && (
-                <StoryboardPanel
-                  isOpen={isStoryboardPanelOpen}
-                  isExpanded={isStoryboardPanelExpanded}
-                  panelWidth={storyboardPanelWidth}
-                  backgroundColor={OVERLAY_BG}
-                  onClose={() => {
-                    setIsStoryboardPanelOpen(false)
-                    setIsStoryboardPanelExpanded(false)
-                  }}
-                  onToggleExpanded={() => {
-                    setIsStoryboardPanelOpen((currentOpen) => !currentOpen)
-                    setIsStoryboardPanelExpanded(false)
-                  }}
-                />
-              )}
             </div>
           )}
 
@@ -630,12 +579,7 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
                   }}
                 >
                   <div
-                    className="relative flex h-full w-full items-stretch justify-center overflow-visible transition-[transform,opacity] duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]"
-                    style={{
-                      opacity: isStoryboardPanelExpanded ? 0 : 1,
-                      transform: "translateX(0)",
-                      pointerEvents: isStoryboardPanelExpanded ? "none" : "auto",
-                    }}
+                    className="relative flex h-full w-full items-stretch justify-center overflow-visible"
                   >
                     <div
                       ref={screenplayPaneRef}
@@ -643,15 +587,10 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
                       style={{ overscrollBehaviorY: "contain" }}
                     >
                       <div
-                        className="flex min-h-full items-start justify-center px-6 pb-10 transition-transform duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]"
-                        style={{
-                          transform: isStoryboardPanelOpen && !isStoryboardPanelExpanded
-                            ? `translateX(-${Math.round(storyboardPanelWidth / 2)}px)`
-                            : "translateX(0)",
-                        }}
+                        className="flex min-h-full items-start justify-center px-6 pb-10"
                       >
                         <div
-                          className="relative transition-transform duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]"
+                          className="relative"
                           style={{
                             transform: `scale(${overlayPageZoom})`,
                             transformOrigin: "top center",
@@ -702,21 +641,6 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
                       </div>
                     </div>
                   </div>
-
-                  <StoryboardPanel
-                    isOpen={isStoryboardPanelOpen}
-                    isExpanded={isStoryboardPanelExpanded}
-                    panelWidth={storyboardPanelWidth}
-                    backgroundColor={OVERLAY_BG}
-                    onClose={() => {
-                      setIsStoryboardPanelOpen(false)
-                      setIsStoryboardPanelExpanded(false)
-                    }}
-                    onToggleExpanded={() => {
-                      setIsStoryboardPanelOpen((currentOpen) => !currentOpen)
-                      setIsStoryboardPanelExpanded(false)
-                    }}
-                  />
                 </div>
           )}
         </div>

@@ -1,14 +1,17 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
+import { safeStorage } from "@/lib/safeStorage"
 import { loadBlob } from "@/lib/fileStorage"
 import { useDevLogStore } from "@/store/devlog"
 import {
   type BibleReferenceImage,
   type CharacterEntry,
   type LocationEntry,
+  type PropEntry,
   linkCharactersToScenes,
   parseCharacters,
   parseLocations,
+  parseProps,
 } from "@/lib/bibleParser"
 import { type Scene } from "@/lib/sceneParser"
 import { type Block } from "@/lib/screenplayFormat"
@@ -16,11 +19,15 @@ import { type Block } from "@/lib/screenplayFormat"
 interface BibleState {
   characters: CharacterEntry[]
   locations: LocationEntry[]
+  props: PropEntry[]
   storyHistory: string
   directorVision: string
   updateFromScreenplay: (blocks: Block[], scenes: Scene[]) => void
   updateCharacter: (id: string, patch: Partial<CharacterEntry>) => void
   updateLocation: (id: string, patch: Partial<LocationEntry>) => void
+  updateProp: (id: string, patch: Partial<PropEntry>) => void
+  addProp: (prop: PropEntry) => void
+  removeProp: (id: string) => void
   updateStoryHistory: (value: string) => void
   updateDirectorVision: (value: string) => void
 }
@@ -177,6 +184,7 @@ export const useBibleStore = create<BibleState>()(
     (set) => ({
       characters: [],
       locations: [],
+      props: [],
       storyHistory: "",
       directorVision: "",
       updateFromScreenplay: (blocks, scenes) => {
@@ -186,6 +194,7 @@ export const useBibleStore = create<BibleState>()(
         set((state) => ({
           characters: mergeCharacters(state.characters, characters),
           locations: mergeLocations(state.locations, locations),
+          props: parseProps(blocks, scenes, state.props),
         }))
 
         useDevLogStore.getState().log({
@@ -217,6 +226,24 @@ export const useBibleStore = create<BibleState>()(
           )),
         }))
       },
+      updateProp: (id, patch) => {
+        set((state) => ({
+          props: state.props.map((entry) => (
+            entry.id === id ? { ...entry, ...patch, id: entry.id } : entry
+          )),
+        }))
+      },
+      addProp: (prop) => {
+        set((state) => {
+          if (state.props.some((p) => p.id === prop.id)) return state
+          return { props: [...state.props, prop].sort((a, b) => a.name.localeCompare(b.name, "ru")) }
+        })
+      },
+      removeProp: (id) => {
+        set((state) => ({
+          props: state.props.filter((p) => p.id !== id),
+        }))
+      },
       updateStoryHistory: (value) => {
         set({ storyHistory: value })
       },
@@ -226,9 +253,11 @@ export const useBibleStore = create<BibleState>()(
     }),
     {
       name: "koza-bible-v1",
+      storage: safeStorage,
       partialize: (state) => ({
         characters: state.characters,
         locations: state.locations,
+        props: state.props,
         storyHistory: state.storyHistory,
         directorVision: state.directorVision,
       }),
@@ -246,10 +275,16 @@ export const useBibleStore = create<BibleState>()(
             referenceImages: await restoreReferenceImages(getReferenceImages(entry)),
             generatedImageUrl: await restorePrimaryImage(entry.imageBlobKey, entry.generatedImageUrl),
           }))),
-        ]).then(([characters, locations]) => {
+          Promise.all((state.props ?? []).map(async (entry) => ({
+            ...entry,
+            referenceImages: await restoreReferenceImages(getReferenceImages(entry)),
+            generatedImageUrl: await restorePrimaryImage(entry.imageBlobKey, entry.generatedImageUrl),
+          }))),
+        ]).then(([characters, locations, props]) => {
           useBibleStore.setState({
             characters,
             locations,
+            props,
             storyHistory: state.storyHistory ?? "",
             directorVision: state.directorVision ?? "",
           })

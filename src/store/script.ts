@@ -1,5 +1,6 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
+import { safeStorage } from "@/lib/safeStorage"
 import { useProjectsStore } from "@/store/projects"
 import {
   type Block,
@@ -283,6 +284,6 @@ export const useScriptStore = create<ScriptState>()(
           }
         }),
     }),
-    { name: "koza-script" }
+    { name: "koza-script", storage: safeStorage }
   )
 )

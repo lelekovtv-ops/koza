@@ -1,17 +1,18 @@
 "use client"
 
 import React, { useCallback, useEffect, useMemo, useState } from "react"
-import { ChevronDown, ChevronLeft, ChevronRight, Loader2, Minus, Plus, Sparkles, Upload, X } from "lucide-react"
+import { ChevronDown, Loader2, Minus, Plus, RotateCcw, Sparkles, Upload } from "lucide-react"
 import Image from "next/image"
 import { useTimelineStore } from "@/store/timeline"
 import { useBibleStore } from "@/store/bible"
 import { useBoardStore } from "@/store/board"
 import { getCharactersForShot, getLocationsForShot } from "@/lib/promptBuilder"
 import { getShotGenerationReferenceImages, convertReferenceImagesToDataUrls } from "@/lib/imageGenerationReferences"
-import { DEFAULT_PROJECT_STYLE } from "@/lib/projectStyle"
+import { DEFAULT_PROJECT_STYLE, STYLE_PRESETS } from "@/lib/projectStyle"
 import type { CharacterEntry, LocationEntry } from "@/lib/bibleParser"
 import type { TimelineShot } from "@/store/timeline"
 import { censorPrompt, censorSceneContinuity, type CensorResult, type ContinuityCensorResult } from "@/lib/cinematic/promptCensor"
+import { translateDirectorVision, translateDirectorVisionLocally } from "@/lib/cinematic/directorVisionTranslator"
 
 // ─── Types ───
 
@@ -41,10 +42,39 @@ function buildModifiers(shot: TimelineShot, characters: CharacterEntry[], locati
   const loc = getLocationsForShot(shot, locations)[0] ?? null
   const hasImagePrompt = Boolean(shot.imagePrompt)
 
-  // ── 1. Кадр — основное описание
+  // ── 1. Кадр — основное описание (стилевые фразы вычищаются — стиль идёт отдельным модификатором)
   if (hasImagePrompt) {
-    // imagePrompt из брейкдауна уже содержит полное описание кадра
-    mods.push({ id: "base", label: "Кадр", content: shot.imagePrompt, enabled: true, color: "#E5E0DB" })
+    let cleanedPrompt = shot.imagePrompt
+    // Strip all known style preset phrases from imagePrompt to avoid conflicts with current style
+    for (const preset of STYLE_PRESETS) {
+      if (preset.prompt) {
+        // Remove exact match and common variations (with trailing period, comma, etc.)
+        cleanedPrompt = cleanedPrompt.replace(new RegExp(preset.prompt.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "[.,;]?\\s*", "gi"), "")
+      }
+    }
+    // Also strip common standalone style fragments that leak from breakdown
+    cleanedPrompt = cleanedPrompt
+      // Strip all style-related phrases (EN + RU)
+      .replace(/\b(Anime style|anime style|Аниме стиль|аниме стиль),?\s*(cel shading,?\s*)?(bold outlines,?\s*)?(flat color blocks,?\s*)?(dramatic shadows,?\s*)?/gi, "")
+      .replace(/\b(Photorealistic|photorealistic),?\s*(35mm film,?\s*)?(natural lighting,?\s*)?/gi, "")
+      .replace(/\b(Film noir|film noir),?\s*(high contrast,?\s*)?(deep shadows,?\s*)?(black and white,?\s*)?/gi, "")
+      .replace(/\bARRI Alexa look,?\s*/gi, "")
+      .replace(/\bcinematic composition[.,]?\s*/gi, "")
+      .replace(/\bdramatic lighting[.,]?\s*/gi, "")
+      .replace(/\bcel shading,?\s*/gi, "")
+      .replace(/\bbold outlines,?\s*/gi, "")
+      // Strip constraints that come from Fincher prompts
+      .replace(/\b16:9[^.]*\.\s*/gi, "")
+      .replace(/\bNo text[^.]*\.\s*/gi, "")
+      .replace(/\bnatural anatomy[.,]?\s*/gi, "")
+      .replace(/\bno distortion[.,]?\s*/gi, "")
+      .replace(/\bno watermark[s]?[.,]?\s*/gi, "")
+      .replace(/\bno logo[s]?[.,]?\s*/gi, "")
+      .replace(/\bno UI elements[.,]?\s*/gi, "")
+      .replace(/\bkeep same character[.,]?\s*/gi, "")
+      .replace(/^\s*[,;.\s]+/, "")
+      .trim()
+    mods.push({ id: "base", label: "Кадр", content: cleanedPrompt, enabled: true, color: "#E5E0DB" })
   } else {
     // Собираем вручную из метаданных
     const parts = [
@@ -53,6 +83,16 @@ function buildModifiers(shot: TimelineShot, characters: CharacterEntry[], locati
       shot.visualDescription || "",
     ].filter(Boolean)
     mods.push({ id: "base", label: "Кадр", content: parts.join(" "), enabled: true, color: "#E5E0DB" })
+  }
+
+  // ── 1b. Действие персонажа (caption / visualDescription)
+  const actionText = shot.caption || shot.visualDescription || ""
+  if (actionText && hasImagePrompt) {
+    // Добавляем только если imagePrompt не содержит это действие целиком
+    const alreadyDescribed = actionText.length < 20 || shot.imagePrompt.toLowerCase().includes(actionText.slice(0, 30).toLowerCase())
+    if (!alreadyDescribed) {
+      mods.push({ id: "action", label: "Действие", content: actionText, enabled: true, color: "#FCD34D" })
+    }
   }
 
   // ── 2. Персонажи — только если imagePrompt не содержит их уже
@@ -80,36 +120,37 @@ function buildModifiers(shot: TimelineShot, characters: CharacterEntry[], locati
   // ── 5. Стиль (без "No text" — это отдельный модификатор)
   mods.push({ id: "style", label: "Стиль", content: `${style}. 16:9.`, enabled: true, color: "#F9A8D4" })
 
-  // ── 6. Режиссёрская заметка
+  // ── 6. Режиссёрская заметка — переводится в визуальный язык локально, AI-перевод при клике
   if (shot.directorNote) {
-    mods.push({ id: "dir", label: "Режиссёр", content: shot.directorNote, enabled: true, color: "#FDBA74" })
+    const visualNote = translateDirectorVisionLocally(shot.directorNote)
+    mods.push({ id: "dir", label: "Видение", content: visualNote || shot.directorNote, enabled: true, color: "#FDBA74" })
   }
 
-  // ── 7. Операторская заметка
+  // ── 7. Операторская заметка (выключена — технические инструкции оператору)
   if (shot.cameraNote && !hasImagePrompt) {
-    mods.push({ id: "cam", label: "Камера", content: shot.cameraNote, enabled: true, color: "#67E8F9" })
+    mods.push({ id: "cam", label: "Камера", content: shot.cameraNote, enabled: false, color: "#67E8F9" })
   }
 
-  // ── 8. Continuity / Заметки
+  // ── 8. Continuity / Заметки (выключен — это инструкции для режиссёра, не для генератора)
   if (shot.notes) {
-    mods.push({ id: "notes", label: "Continuity", content: shot.notes, enabled: true, color: "#94A3B8" })
+    mods.push({ id: "notes", label: "Continuity", content: shot.notes, enabled: false, color: "#94A3B8" })
   }
 
-  // ── 9. Референс-инструкция (когда есть рефы — важный модификатор)
+  // ── 9. Референс-инструкция (короткая — reference images передаются отдельно через API)
   const hasAnyRefs = shotChars.some((c) => Boolean(c.generatedPortraitUrl) || c.referenceImages.length > 0)
     || Boolean(loc && (loc.generatedImageUrl || loc.referenceImages.length > 0))
   if (hasAnyRefs) {
     mods.push({
       id: "refs",
       label: "Рефы",
-      content: "Use the provided reference images as hard visual anchors. Preserve the exact face identity, hair, costume silhouette, proportions, and environment design from those references. Do not redesign recurring characters or locations.",
+      content: "Preserve character identity and environment from reference images.",
       enabled: true,
       color: "#C4B5FD",
     })
   }
 
   // ── 10. Без текста (отдельный guardrail)
-  mods.push({ id: "notext", label: "Без текста", content: "No visible text, no logos, no watermarks, no labels.", enabled: true, color: "#FCA5A5" })
+  mods.push({ id: "notext", label: "Без текста", content: "No text, no logos, no watermarks.", enabled: true, color: "#FCA5A5" })
 
   // ── 11. Исходный текст сценария (выключен — для контекста)
   if (shot.sourceText && shot.sourceText.length > 10) {
@@ -150,6 +191,10 @@ export function PromptLabPanel({ shotId, onClose }: PromptLabPanelProps) {
   const [genCount, setGenCount] = useState(1)
   const [isManualEdit, setIsManualEdit] = useState(false)
   const [manualPrompt, setManualPrompt] = useState("")
+  const [editingModId, setEditingModId] = useState<string | null>(null)
+  const [editingModDraft, setEditingModDraft] = useState("")
+  const [originalMods, setOriginalMods] = useState<Map<string, string>>(new Map())
+  const [aiTranslating, setAiTranslating] = useState(false)
 
   const referenceImages = useMemo(() => {
     if (!shot) return []
@@ -166,15 +211,59 @@ export function PromptLabPanel({ shotId, onClose }: PromptLabPanelProps) {
     return entries.sort((a, b) => b.ts - a.ts)
   }, [allShots])
 
+  // Rebuild when shot changes + auto AI-translate director vision
   useEffect(() => {
     if (!shot) return
-    setMods(buildModifiers(shot, characters, locations, projectStyle || DEFAULT_PROJECT_STYLE))
+    const newMods = buildModifiers(shot, characters, locations, projectStyle || DEFAULT_PROJECT_STYLE)
+    setMods(newMods)
+    setOriginalMods(new Map(newMods.map((m) => [m.id, m.content])))
     setCustomText("")
     setIsManualEdit(false)
     setManualPrompt("")
+    setEditingModId(null)
     setShowLibrary(false)
     setShowModelPicker(false)
+
+    // Auto AI-translate director note into visual language
+    if (shot.directorNote && shot.directorNote.length > 10) {
+      setAiTranslating(true)
+      translateDirectorVision({
+        directorNote: shot.directorNote,
+        cameraNote: shot.cameraNote || undefined,
+        sceneContext: shot.caption || shot.label || undefined,
+      }).then((result) => {
+        if (result) {
+          setMods((prev) => prev.map((m) => m.id === "dir" ? { ...m, content: result } : m))
+          setOriginalMods((prev) => { const next = new Map(prev); next.set("dir", result); return next })
+        }
+      }).catch(() => {
+        // Локальный fallback уже применён в buildModifiers
+      }).finally(() => {
+        setAiTranslating(false)
+      })
+    }
   }, [shotId])
+
+  // Rebuild modifiers when style preset changes (keep user edits for non-style mods)
+  useEffect(() => {
+    if (!shot) return
+    const freshMods = buildModifiers(shot, characters, locations, projectStyle || DEFAULT_PROJECT_STYLE)
+    setMods((prev) => prev.map((m) => {
+      const fresh = freshMods.find((f) => f.id === m.id)
+      if (!fresh) return m
+      // Only update if user hasn't edited this modifier
+      const orig = originalMods.get(m.id)
+      if (orig !== undefined && m.content !== orig) return { ...m, color: fresh.color }
+      return fresh
+    }))
+    // Update originals for style mod
+    setOriginalMods((prev) => {
+      const next = new Map(prev)
+      const styleMod = freshMods.find((m) => m.id === "style")
+      if (styleMod) next.set("style", styleMod.content)
+      return next
+    })
+  }, [projectStyle])
 
   const rawPrompt = useMemo(() => {
     if (isManualEdit) return manualPrompt
@@ -269,26 +358,128 @@ export function PromptLabPanel({ shotId, onClose }: PromptLabPanelProps) {
         {/* ─── Row 1: References + Prompt ─── */}
         <div className="px-5 pt-5 pb-3">
           {/* Reference images */}
-          <div className="mb-3 flex items-center gap-2">
+          <div className="mb-2 flex items-center gap-1.5">
             {referenceImages.map((ref, i) => (
               <div key={`ref-${ref.kind}-${i}`} className="relative" title={ref.label}>
-                <Image src={ref.url} alt={ref.label} width={52} height={52} unoptimized
-                  className="h-[52px] w-[52px] rounded-xl border border-white/10 object-cover transition-transform hover:scale-105" />
+                <Image src={ref.url} alt={ref.label} width={36} height={36} unoptimized
+                  className="h-9 w-9 rounded-lg border border-white/10 object-cover transition-transform hover:scale-105" />
               </div>
             ))}
-            <button type="button" className="flex h-[52px] w-[52px] items-center justify-center rounded-xl border border-dashed border-white/15 text-white/25 transition-colors hover:border-white/30 hover:text-white/40">
-              <Upload size={18} />
+            <button type="button" className="flex h-9 w-9 items-center justify-center rounded-lg border border-dashed border-white/15 text-white/25 transition-colors hover:border-white/30 hover:text-white/40">
+              <Upload size={14} />
             </button>
           </div>
 
-          {/* Prompt textarea */}
-          <textarea
-            value={finalPrompt}
-            onChange={(e) => { setIsManualEdit(true); setManualPrompt(e.target.value) }}
-            rows={2}
-            className="w-full resize-none bg-transparent text-[14px] leading-relaxed text-white/85 outline-none placeholder:text-white/25"
-            placeholder="Опишите, что хотите сгенерировать..."
-          />
+          {/* Prompt display — each modifier as colored block */}
+          <div
+            className="max-h-[45vh] overflow-y-auto"
+            style={{ scrollbarWidth: "thin" }}
+          >
+            {mods.filter((m) => m.enabled).map((m) => {
+              const isEditing = editingModId === m.id
+              const isModified = originalMods.get(m.id) !== undefined && m.content !== originalMods.get(m.id)
+
+              return (
+                <div key={m.id} className="group mb-1 flex items-start gap-1">
+                  {/* Color dot + label */}
+                  <div className="mt-1.5 flex shrink-0 items-center gap-1">
+                    <span className="block h-2 w-2 rounded-full" style={{ backgroundColor: m.color }} />
+                  </div>
+
+                  {/* Content — editable */}
+                  {isEditing ? (
+                    <textarea
+                      autoFocus
+                      value={editingModDraft}
+                      onChange={(e) => setEditingModDraft(e.target.value)}
+                      onBlur={() => {
+                        setMods((prev) => prev.map((x) => x.id === m.id ? { ...x, content: editingModDraft } : x))
+                        setEditingModId(null)
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Escape") { setEditingModId(null) }
+                        if (e.key === "Enter" && !e.shiftKey) {
+                          e.preventDefault()
+                          setMods((prev) => prev.map((x) => x.id === m.id ? { ...x, content: editingModDraft } : x))
+                          setEditingModId(null)
+                        }
+                      }}
+                      rows={3}
+                      className="min-h-[32px] w-full resize-y rounded bg-white/5 px-2 py-1 text-[12px] leading-relaxed outline-none ring-1 ring-inset ring-white/15"
+                      style={{ color: m.color }}
+                    />
+                  ) : (
+                    <button
+                      type="button"
+                      className="w-full rounded px-2 py-1 text-left text-[12px] leading-relaxed transition-colors hover:bg-white/5"
+                      style={{ color: m.color, opacity: 0.85 }}
+                      onClick={() => { setEditingModId(m.id); setEditingModDraft(m.content); setIsManualEdit(false) }}
+                    >
+                      <span className="mr-1 text-[9px] font-bold uppercase tracking-wider" style={{ color: m.color, opacity: 0.5 }}>{m.label}</span>
+                      {m.content}
+                    </button>
+                  )}
+
+                  {/* Reset button — only if modified */}
+                  {isModified && !isEditing && (
+                    <button
+                      type="button"
+                      title="Вернуть оригинал"
+                      className="mt-1 shrink-0 rounded p-0.5 text-white/30 transition-colors hover:text-[#D4A853]"
+                      onClick={() => {
+                        const orig = originalMods.get(m.id)
+                        if (orig !== undefined) {
+                          setMods((prev) => prev.map((x) => x.id === m.id ? { ...x, content: orig } : x))
+                        }
+                      }}
+                    >
+                      <RotateCcw size={10} />
+                    </button>
+                  )}
+
+                  {/* AI translate button — for director vision */}
+                  {m.id === "dir" && !isEditing && !aiTranslating && shot?.directorNote && (
+                    <button
+                      type="button"
+                      title="AI перевод в визуальный язык"
+                      className="mt-1 shrink-0 rounded px-1 py-0.5 text-[8px] font-bold uppercase tracking-wider text-[#D4A853]/60 transition-colors hover:bg-[#D4A853]/10 hover:text-[#D4A853]"
+                      onClick={async () => {
+                        setAiTranslating(true)
+                        try {
+                          const result = await translateDirectorVision({
+                            directorNote: shot.directorNote,
+                            cameraNote: shot.cameraNote || undefined,
+                            sceneContext: shot.caption || shot.label || undefined,
+                          })
+                          if (result) {
+                            setMods((prev) => prev.map((x) => x.id === "dir" ? { ...x, content: result } : x))
+                          }
+                        } catch (err) {
+                          console.error("AI vision translate failed:", err)
+                        } finally {
+                          setAiTranslating(false)
+                        }
+                      }}
+                    >
+                      AI
+                    </button>
+                  )}
+                  {m.id === "dir" && aiTranslating && (
+                    <Loader2 size={10} className="mt-1 shrink-0 animate-spin text-[#D4A853]/50" />
+                  )}
+                </div>
+              )
+            })}
+            {customText.trim() && (
+              <div className="mb-1 flex items-start gap-1">
+                <span className="mt-1.5 block h-2 w-2 shrink-0 rounded-full bg-white/30" />
+                <span className="px-2 py-1 text-[12px] leading-relaxed text-white/60">
+                  <span className="mr-1 text-[9px] font-bold uppercase tracking-wider text-white/30">Custom</span>
+                  {customText}
+                </span>
+              </div>
+            )}
+          </div>
 
           {/* Censor issues */}
           {allCensorIssues.length > 0 && (

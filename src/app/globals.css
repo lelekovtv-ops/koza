@@ -1,5 +1,15 @@
-@import "tailwindcss";
+@import "tailwindcss" source(none);
+@source "../app";
+@source "../components";
 @import "../components/editor/screenplay/screenplayAiEffects.css";
+
+:root {
+  --font-geist-sans: "Helvetica Neue", Helvetica, Arial, sans-serif;
+  --font-geist-mono: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --font-mono: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --font-serif: Georgia, "Times New Roman", Times, serif;
+  --font-screenplay-mono: "Courier New", Courier, monospace;
+}
 
 html,
 body {

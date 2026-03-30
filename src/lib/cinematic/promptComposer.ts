@@ -367,8 +367,7 @@ function buildFallbackImagePackage(
     shot.subject,
     shot.environment,
     shot.lighting,
-    shot.palette.length > 0 ? `palette ${shot.palette.join(", ")}` : "",
-    continuityPrompt,
+    shot.palette.length > 0 ? `Palette: ${shot.palette.join(", ")}` : "",
     styleDirective,
   ])
 
@@ -520,11 +519,8 @@ function normalizePromptComposerShot(
     caption: normalizePreferredText(composed.caption, compactText([editorialNote?.shotDescription, shot.subject, shot.environment])),
     directorNote: enrichText(directorNote, `Let the emotional turn stay obvious for the viewer.`, config.textRichness),
     cameraNote: enrichText(cameraNote, `Keep the framing logic and movement motivation easy to follow.`, config.textRichness),
-    imagePrompt: mergePromptWithContinuity(normalizePreferredText(composed.imagePrompt, imagePackage.finalPrompt), continuityConstraint),
-    videoPrompt: mergePromptWithContinuity(
-      normalizePreferredText(composed.videoPrompt, videoPackage.finalPrompt),
-      compactText([relationTransition, continuityConstraint]),
-    ),
+    imagePrompt: normalizePreferredText(composed.imagePrompt, imagePackage.finalPrompt),
+    videoPrompt: normalizePreferredText(composed.videoPrompt, videoPackage.finalPrompt),
     visualDescription: normalizePreferredText(
       composed.visualDescription,
       compactText([editorialNote?.visualDescription, editorialNote?.shotDescription, shot.subject, shot.environment, shot.lighting]),
@@ -562,7 +558,11 @@ Rules:
 - Keep the narrative intent exactly as provided.
 - IMPORTANT: Write ALL fields in the same language as the screenplay text. If the scene is in Russian, write everything in Russian — including imagePrompt, videoPrompt, caption, directorNote. If in English, write in English. Match the language of the input exactly.
 - cameraNote may include English technical film terminology when there is no equivalent term.
-- imagePrompt describes a still frame.
+- caption MUST describe what is HAPPENING in the shot — the visible action, not the scene heading. NEVER use the scene heading (e.g. "INT. КВАРТИРА БОРИСА — НОЧЬ") as caption. Write what the character is DOING: "БОРИС сидит за столом, перебирает старые фотографии", not the location name.
+- directorNote describes the emotional intent, mood, and what the director wants the audience to feel.
+- cameraNote MUST be specific and creative — include exact lens (e.g. "28mm"), camera position (e.g. "камера на уровне стола", "сквозь лопасти вентилятора", "отражение в экране телевизора"), foreground elements, and motivation. NEVER write just "Static camera" or "Статичный кадр" — always describe WHERE the camera is and WHAT is between camera and subject.
+- imagePrompt MUST describe the specific creative camera angle and framing, not just the action. Include: camera position, foreground obstacles, reflections, depth layers, atmospheric elements (дым, пыль, свет). The image should feel like a frame from a Deakins or Lubezki film, not a surveillance camera.
+- imagePrompt describes a still frame for image generation.
 - videoPrompt extends the image prompt with motion, duration and pacing.
 - MANDATORY ANCHORS: caption, directorNote, imagePrompt, and videoPrompt MUST reference characters and locations by their exact names from the PROJECT BIBLE. Never use generic references like "a man", "the character", "the room" when a Bible entry exists. Always use the exact character name (e.g. "БОРИС") and location name (e.g. "Квартира Бориса"). These names are visual anchors that connect the shot to reference images.
 - Use the provided continuity memory to state what must remain identical, what may change, and what must prepare the next shot.

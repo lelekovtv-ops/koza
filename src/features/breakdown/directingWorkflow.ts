@@ -1,5 +1,5 @@
 import { buildImagePrompt, buildVideoPrompt } from "@/lib/promptBuilder"
-import type { CharacterEntry, LocationEntry } from "@/lib/bibleParser"
+import type { CharacterEntry, LocationEntry, PropEntry } from "@/lib/bibleParser"
 import type { TimelineShot } from "@/store/timeline"
 
 const SPATIAL_CONTINUITY_LOCK = [
@@ -20,10 +20,11 @@ export function buildScenePromptDrafts(
   characters: CharacterEntry[],
   locations: LocationEntry[],
   projectStyle: string,
+  props?: PropEntry[],
 ): GeneratedScenePrompt[] {
   return sceneShots.map((shot) => {
-    const baseImagePrompt = buildImagePrompt(shot, characters, locations, projectStyle)
-    const baseVideoPrompt = buildVideoPrompt(shot, characters, locations, projectStyle)
+    const baseImagePrompt = buildImagePrompt(shot, characters, locations, projectStyle, props)
+    const baseVideoPrompt = buildVideoPrompt(shot, characters, locations, projectStyle, props)
 
     return {
       shotId: shot.id,

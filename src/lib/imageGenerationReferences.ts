@@ -1,9 +1,9 @@
-import type { CharacterEntry, LocationEntry } from "@/lib/bibleParser"
+import type { CharacterEntry, LocationEntry, PropEntry } from "@/lib/bibleParser"
 import { getCharactersForShot, getLocationsForShot } from "@/lib/promptBuilder"
 import { GENERATED_CANONICAL_IMAGE_ID } from "@/store/bible"
 import type { TimelineShot } from "@/store/timeline"
 
-export type GenerationReferenceKind = "character" | "location"
+export type GenerationReferenceKind = "character" | "location" | "prop"
 
 export interface GenerationReferenceImage {
   id: string
@@ -141,7 +141,20 @@ export function getShotGenerationReferenceImages(
 
   for (const shotLocation of shotLocations) {
     for (const reference of getLocationReferenceImages(shotLocation, 2)) {
-      pushUniqueReference(references, reference, seenUrls, 5)
+      pushUniqueReference(references, reference, seenUrls, 8)
+    }
+  }
+
+  // Custom references added by user in ShotStudio
+  const customUrls = (shot as TimelineShot & { customReferenceUrls?: string[] }).customReferenceUrls
+  if (customUrls) {
+    for (const url of customUrls) {
+      pushUniqueReference(references, {
+        id: `custom-${url.slice(-12)}`,
+        url,
+        kind: "character",
+        label: "Custom ref",
+      }, seenUrls, 8)
     }
   }
 
@@ -154,6 +167,58 @@ export function getCharacterGenerationReferenceImages(character: CharacterEntry)
 
 export function getLocationGenerationReferenceImages(location: LocationEntry): GenerationReferenceImage[] {
   return getLocationReferenceImages(location, 4)
+}
+
+function getPropReferenceImages(prop: PropEntry, maxCount: number): GenerationReferenceImage[] {
+  const references: GenerationReferenceImage[] = []
+  const seenUrls = new Set<string>()
+
+  const pushGenerated = () => {
+    if (!prop.generatedImageUrl) {
+      return
+    }
+
+    pushUniqueReference(references, {
+      id: GENERATED_CANONICAL_IMAGE_ID,
+      url: prop.generatedImageUrl,
+      kind: "prop",
+      label: prop.name,
+    }, seenUrls, maxCount)
+  }
+
+  const pushReferenceById = (referenceId: string | null) => {
+    const image = prop.referenceImages.find((entry) => entry.id === referenceId)
+    if (!image) {
+      return
+    }
+
+    pushUniqueReference(references, {
+      id: image.id,
+      url: image.url,
+      kind: "prop",
+      label: prop.name,
+    }, seenUrls, maxCount)
+  }
+
+  if (prop.canonicalImageId === GENERATED_CANONICAL_IMAGE_ID) {
+    pushGenerated()
+  } else {
+    pushReferenceById(prop.canonicalImageId)
+  }
+
+  if (prop.canonicalImageId !== GENERATED_CANONICAL_IMAGE_ID) {
+    pushGenerated()
+  }
+
+  for (const image of prop.referenceImages) {
+    pushReferenceById(image.id)
+  }
+
+  return references
+}
+
+export function getPropGenerationReferenceImages(prop: PropEntry): GenerationReferenceImage[] {
+  return getPropReferenceImages(prop, 4)
 }
 
 export async function convertReferenceImagesToDataUrls(

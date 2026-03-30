@@ -1,9 +1,10 @@
-import type { CharacterEntry, LocationEntry } from "@/lib/bibleParser"
+import type { CharacterEntry, LocationEntry, PropEntry } from "@/lib/bibleParser"
 import type { BreakdownBibleContext } from "@/features/breakdown/types"
 
 export function buildBreakdownBibleContext(
   characters: CharacterEntry[],
   locations: LocationEntry[],
+  props?: PropEntry[],
 ): BreakdownBibleContext {
   return {
     characters: characters.map((character) => ({
@@ -16,6 +17,11 @@ export function buildBreakdownBibleContext(
       description: location.description,
       appearancePrompt: location.appearancePrompt,
       intExt: location.intExt,
+    })),
+    props: props?.map((prop) => ({
+      name: prop.name,
+      description: prop.description,
+      appearancePrompt: prop.appearancePrompt,
     })),
   }
 }

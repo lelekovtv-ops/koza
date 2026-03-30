@@ -1,5 +1,6 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
+import { safeStorage } from "@/lib/safeStorage"
 import type { BreakdownEngineConfig } from "@/lib/cinematic/config"
 import { DEFAULT_BREAKDOWN_ENGINE_CONFIG, resolveBreakdownConfig } from "@/lib/cinematic/config"
 
@@ -78,6 +79,7 @@ export const useBreakdownConfigStore = create<BreakdownConfigState>()(
     }),
     {
       name: "koza-breakdown-config-v1",
+      storage: safeStorage,
     },
   ),
 )

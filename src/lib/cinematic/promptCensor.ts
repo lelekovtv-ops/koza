@@ -134,10 +134,195 @@ function checkTimeOfDayContradiction(
   return issues
 }
 
+/**
+ * Оптимизация промпта для генераторов изображений (Nano Banana / GPT Image).
+ *
+ * Стратегия:
+ * - Удалить чисто режиссёрские инструкции (DO NOT, PREPARE, Continuity lock, Keep axis и т.д.)
+ * - Из PRESERVE/CHANGE — извлечь визуальные данные (Lighting, Palette, Composition, wardrobe)
+ *   и переформулировать как краткие визуальные указания
+ * - Убрать дубли, "Prop:" метки, технический мусор
+ * - Целевой размер: 800–1500 символов
+ */
+
+/** Строки, которые полностью удаляются — чистые инструкции без визуальной ценности */
+const PURE_INSTRUCTION_PATTERNS = [
+  /^KEY SHOT:/i,
+  /^PRESERVE:\s*$/i,
+  /^CHANGE:\s*$/i,
+  /^PREPARE:\s*/i,
+  /^DO NOT:\s*/i,
+  /^Continuity lock:/i,
+  /^Preserve recurring character/i,
+  /^Use the provided reference images/i,
+  /^No visible text, no logos/i,
+  /^- Treat this shot as/i,
+  /^- Establish the continuity/i,
+  /^- Keep screen direction/i,
+  /^- Keep axis of action/i,
+  /^- Keep eyeline logic/i,
+  /^- Prepare continuity/i,
+  /^- Prepare a clean handoff/i,
+  /^- Leave the frame ready/i,
+  /^- Do not /i,
+  /^- Frame this as /i,
+  /^- Stage action as /i,
+  /^- Use camera treatment:/i,
+  /^Установите базовую линию/i,
+  /^Opening key shot that establishes/i,
+  /^- Opening key shot/i,
+  /^ANCHOR SHOT:/i,
+  /^- Match the established/i,
+  /^- Secondary coverage/i,
+  /^- Adjust camera treatment/i,
+  /^- Advance blocking/i,
+  /^- Resolve the current/i,
+  /^- The cut flips/i,
+  /^- Change framing/i,
+  /^CHANGE:$/i,
+]
+
+/** Строки с визуальными данными — извлекаем значение после префикса */
+const VISUAL_EXTRACT_PATTERNS: [RegExp, string][] = [
+  [/^- Lighting:\s*/i, ""],
+  [/^- Palette:\s*/i, "Palette: "],
+  [/^- Composition:\s*/i, ""],
+  [/^Освещение:\s*/i, ""],
+  [/^Настроение\s*/i, "Mood: "],
+]
+
+/** Строки с реквизитом — собираем в одну строку "Props: ..." */
+const PROP_PATTERN = /^- Prop:\s*/i
+const LOCATION_PATTERN = /^- Location:\s*/i
+const WARDROBE_PATTERN = /^- .+ wardrobe:\s*/i
+
+function optimizeForGenerator(text: string): { cleaned: string; removedCount: number; extractedVisuals: string[] } {
+  // Normalize: prompts may arrive as one long line with various separators
+  // Split into separate lines so pattern matching works
+  const normalized = text
+    // Split before known section headers
+    .replace(/ [–—] (?=[A-Z\-])/g, "\n")
+    .replace(/(?<=[.!]) (?=(?:PRESERVE|CHANGE|PREPARE|DO NOT|ANCHOR SHOT|KEY SHOT|Continuity lock|Preserve recurring|Use the provided|No visible text)[:\s])/gi, "\n")
+    // Split before instruction bullets
+    .replace(/(?<=[.!]) (?=- (?:Match|Treat|Keep |Establish|Prepare|Leave|Do not|Frame|Stage|Use camera|Prop:|Location:|Lighting:|Palette:|Composition:|Adjust|Advance|Resolve|The cut|Change|Secondary|Preserve ))/gi, "\n")
+  const lines = normalized.split("\n")
+  const kept: string[] = []
+  const extractedVisuals: string[] = []
+  const props: string[] = []
+  let removedCount = 0
+  let inPrepareSection = false
+  let inDoNotSection = false
+
+  for (const line of lines) {
+    const trimmed = line.trim()
+    if (!trimmed) continue
+
+    // Track instruction sections — skip everything inside (header + all "- " lines below)
+    if (/^PRESERVE:/i.test(trimmed)) { inPrepareSection = true; removedCount++; continue }
+    if (/^CHANGE:/i.test(trimmed)) { inPrepareSection = true; removedCount++; continue }
+    if (/^PREPARE:/i.test(trimmed)) { inPrepareSection = true; removedCount++; continue }
+    if (/^DO NOT:/i.test(trimmed)) { inDoNotSection = true; removedCount++; continue }
+    if (inPrepareSection || inDoNotSection) {
+      if (trimmed.startsWith("- ")) {
+        // Even inside sections, extract visual data
+        if (PROP_PATTERN.test(trimmed)) { props.push(trimmed.replace(PROP_PATTERN, "").trim()); removedCount++; continue }
+        if (WARDROBE_PATTERN.test(trimmed)) { const v = trimmed.replace(/^- .+ wardrobe:\s*/i, "").trim(); if (v) extractedVisuals.push(v); removedCount++; continue }
+        let foundVisual = false
+        for (const [pattern, prefix] of VISUAL_EXTRACT_PATTERNS) {
+          if (pattern.test(trimmed)) { const v = trimmed.replace(pattern, "").trim(); if (v) extractedVisuals.push(`${prefix}${v}`); removedCount++; foundVisual = true; break }
+        }
+        if (!foundVisual) removedCount++
+        continue
+      }
+      inPrepareSection = false
+      inDoNotSection = false
+    }
+
+    // Pure instructions — remove entirely
+    if (PURE_INSTRUCTION_PATTERNS.some((re) => re.test(trimmed))) {
+      removedCount++
+      continue
+    }
+
+    // Props — collect into single line
+    if (PROP_PATTERN.test(trimmed)) {
+      props.push(trimmed.replace(PROP_PATTERN, "").trim())
+      removedCount++
+      continue
+    }
+
+    // Location tag — remove (already in scene context)
+    if (LOCATION_PATTERN.test(trimmed)) {
+      removedCount++
+      continue
+    }
+
+    // Wardrobe — extract visual part
+    if (WARDROBE_PATTERN.test(trimmed)) {
+      const value = trimmed.replace(/^- .+ wardrobe:\s*/i, "").trim()
+      if (value) extractedVisuals.push(value)
+      removedCount++
+      continue
+    }
+
+    // Visual data — extract value
+    let extracted = false
+    for (const [pattern, prefix] of VISUAL_EXTRACT_PATTERNS) {
+      if (pattern.test(trimmed)) {
+        const value = trimmed.replace(pattern, "").trim()
+        if (value) extractedVisuals.push(`${prefix}${value}`)
+        removedCount++
+        extracted = true
+        break
+      }
+    }
+    if (extracted) continue
+
+    // Simple PRESERVE items (visual elements like "Полная пепельница") — keep as-is but strip "- "
+    if (trimmed.startsWith("- ") && trimmed.length < 80 && !/^- (Treat|Establish|Keep |Prepare|Leave|Do not|Frame|Stage|Use camera)/i.test(trimmed)) {
+      kept.push(trimmed.slice(2).trim())
+      continue
+    }
+
+    kept.push(trimmed)
+  }
+
+  // Build optimized prompt
+  const result: string[] = []
+
+  // Main visual description lines first
+  for (const line of kept) {
+    result.push(line)
+  }
+
+  // Extracted visuals
+  if (extractedVisuals.length > 0) {
+    result.push(extractedVisuals.join(". ") + ".")
+  }
+
+  // Props in one line
+  if (props.length > 0) {
+    result.push(`Props: ${props.join(", ")}.`)
+  }
+
+  return { cleaned: result.join("\n"), removedCount, extractedVisuals }
+}
+
 function checkRedundancy(prompt: string): { issues: CensorIssue[]; cleaned: string; removed: string[] } {
   const issues: CensorIssue[] = []
   const removed: string[] = []
-  let cleaned = prompt
+
+  // Optimize for image generators — extract visuals, strip instructions
+  const { cleaned: optimizedText, removedCount } = optimizeForGenerator(prompt)
+  let cleaned = optimizedText
+
+  if (removedCount > 0) {
+    issues.push({
+      severity: "info",
+      code: "instructions_stripped",
+      message: `Оптимизировано: убрано ${removedCount} инструкций, извлечены визуальные данные.`,
+    })
+  }
 
   // Дубликаты строк
   const lines = cleaned.split("\n")
@@ -162,12 +347,12 @@ function checkRedundancy(prompt: string): { issues: CensorIssue[]; cleaned: stri
   // Пустые строки подряд
   cleaned = cleaned.replace(/\n{3,}/g, "\n\n")
 
-  // Слишком длинный промпт
-  if (cleaned.length > 3000) {
+  // Слишком длинный промпт — после очистки
+  if (cleaned.length > 2500) {
     issues.push({
       severity: "warning",
       code: "prompt_too_long",
-      message: `Промпт очень длинный (${cleaned.length} символов). Генераторы лучше работают с промптами до 2000-2500 символов.`,
+      message: `Промпт длинный (${cleaned.length} символов). Генераторы лучше работают с промптами до 1500 символов.`,
       suggestion: "Отключите некоторые модификаторы или сократите описания.",
     })
   }

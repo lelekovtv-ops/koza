@@ -13,6 +13,7 @@ import { useTimelineStore } from "@/store/timeline"
 import { useBibleStore } from "@/store/bible"
 import { useScenesStore } from "@/store/scenes"
 import { useBoardStore } from "@/store/board"
+import { useNavigationStore } from "@/store/navigation"
 
 // ─── Types ───
 
@@ -345,7 +346,8 @@ export default function ProductionPage() {
   const characters = useBibleStore((s) => s.characters)
   const locations = useBibleStore((s) => s.locations)
 
-  const [activeRole, setActiveRole] = useState<Role>("all")
+  const activeRole = useNavigationStore((s) => s.productionRole) as Role
+  const setActiveRole = useNavigationStore((s) => s.setProductionRole)
   const [expandedScenes, setExpandedScenes] = useState<Set<string>>(new Set())
   const [taskStatuses, setTaskStatuses] = useState<Record<string, TaskStatus>>({})
 

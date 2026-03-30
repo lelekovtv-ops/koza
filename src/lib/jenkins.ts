@@ -121,6 +121,7 @@ export interface PromptCompositionDetailedResult {
 export interface BibleContext {
   characters: Array<{ name: string; description: string; appearancePrompt: string }>
   locations: Array<{ name: string; description: string; appearancePrompt: string; intExt: string }>
+  props?: Array<{ name: string; description: string; appearancePrompt: string }>
 }
 
 interface BreakdownOptions {
@@ -247,31 +248,123 @@ async function executeStage<T>(config: StageConfig<T>): Promise<T> {
   throw new Error(`${config.stageLabel} failed: ${getErrorMessage(lastError)}`)
 }
 
+// Extract structured camera data from free-text cameraNote
+function extractCameraMetadata(cameraNote: string): { shotSize?: string; cameraMotion?: string; lens?: string } {
+  const result: { shotSize?: string; cameraMotion?: string; lens?: string } = {}
+
+  // Shot size
+  const sizeMap: [RegExp, string][] = [
+    [/экстремально крупн|extreme close|ecu/i, "ECU"],
+    [/крупн\w* план|close[- ]up|cu\b/i, "Close-up"],
+    [/средн\w*[- ]крупн|medium close/i, "Medium Close-up"],
+    [/средн\w* план|medium shot|ms\b/i, "Medium"],
+    [/средн\w*[- ]общ|medium wide|medium long/i, "Medium Wide"],
+    [/общ\w* план|wide shot|wide\b|ws\b/i, "Wide"],
+    [/дальн\w* план|extreme wide|establishing/i, "Extreme Wide"],
+  ]
+  for (const [re, size] of sizeMap) {
+    if (re.test(cameraNote)) { result.shotSize = size; break }
+  }
+
+  // Camera motion
+  const motionMap: [RegExp, string][] = [
+    [/стат\w*|static|неподвижн/i, "Static"],
+    [/панорам\w* влево|pan left/i, "Pan Left"],
+    [/панорам\w* вправо|pan right/i, "Pan Right"],
+    [/наезд|push[- ]in|dolly in|zoom in/i, "Push In"],
+    [/отъезд|pull[- ]out|dolly out|zoom out/i, "Pull Out"],
+    [/слежен|track\w*|следящ/i, "Tracking"],
+    [/кран|crane/i, "Crane Up"],
+    [/steadicam|стедикам/i, "Steadicam"],
+    [/ручн\w* камер|handheld/i, "Handheld"],
+    [/breathing|дыхан/i, "Static"],
+  ]
+  for (const [re, motion] of motionMap) {
+    if (re.test(cameraNote)) { result.cameraMotion = motion; break }
+  }
+
+  // Lens
+  const lensMatch = cameraNote.match(/(\d{2,3})\s*мм|(\d{2,3})\s*mm/i)
+  if (lensMatch) {
+    result.lens = `${lensMatch[1] || lensMatch[2]}mm`
+  }
+
+  return result
+}
+
 function composeJenkinsShot(spec: ShotSpec, composed: PromptComposerShot | undefined, index: number): JenkinsShot {
   const legacy = shotSpecToTimelineShot(spec, {
     duration: composed?.duration,
     type: "image",
   })
 
+  // Extract structured data from cameraNote text
+  const cameraNote = composed?.cameraNote || legacy.cameraNote || ""
+  const cameraMeta = cameraNote ? extractCameraMetadata(cameraNote) : {}
+
+  const shotSize = composed?.shotSize || legacy.shotSize || cameraMeta.shotSize || undefined
+  const cameraMotion = composed?.cameraMotion || legacy.cameraMotion || cameraMeta.cameraMotion || undefined
+  const duration = composed?.duration ?? legacy.duration
+  const safeDuration = typeof duration === "number" && !Number.isNaN(duration) && duration > 0 ? duration : 3000
+
   return {
     label: composed?.label || legacy.label || `Shot ${index + 1}`,
     type: "image",
-    duration: composed?.duration ?? legacy.duration,
+    duration: safeDuration,
     notes: composed?.notes || legacy.notes,
-    shotSize: composed?.shotSize || legacy.shotSize || undefined,
-    cameraMotion: composed?.cameraMotion || legacy.cameraMotion || undefined,
+    shotSize,
+    cameraMotion,
     caption: composed?.caption || legacy.caption || undefined,
     directorNote: composed?.directorNote || legacy.directorNote || undefined,
-    cameraNote: composed?.cameraNote || legacy.cameraNote || undefined,
+    cameraNote: cameraNote || undefined,
     videoPrompt: composed?.videoPrompt || legacy.videoPrompt || undefined,
     imagePrompt: composed?.imagePrompt || legacy.imagePrompt || undefined,
     visualDescription: composed?.visualDescription || legacy.visualDescription || undefined,
   }
 }
 
-export function buildJenkinsShotsFromPromptPackages(shotSpecs: ShotSpec[], promptPackages: PromptComposerShot[]): JenkinsShot[] {
+/**
+ * Calculate shot durations based on scene text length and shot types.
+ * Rule: 1 page (~3000 chars) ≈ 60 seconds of screen time.
+ * Distribution: establishing/wide = longer, close-up/reaction = shorter, dialogue = medium.
+ */
+function calculateShotDurations(shots: JenkinsShot[], sceneTextLength: number): JenkinsShot[] {
+  if (shots.length === 0) return shots
+
+  // Estimate total scene duration from text length
+  const charsPerPage = 3000
+  const secondsPerPage = 60
+  const totalSceneMs = Math.max(5000, Math.round((sceneTextLength / charsPerPage) * secondsPerPage * 1000))
+
+  // Weight each shot by type
+  const weights = shots.map((shot) => {
+    const size = (shot.shotSize || "").toLowerCase()
+    const caption = (shot.caption || "").toLowerCase()
+
+    // Establishing / wide = longer
+    if (size.includes("wide") || size.includes("общ") || size.includes("establishing") || size.includes("дальн")) return 1.5
+    // Close-up / reaction = shorter
+    if (size.includes("close") || size.includes("крупн") || size.includes("ecu") || caption.includes("реакци")) return 0.7
+    // Dialogue = medium-long
+    if (caption.includes("говор") || caption.includes("шепч") || caption.includes("диалог") || caption.includes("отвеча")) return 1.2
+    // Default medium
+    return 1.0
+  })
+
+  const totalWeight = weights.reduce((a, b) => a + b, 0)
+
+  return shots.map((shot, i) => {
+    const rawMs = (weights[i] / totalWeight) * totalSceneMs
+    // Clamp: min 1.5s, max 8s
+    const duration = Math.round(Math.max(1500, Math.min(8000, rawMs)) / 100) * 100
+    return { ...shot, duration }
+  })
+}
+
+export function buildJenkinsShotsFromPromptPackages(shotSpecs: ShotSpec[], promptPackages: PromptComposerShot[], sceneTextLength?: number): JenkinsShot[] {
   const composedById = new Map(promptPackages.map((shot) => [shot.shotId, shot]))
-  return shotSpecs.map((spec, index) => composeJenkinsShot(spec, composedById.get(spec.id), index))
+  const shots = shotSpecs.map((spec, index) => composeJenkinsShot(spec, composedById.get(spec.id), index))
+  return sceneTextLength ? calculateShotDurations(shots, sceneTextLength) : shots
 }
 
 export async function breakdownScene(
@@ -354,18 +447,9 @@ export async function breakdownScenePlanningDetailed(
     : optionsOrModelId ?? {}
   const modelId = opts.modelId ?? DEFAULT_TEXT_MODEL_ID
 
-  // Per-stage model routing from settings store (or defaults)
-  let fastModel = "gemini-2.5-flash"
-  let heavyModel = modelId
-  try {
-    // Dynamic import from store — works in browser context
-    const { useBreakdownConfigStore } = require("@/store/breakdownConfig")
-    const state = useBreakdownConfigStore.getState()
-    fastModel = state.structuralModel || fastModel
-    heavyModel = state.qualityModel || heavyModel
-    if (state.breakdownSpeed === "fast") { heavyModel = fastModel }
-    else if (state.breakdownSpeed === "quality") { fastModel = heavyModel }
-  } catch { /* server context or store not available — use defaults */ }
+  // Per-stage model routing — all OpenAI to avoid Google quota limits
+  const fastModel = "gpt-5.4-mini-2026-03-17"
+  const heavyModel = "gpt-5.4-2026-03-05"
 
   const stageModel = (stage: string) => {
     if (opts.modelId) return opts.modelId
@@ -389,8 +473,10 @@ export async function breakdownScenePlanningDetailed(
   let usedCensorFallback = false
   let usedShotPlannerFallback = false
 
-  devlog.breakdown("breakdown_start", `Breakdown: ${normalizedSceneText.slice(0, 60)}...`, "", {
+  devlog.breakdown("breakdown_start", `Breakdown: ${normalizedSceneText.slice(0, 60)}...`, `Fast model: ${fastModel}\nHeavy model: ${heavyModel}`, {
     sceneId,
+    fastModel,
+    heavyModel,
     modelId,
     textLength: normalizedSceneText.length,
   }, group)
@@ -832,7 +918,7 @@ export async function breakdownSceneDetailed(
     style: opts.style,
     config: opts.config,
   })
-  const shots = buildJenkinsShotsFromPromptPackages(planning.continuity.shots, composed.promptPackages)
+  const shots = buildJenkinsShotsFromPromptPackages(planning.continuity.shots, composed.promptPackages, sceneText.trim().length)
 
   return {
     sceneId: planning.sceneId,

@@ -415,6 +415,7 @@ function LabPageContent() {
   const blocks = useScriptStore((state) => state.blocks)
   const characters = useBibleStore((state) => state.characters)
   const locations = useBibleStore((state) => state.locations)
+  const labProps = useBibleStore((state) => state.props)
   const updateFromScreenplay = useBibleStore((state) => state.updateFromScreenplay)
   const updateCharacter = useBibleStore((state) => state.updateCharacter)
   const updateLocation = useBibleStore((state) => state.updateLocation)
@@ -596,7 +597,7 @@ function LabPageContent() {
 
   const computedSelectedFinalPrompt = useMemo(() => {
     if (!selectedTimelineShot) return ""
-    return buildImagePrompt(selectedTimelineShot, characters, locations, projectStyle)
+    return buildImagePrompt(selectedTimelineShot, characters, locations, projectStyle, labProps)
   }, [selectedTimelineShot, characters, locations, projectStyle])
 
   const selectedFinalPrompt = selectedShot
@@ -749,7 +750,7 @@ function LabPageContent() {
           visualDescription: shot.visualDescription,
           sourceText: trimmedSceneText,
         })
-        const prompt = buildImagePrompt(timelineShot, characters, locations, projectStyle)
+        const prompt = buildImagePrompt(timelineShot, characters, locations, projectStyle, labProps)
         return [shot.id, prompt]
       }))
 
@@ -815,7 +816,7 @@ function LabPageContent() {
       locked: false,
     }))
 
-    const prompt = finalPromptDrafts[shot.id] ?? buildImagePrompt(timelineShot, characters, locations, projectStyle)
+    const prompt = finalPromptDrafts[shot.id] ?? buildImagePrompt(timelineShot, characters, locations, projectStyle, labProps)
     const endpoint = selectedImageGenModel === "gpt-image" ? "/api/gpt-image" : "/api/nano-banana"
     const group = `lab-image-${shot.id}-${Date.now()}`
     const startedAt = Date.now()

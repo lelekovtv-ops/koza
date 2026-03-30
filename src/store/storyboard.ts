@@ -1,5 +1,6 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
+import { safeStorage } from "@/lib/safeStorage"
 
 export type StoryboardFrame = {
   id: string
@@ -140,6 +141,7 @@ export const useStoryboardStore = create<StoryboardState>()(
     }),
     {
       name: "koza-storyboard-v2",
+      storage: safeStorage,
     }
   )
 )

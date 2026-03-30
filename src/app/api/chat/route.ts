@@ -1,6 +1,8 @@
 import { streamText } from "ai"
 import { anthropic } from "@ai-sdk/anthropic"
-import { google } from "@ai-sdk/google"
+import { createGoogleGenerativeAI } from "@ai-sdk/google"
+
+const google = createGoogleGenerativeAI({ apiKey: process.env.GOOGLE_API_KEY || process.env.GOOGLE_GENERATIVE_AI_API_KEY })
 import { openai } from "@ai-sdk/openai"
 import { DEFAULT_TEXT_MODEL_ID } from "@/lib/models"
 
@@ -40,6 +42,10 @@ export async function POST(req: Request) {
       })
     }
 
+    if (resolvedModelId.startsWith("gemini") && !process.env.GOOGLE_API_KEY && !process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+      return new Response("GOOGLE_API_KEY is missing.", { status: 500, headers: { "Content-Type": "text/plain" } })
+    }
+
     if (resolvedModelId.startsWith("gpt") && !hasConfiguredKey(process.env.OPENAI_API_KEY, "sk-", "sk-your-openai-key-here")) {
       return new Response("OPENAI_API_KEY is missing or does not look like an OpenAI key.", {
         status: 500,
@@ -57,7 +63,8 @@ export async function POST(req: Request) {
     return result.toTextStreamResponse()
   } catch (error) {
     console.error("API Error:", error)
-    return new Response(`Error: ${String(error)}`, {
+    const message = error instanceof Error ? error.message : String(error)
+    return new Response(`Error: ${message}`, {
       status: 500,
       headers: { "Content-Type": "text/plain" },
     })

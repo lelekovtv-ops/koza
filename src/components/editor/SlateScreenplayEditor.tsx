@@ -1259,6 +1259,8 @@ const SlateScreenplayEditor = forwardRef<
 
         {/* EDITOR AREA */}
         <div className="relative flex-1 overflow-hidden" style={{ backgroundColor: focusMode ? "transparent" : (isDark ? "#201E1B" : "#EDEDED"), padding: focusMode ? "40px 0" : "0 0 0 72px" }}>
+          {/* Top shadow — page slides under */}
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-50 h-28" style={{ background: `linear-gradient(to bottom, ${isDark ? '#201E1B' : '#EDEDED'} 0%, ${isDark ? '#201E1Bcc' : '#EDEDEDcc'} 40%, transparent 100%)` }} />
           <div
             ref={standaloneScrollRef}
             className="relative h-full w-full overflow-auto"

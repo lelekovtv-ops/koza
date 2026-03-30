@@ -12,6 +12,7 @@ import {
   MiniMap,
   Position,
   ReactFlow,
+  ReactFlowProvider,
   type Connection,
   type EdgeChange,
   type NodeChange,
@@ -2436,31 +2437,33 @@ export default function ConfiguratorSandboxPage() {
             finalOutputLabel={finalOutputLabel}
           />
 
-          <ReactFlow
-            nodes={displayNodes}
-            edges={displayEdges}
-            nodeTypes={nodeTypes}
-            onInit={setFlowInstance}
-            onNodesChange={handleNodesChange}
-            onEdgesChange={handleEdgesChange}
-            onConnect={handleConnect}
-            onNodeClick={(_, node) => setSelectedNodeId(node.id)}
-            fitView
-            proOptions={{ hideAttribution: true }}
-            defaultEdgeOptions={{
-              style: { stroke: "rgba(231,225,219,0.28)", strokeWidth: 1.4 },
-              labelStyle: { fill: "rgba(231,225,219,0.72)", fontSize: 11 },
-              labelBgStyle: { fill: "rgba(9,8,7,0.92)", fillOpacity: 0.92 },
-            }}
-          >
-            <MiniMap
-              pannable
-              zoomable
-              style={{ background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,0.08)" }}
-              nodeStrokeWidth={3}
-            />
-            <Background variant={BackgroundVariant.Dots} color="rgba(255,255,255,0.08)" gap={20} size={1.2} />
-          </ReactFlow>
+          <ReactFlowProvider>
+            <ReactFlow
+              nodes={displayNodes}
+              edges={displayEdges}
+              nodeTypes={nodeTypes}
+              onInit={setFlowInstance}
+              onNodesChange={handleNodesChange}
+              onEdgesChange={handleEdgesChange}
+              onConnect={handleConnect}
+              onNodeClick={(_, node) => setSelectedNodeId(node.id)}
+              fitView
+              proOptions={{ hideAttribution: true }}
+              defaultEdgeOptions={{
+                style: { stroke: "rgba(231,225,219,0.28)", strokeWidth: 1.4 },
+                labelStyle: { fill: "rgba(231,225,219,0.72)", fontSize: 11 },
+                labelBgStyle: { fill: "rgba(9,8,7,0.92)", fillOpacity: 0.92 },
+              }}
+            >
+              <MiniMap
+                pannable
+                zoomable
+                style={{ background: "rgba(0,0,0,0.2)", border: "1px solid rgba(255,255,255,0.08)" }}
+                nodeStrokeWidth={3}
+              />
+              <Background variant={BackgroundVariant.Dots} color="rgba(255,255,255,0.08)" gap={20} size={1.2} />
+            </ReactFlow>
+          </ReactFlowProvider>
         </div>
 
         <aside className="flex min-h-0 flex-col bg-[#12100d]/92">
