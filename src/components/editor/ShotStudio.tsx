@@ -233,6 +233,9 @@ export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onN
   const [promptDraft, setPromptDraft] = useState("")
   const [batchCount, setBatchCount] = useState(1)
   const [generating, setGenerating] = useState(false)
+  // Prompt checker
+  const [censorIssues, setCensorIssues] = useState<Array<{ severity: string; message: string; suggestion?: string }>>([])
+  const [censorOpen, setCensorOpen] = useState(false)
   // Dual-column translate mode
   const [dualMode, setDualMode] = useState(false)
   const [ruDraft, setRuDraft] = useState("")
@@ -807,32 +810,6 @@ export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onN
 
   // Image natural size (for SAM coordinate mapping)
   const [currentImageSize, setCurrentImageSize] = useState({ w: 0, h: 0 })
-  // ── ?? AI Prompt Builder ──
-
-  const buildPromptWithAI = async (instruction: string): Promise<string> => {
-    const { buildImagePromptWithAI } = await import("@/lib/promptAI")
-    const sceneId = shot?.sceneId || ""
-    const scene = scenes.find((s) => s.id === sceneId)
-    const bible = useBibleStore.getState()
-
-    return buildImagePromptWithAI({
-      sceneTitle: scene?.title,
-      caption: shot?.caption,
-      directorNote: shot?.directorNote,
-      cameraNote: shot?.cameraNote,
-      shotSize: shot?.shotSize,
-      cameraMotion: shot?.cameraMotion,
-      currentImagePrompt: shot?.imagePrompt,
-      characters: shotChars,
-      locations: shotLocs,
-      props: shotProps,
-      projectStyle,
-      storyHistory: bible.storyHistory,
-      directorVision: bible.directorVision,
-      excludedBibleIds: shot?.excludedBibleIds,
-    }, instruction)
-  }
-
   // ── Fast translate (Google Translate, not AI) ──
 
   const [translateDirection, setTranslateDirection] = useState<"ru2en" | "en2ru" | null>(null)
@@ -887,13 +864,38 @@ export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onN
 
   const handleAIRewrite = async () => {
     if (!shot || aiRewriting) return
-    // Extract instruction: everything in the prompt, with ?? removed
-    const instruction = promptDraft.replace(/\?\?/g, "").trim()
+    const raw = promptDraft.trim()
+    const instruction = raw.replace(/\?\?/g, "").trim()
     if (!instruction) return
+
+    // If ?? is at the start → "from scratch" mode (don't send current prompt)
+    // If ?? is in the middle/end → "edit existing" mode (send text before ?? as context)
+    const isFromScratch = raw.startsWith("??")
 
     setAiRewriting(true)
     try {
-      const aiPrompt = await buildPromptWithAI(instruction)
+      const { buildImagePromptWithAI } = await import("@/lib/promptAI")
+      const sceneId = shot?.sceneId || ""
+      const scene = scenes.find((s) => s.id === sceneId)
+      const bible = useBibleStore.getState()
+
+      const aiPrompt = await buildImagePromptWithAI({
+        sceneTitle: scene?.title,
+        caption: shot?.caption,
+        directorNote: shot?.directorNote,
+        cameraNote: shot?.cameraNote,
+        shotSize: shot?.shotSize,
+        cameraMotion: shot?.cameraMotion,
+        currentImagePrompt: isFromScratch ? undefined : shot?.imagePrompt,
+        characters: shotChars,
+        locations: shotLocs,
+        props: shotProps,
+        projectStyle,
+        storyHistory: bible.storyHistory,
+        directorVision: bible.directorVision,
+        excludedBibleIds: shot?.excludedBibleIds,
+      }, instruction)
+
       setPromptDraft(aiPrompt)
       updateShot(shotId, { imagePrompt: aiPrompt })
     } catch (err) {
@@ -1398,6 +1400,23 @@ export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onN
                             </button>
                           ))}
                         </div>
+                        {/* Prompt checker */}
+                        <button
+                          type="button"
+                          onClick={() => {
+                            const { censorPrompt } = require("@/lib/cinematic/promptCensor") as typeof import("@/lib/cinematic/promptCensor")
+                            const fullPrompt = buildImagePrompt({ ...shot, imagePrompt: promptDraft || shot.imagePrompt || "" }, characters, locations, projectStyle, bibleProps)
+                            const result = censorPrompt(fullPrompt, shot, characters, locations)
+                            setCensorIssues(result.issues)
+                            setCensorOpen(true)
+                            if (result.optimizedPrompt && result.optimizedPrompt !== (promptDraft || shot.imagePrompt)) {
+                              setPromptDraft(result.optimizedPrompt)
+                            }
+                          }}
+                          className={`flex items-center gap-1 rounded-lg border px-2 py-1 text-[9px] transition-colors ${censorOpen && censorIssues.length > 0 ? "border-amber-500/30 text-amber-400/70" : "border-white/10 text-white/30 hover:text-white/50"}`}
+                        >
+                          {censorIssues.some((i) => i.severity === "error") ? "⚠" : "✓"} Check
+                        </button>
                         {/* Dual mode toggle */}
                         <button
                           type="button"
@@ -1430,7 +1449,34 @@ export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onN
                           Cancel
                         </button>
                       </div>
-                      <p className="text-[9px] text-white/15">?? = AI промпт · RU↔EN = перевод · Shift+Enter = генерация</p>
+                      {/* Censor issues */}
+                      {censorOpen && censorIssues.length > 0 && (
+                        <div className="mb-1 space-y-1">
+                          {censorIssues.map((issue, i) => (
+                            <div key={i} className={`flex items-start gap-1.5 rounded-md px-2 py-1 text-[10px] ${
+                              issue.severity === "error" ? "bg-red-500/10 text-red-300/80" :
+                              issue.severity === "warning" ? "bg-amber-500/10 text-amber-300/80" :
+                              "bg-sky-500/10 text-sky-300/70"
+                            }`}>
+                              <span className="mt-0.5 shrink-0">{issue.severity === "error" ? "✕" : issue.severity === "warning" ? "⚠" : "ℹ"}</span>
+                              <div>
+                                <span>{issue.message}</span>
+                                {issue.suggestion && <span className="ml-1 text-white/30">→ {issue.suggestion}</span>}
+                              </div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                      {censorOpen && censorIssues.length === 0 && (
+                        <div className="mb-1 flex items-center justify-between rounded-md bg-emerald-500/10 px-2 py-1 text-[10px] text-emerald-300/80">
+                          <span>✓ Промпт чистый, проблем не найдено</span>
+                          <button type="button" onClick={() => setCensorOpen(false)} className="text-emerald-300/50 hover:text-emerald-300">OK</button>
+                        </div>
+                      )}
+                      {censorOpen && censorIssues.length > 0 && (
+                        <button type="button" onClick={() => setCensorOpen(false)} className="mb-1 rounded-md bg-white/5 px-3 py-1 text-[9px] text-white/40 transition-colors hover:bg-white/10 hover:text-white/60">OK</button>
+                      )}
+                      <p className="text-[9px] text-white/15">??инструкция = с нуля · промпт ??доработай = редактирование · Shift+Enter = генерация</p>
                     </div>
                   ) : (
                     <div className="relative">
@@ -1440,13 +1486,32 @@ export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onN
                       >
                         {highlightPrompt(shot.imagePrompt || "Click to write prompt...")}
                       </p>
-                      <button
-                        type="button"
-                        onClick={() => { setPromptEditing(true); setPromptDraft(shot.imagePrompt || "") }}
-                        className="absolute -right-2 top-0 flex h-5 w-5 items-center justify-center rounded text-white/0 transition-colors group-hover/prompt:text-white/40 hover:!text-white/70"
-                      >
-                        <Pencil size={10} />
-                      </button>
+                      <div className="absolute -right-1 -top-7 flex items-center gap-1 rounded-lg border border-white/10 bg-black/60 px-1.5 py-1 opacity-0 backdrop-blur-sm transition-opacity group-hover/prompt:opacity-100">
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation()
+                            void navigator.clipboard.writeText(buildImagePrompt(shot, characters, locations, projectStyle, bibleProps))
+                            const btn = e.currentTarget
+                            btn.classList.add("!bg-[#D4A853]/20", "!text-[#D4A853]", "scale-95")
+                            setTimeout(() => btn.classList.remove("!bg-[#D4A853]/20", "!text-[#D4A853]", "scale-95"), 400)
+                          }}
+                          className="flex h-6 items-center gap-1 rounded-md px-1.5 text-[9px] text-white/60 transition-all duration-150 hover:bg-white/10 hover:text-white"
+                          title="Copy full prompt"
+                        >
+                          <Copy size={11} />
+                          Copy
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setPromptEditing(true); setPromptDraft(shot.imagePrompt || "") }}
+                          className="flex h-6 items-center gap-1 rounded-md px-1.5 text-[9px] text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+                          title="Edit prompt"
+                        >
+                          <Pencil size={11} />
+                          Edit
+                        </button>
+                      </div>
                     </div>
                   )}
                 </div>
