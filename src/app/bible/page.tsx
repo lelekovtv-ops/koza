@@ -3,8 +3,8 @@
 import Image from "next/image"
 import Link from "next/link"
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { BookOpen, Box, Check, Copy, Download, FlipHorizontal2, FlipVertical2, Loader2, MapPin, Pencil, Plus, RotateCcw, RotateCw, Sparkles, Upload, User, Wand2, X } from "lucide-react"
-import { type BibleReferenceImage, type CharacterEntry, type LocationEntry, type PropEntry } from "@/lib/bibleParser"
+import { BookOpen, Box, Check, ChevronDown, Copy, Download, FlipHorizontal2, FlipVertical2, Loader2, MapPin, Mic, Pencil, Play, Plus, RotateCcw, RotateCw, Sparkles, Square, Trash2, Upload, User, Volume2, Wand2, X } from "lucide-react"
+import { type BibleReferenceImage, type CharacterEntry, type LocationEntry, type PropEntry, type VoiceConfig, type VoiceProvider } from "@/lib/bibleParser"
 import { deleteBlob, saveBlob, trySaveBlob } from "@/lib/fileStorage"
 import {
   convertReferenceImagesToDataUrls,
@@ -14,12 +14,95 @@ import {
 } from "@/lib/imageGenerationReferences"
 import { ImageEditOverlay } from "@/components/ui/ImageEditOverlay"
 import { ProjectStylePicker } from "@/components/ui/ProjectStylePicker"
-import { DEFAULT_PROJECT_STYLE } from "@/lib/projectStyle"
+import { DEFAULT_PROJECT_STYLE, STYLE_PRESETS, getProjectStylePresetId } from "@/lib/projectStyle"
+import { useBreakdownConfigStore, BUILT_IN_PRODUCTION_PRESETS, type ProductionPreset } from "@/store/breakdownConfig"
 import { parseScenes } from "@/lib/sceneParser"
 import { useBoardStore } from "@/store/board"
 import { useScriptStore } from "@/store/script"
-import { GENERATED_CANONICAL_IMAGE_ID, useBibleStore } from "@/store/bible"
+import { GENERATED_CANONICAL_IMAGE_ID, useBibleStore, BUILT_IN_DIRECTORS, type DirectorProfile } from "@/store/bible"
 import { useNavigationStore } from "@/store/navigation"
+
+/* ─── Director Profile Section ─── */
+
+function DirectorSection() {
+  const setDirectorProfile = useBibleStore((s) => s.setDirectorProfile)
+  const setProjectStyle = useBoardStore((s) => s.setProjectStyle)
+  const activePipeline = useBreakdownConfigStore((s) => s.activePipelinePreset)
+  const activePresetId = activePipeline?.presetId || "fincher"
+
+  const handleSelectPreset = (preset: ProductionPreset) => {
+    // One click — set everything
+    setDirectorProfile({ name: preset.name, systemPrompt: preset.directorPrompt })
+    setProjectStyle(preset.imageStyle)
+    const { setActivePipelinePreset } = useBreakdownConfigStore.getState()
+    if (preset.pipeline.modules.length > 0) {
+      setActivePipelinePreset(preset.pipeline)
+    } else {
+      setActivePipelinePreset(null) // default fincher.ts fallback
+    }
+  }
+
+  return (
+    <div className="space-y-6 pb-12">
+      {/* ── Production Presets ── */}
+      <div>
+        <div className="text-[10px] uppercase tracking-[0.2em] text-white/30 mb-3">Пресет производства</div>
+        <div className="grid grid-cols-1 gap-3">
+          {BUILT_IN_PRODUCTION_PRESETS.map((preset) => {
+            const isActive = activePresetId === preset.id || (activePresetId === "fincher" && preset.id === "fincher" && !activePipeline)
+            return (
+              <button key={preset.id} onClick={() => handleSelectPreset(preset)}
+                className={`text-left rounded-xl p-5 transition-all border ${
+                  isActive
+                    ? "border-[#D4A853]/40 bg-[#D4A853]/8"
+                    : "border-white/8 bg-white/3 hover:border-white/15 hover:bg-white/5"
+                }`}>
+                <div className="flex items-center justify-between mb-2">
+                  <div className={`text-[15px] font-semibold ${isActive ? "text-[#D4A853]" : "text-white/70"}`}>
+                    {preset.name}
+                  </div>
+                  {isActive && (
+                    <span className="rounded-full bg-[#D4A853]/15 px-2.5 py-0.5 text-[9px] font-bold uppercase tracking-wider text-[#D4A853]/70">
+                      Активен
+                    </span>
+                  )}
+                </div>
+                <p className="text-[12px] text-white/35 mb-2">{preset.description}</p>
+                <div className="flex flex-wrap gap-2">
+                  <span className="rounded-md bg-white/5 px-2 py-0.5 text-[10px] text-white/25">
+                    Стиль: {preset.imageStyle.slice(0, 40)}...
+                  </span>
+                  <span className="rounded-md bg-white/5 px-2 py-0.5 text-[10px] text-white/25">
+                    {preset.pipeline.modules.length > 0 ? `${preset.pipeline.modules.length} модулей` : "Дефолтный пайплайн"}
+                  </span>
+                </div>
+              </button>
+            )
+          })}
+        </div>
+      </div>
+
+      {/* Active preset details */}
+      {activePipeline && (
+        <div className="rounded-xl border border-emerald-500/15 bg-emerald-500/5 p-4">
+          <div className="flex items-center justify-between mb-1">
+            <div className="text-[10px] uppercase tracking-[0.2em] text-emerald-400/50">Активный пайплайн</div>
+          </div>
+          <div className="text-[11px] text-white/30">
+            {activePipeline.modules.length > 0
+              ? `${activePipeline.modules.length} модулей: ${activePipeline.modules.map((m) => m.name).join(" → ")}`
+              : "Дефолтный Fincher"}
+          </div>
+        </div>
+      )}
+
+      {/* Hint */}
+      <p className="text-[11px] text-white/15 text-center">
+        Тонкая настройка пресетов — в Breakdown Studio (DEV)
+      </p>
+    </div>
+  )
+}
 
 function BibleContextPanel({
   storyHistory,
@@ -382,6 +465,184 @@ function ReferenceStrip({
   )
 }
 
+const VOICE_PROVIDERS: { id: VoiceProvider; label: string }[] = [
+  { id: "elevenlabs", label: "ElevenLabs" },
+  { id: "fish", label: "Fish Audio" },
+  { id: "bark", label: "Bark" },
+  { id: "custom", label: "Custom" },
+]
+
+function VoiceSection({
+  voice,
+  characterName,
+  onUpdate,
+}: {
+  voice?: VoiceConfig
+  characterName: string
+  onUpdate: (voice: VoiceConfig | undefined) => void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const [playing, setPlaying] = useState(false)
+  const audioRef = useRef<HTMLAudioElement | null>(null)
+
+  const handlePlay = () => {
+    if (!voice?.previewUrl) return
+    if (playing && audioRef.current) {
+      audioRef.current.pause()
+      audioRef.current.currentTime = 0
+      setPlaying(false)
+      return
+    }
+    const audio = new Audio(voice.previewUrl)
+    audioRef.current = audio
+    audio.onended = () => setPlaying(false)
+    audio.play()
+    setPlaying(true)
+  }
+
+  if (!voice && !expanded) {
+    return (
+      <button
+        type="button"
+        onClick={() => {
+          onUpdate({ provider: "elevenlabs", voiceId: "", voiceName: "", settings: { speed: 1.0 } })
+          setExpanded(true)
+        }}
+        className="flex w-full items-center gap-2 rounded-lg border border-dashed border-white/10 px-3 py-2 text-[11px] text-white/30 transition-colors hover:border-white/20 hover:text-white/50"
+      >
+        <Mic className="h-3.5 w-3.5" />
+        Назначить голос
+      </button>
+    )
+  }
+
+  const current = voice ?? { provider: "elevenlabs" as VoiceProvider, voiceId: "", voiceName: "", settings: { speed: 1.0 } }
+
+  return (
+    <div className="space-y-2">
+      <button
+        type="button"
+        onClick={() => setExpanded(!expanded)}
+        className="flex w-full items-center justify-between text-left"
+      >
+        <div className="flex items-center gap-2">
+          <Volume2 className="h-3.5 w-3.5 text-violet-400/70" />
+          <span className="text-[9px] uppercase tracking-[0.18em] text-white/30">Voice</span>
+          {voice?.voiceName && (
+            <span className="rounded-full bg-violet-500/15 px-2 py-0.5 text-[10px] text-violet-300/80">
+              {voice.voiceName}
+            </span>
+          )}
+        </div>
+        <ChevronDown className={`h-3 w-3 text-white/25 transition-transform ${expanded ? "rotate-180" : ""}`} />
+      </button>
+
+      {expanded && (
+        <div className="space-y-2 rounded-lg border border-white/6 bg-white/2 p-3">
+          {/* Provider */}
+          <div>
+            <p className="mb-1 text-[9px] uppercase tracking-[0.16em] text-white/25">Провайдер</p>
+            <div className="flex flex-wrap gap-1.5">
+              {VOICE_PROVIDERS.map((p) => (
+                <button
+                  key={p.id}
+                  type="button"
+                  onClick={() => onUpdate({ ...current, provider: p.id })}
+                  className={`rounded-md px-2 py-1 text-[10px] transition-colors ${
+                    current.provider === p.id
+                      ? "bg-violet-500/20 text-violet-300"
+                      : "bg-white/4 text-white/40 hover:bg-white/8"
+                  }`}
+                >
+                  {p.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Voice ID + Name */}
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <p className="mb-1 text-[9px] uppercase tracking-[0.16em] text-white/25">Voice ID</p>
+              <input
+                type="text"
+                value={current.voiceId}
+                onChange={(e) => onUpdate({ ...current, voiceId: e.target.value })}
+                placeholder="ID голоса..."
+                className="w-full rounded-md border border-white/8 bg-white/4 px-2 py-1.5 text-[11px] text-white/80 outline-none placeholder:text-white/15"
+              />
+            </div>
+            <div>
+              <p className="mb-1 text-[9px] uppercase tracking-[0.16em] text-white/25">Название</p>
+              <input
+                type="text"
+                value={current.voiceName}
+                onChange={(e) => onUpdate({ ...current, voiceName: e.target.value })}
+                placeholder="Adam, Bella..."
+                className="w-full rounded-md border border-white/8 bg-white/4 px-2 py-1.5 text-[11px] text-white/80 outline-none placeholder:text-white/15"
+              />
+            </div>
+          </div>
+
+          {/* Speed slider */}
+          <div>
+            <div className="flex items-center justify-between">
+              <p className="text-[9px] uppercase tracking-[0.16em] text-white/25">Скорость</p>
+              <span className="text-[10px] text-white/35">{(current.settings?.speed ?? 1.0).toFixed(1)}x</span>
+            </div>
+            <input
+              type="range"
+              min={0.5}
+              max={2.0}
+              step={0.1}
+              value={current.settings?.speed ?? 1.0}
+              onChange={(e) =>
+                onUpdate({ ...current, settings: { ...current.settings, speed: parseFloat(e.target.value) } })
+              }
+              className="mt-1 w-full accent-violet-500"
+            />
+          </div>
+
+          {/* Preview URL */}
+          <div>
+            <p className="mb-1 text-[9px] uppercase tracking-[0.16em] text-white/25">Preview URL</p>
+            <div className="flex gap-1.5">
+              <input
+                type="text"
+                value={current.previewUrl ?? ""}
+                onChange={(e) => onUpdate({ ...current, previewUrl: e.target.value || undefined })}
+                placeholder="https://..."
+                className="flex-1 rounded-md border border-white/8 bg-white/4 px-2 py-1.5 text-[11px] text-white/80 outline-none placeholder:text-white/15"
+              />
+              {current.previewUrl && (
+                <button
+                  type="button"
+                  onClick={handlePlay}
+                  className="flex items-center justify-center rounded-md border border-white/8 bg-white/4 px-2 text-white/50 transition-colors hover:bg-white/8 hover:text-white/80"
+                >
+                  {playing ? <Square className="h-3 w-3" /> : <Play className="h-3 w-3" />}
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Remove voice */}
+          <button
+            type="button"
+            onClick={() => {
+              onUpdate(undefined)
+              setExpanded(false)
+            }}
+            className="mt-1 text-[10px] text-red-400/50 transition-colors hover:text-red-400/80"
+          >
+            Убрать голос
+          </button>
+        </div>
+      )}
+    </div>
+  )
+}
+
 function CharacterCard({
   entry,
   generating,
@@ -477,6 +738,12 @@ function CharacterCard({
             onSave={(appearancePrompt) => onUpdate({ appearancePrompt })}
           />
         </div>
+
+        <VoiceSection
+          voice={entry.voice}
+          characterName={entry.name}
+          onUpdate={(voice) => onUpdate({ voice })}
+        />
 
         <ReferenceStrip
           references={entry.referenceImages}
@@ -606,9 +873,68 @@ interface PropSuggestion {
   sourceScenes: string[]
 }
 
-async function smartScanProps(actionTexts: { text: string; sceneId: string }[], existingPropNames: string[]): Promise<PropSuggestion[]> {
-  const scenarioChunks = actionTexts.map((a) => `[${a.sceneId}] ${a.text}`).join("\n")
-  const existingList = existingPropNames.join(", ")
+/** Read a streamed response body into a single string */
+async function readStreamToString(res: Response): Promise<string> {
+  const reader = res.body?.getReader()
+  if (!reader) return ""
+  const chunks: string[] = []
+  while (true) {
+    const { done, value } = await reader.read()
+    if (done) break
+    chunks.push(new TextDecoder().decode(value))
+  }
+  return chunks.join("").trim()
+}
+
+/** Extract JSON object or array from possible markdown-wrapped response */
+function extractJson(raw: string): unknown | null {
+  const cleaned = raw.replace(/```json\s*/gi, "").replace(/```\s*/g, "").trim()
+  const objMatch = cleaned.match(/\{[\s\S]*\}/)
+  if (objMatch) { try { return JSON.parse(objMatch[0]) } catch { /* ignore */ } }
+  const arrMatch = cleaned.match(/\[[\s\S]*\]/)
+  if (arrMatch) { try { return JSON.parse(arrMatch[0]) } catch { /* ignore */ } }
+  return null
+}
+
+interface SmartScanResult {
+  characters: { id: string; description: string; appearancePrompt: string }[]
+  locations: { id: string; description: string; appearancePrompt: string }[]
+  props: { id: string; description: string; appearancePrompt: string }[]
+  newProps: PropSuggestion[]
+}
+
+/**
+ * Universal Smart Scan — analyses the full screenplay and fills empty
+ * description + appearancePrompt for characters, locations, props and discovers new props.
+ */
+async function smartScanAll(
+  scenarioText: string,
+  characters: { id: string; name: string; description: string; appearancePrompt: string }[],
+  locations: { id: string; name: string; description: string; appearancePrompt: string }[],
+  existingProps: { id: string; name: string; description: string; appearancePrompt: string }[],
+): Promise<SmartScanResult> {
+  const charsToFill = characters.map((c) => ({
+    id: c.id,
+    name: c.name,
+    needsDescription: !c.description.trim(),
+    needsPrompt: !c.appearancePrompt.trim(),
+  }))
+
+  const locsToFill = locations.map((l) => ({
+    id: l.id,
+    name: l.name,
+    needsDescription: !l.description.trim(),
+    needsPrompt: !l.appearancePrompt.trim(),
+  }))
+
+  const propsToFill = existingProps.map((p) => ({
+    id: p.id,
+    name: p.name,
+    needsDescription: !p.description.trim(),
+    needsPrompt: !p.appearancePrompt.trim(),
+  }))
+
+  const existingPropNames = existingProps.map((p) => p.name)
 
   const res = await fetch("/api/chat", {
     method: "POST",
@@ -616,54 +942,59 @@ async function smartScanProps(actionTexts: { text: string; sceneId: string }[], 
     body: JSON.stringify({
       messages: [{
         role: "user",
-        content: `Ты — ассистент реквизитора на киносъёмке. Проанализируй action-блоки сценария и найди СКРЫТЫЕ предметы реквизита, которые подразумеваются контекстом, но не названы явно.
+        content: `Ты — ассистент-библиограф кинопроекта. Проанализируй сценарий и заполни пустые поля.
 
-Уже найденные предметы (НЕ дублируй их): ${existingList || "нет"}
+СЦЕНАРИЙ:
+${scenarioText.slice(0, 8000)}
 
-Action-блоки:
-${scenarioChunks}
+═══ ЗАДАЧА 1: ПЕРСОНАЖИ ═══
+Для каждого персонажа заполни description (кто он, роль в истории, 1-2 предложения) и appearancePrompt (визуальное описание для генерации портрета на АНГЛИЙСКОМ, 20-40 слов: возраст, телосложение, лицо, одежда, освещение).
 
-Для каждого найденного предмета верни JSON-массив объектов:
+Персонажи: ${JSON.stringify(charsToFill)}
+
+═══ ЗАДАЧА 2: ЛОКАЦИИ ═══
+Для каждой локации заполни description (что это за место, атмосфера, 1-2 предложения) и appearancePrompt (визуальное описание для генерации на АНГЛИЙСКОМ, 20-40 слов: архитектура, свет, детали).
+
+Локации: ${JSON.stringify(locsToFill)}
+
+═══ ЗАДАЧА 3: СУЩЕСТВУЮЩИЕ ПРЕДМЕТЫ РЕКВИЗИТА ═══
+Заполни пустые поля для существующих предметов. description — что это, зачем в сцене (рус). appearancePrompt — визуальное описание предмета для генерации изображения на АНГЛИЙСКОМ (20-30 слов: материал, цвет, состояние, размер, окружение, освещение).
+
+Предметы: ${JSON.stringify(propsToFill)}
+
+═══ ЗАДАЧА 4: НОВЫЕ ПРЕДМЕТЫ РЕКВИЗИТА ═══
+Найди важные предметы из контекста сценария. Уже есть: ${existingPropNames.join(", ") || "нет"}
+
+Верни ТОЛЬКО JSON (без markdown):
 {
-  "name": "название предмета",
-  "description": "почему этот предмет нужен в сцене",
-  "appearancePrompt": "описание внешнего вида для генерации изображения (на русском)",
-  "reason": "из какого контекста выведен предмет",
-  "sourceScenes": ["id сцен где подразумевается"]
+  "characters": [{ "id": "...", "description": "рус", "appearancePrompt": "eng" }],
+  "locations": [{ "id": "...", "description": "рус", "appearancePrompt": "eng" }],
+  "props": [{ "id": "...", "description": "рус", "appearancePrompt": "eng" }],
+  "newProps": [{ "name": "рус", "description": "рус", "appearancePrompt": "eng visual description for image generation", "reason": "контекст", "sourceScenes": [] }]
 }
 
-Примеры скрытых предметов:
-- "девушка едет в машине" → руль, приборная панель, зеркало заднего вида
-- "мужчина сидит за столом в ресторане" → меню, салфетка, столовые приборы
-- "входит в тёмную комнату" → выключатель, дверная ручка
-
-Верни ТОЛЬКО JSON-массив, без markdown, без пояснений. Если ничего не найдено — верни [].`,
+Правила:
+- Если needsDescription=false, верни пустую строку "" для description
+- Если needsPrompt=false, верни пустую строку "" для appearancePrompt
+- Заполняй ТОЛЬКО пустые поля, не перезаписывай существующие
+- ВСЕ appearancePrompt — на АНГЛИЙСКОМ (для генерации изображений)
+- description — на РУССКОМ`,
       }],
       temperature: 0.3,
     }),
   })
 
-  if (!res.ok) return []
+  if (!res.ok) return { characters: [], locations: [], props: [], newProps: [] }
 
-  const reader = res.body?.getReader()
-  if (!reader) return []
+  const raw = await readStreamToString(res)
+  const parsed = extractJson(raw) as SmartScanResult | null
+  if (!parsed) return { characters: [], locations: [], props: [], newProps: [] }
 
-  const chunks: string[] = []
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    chunks.push(new TextDecoder().decode(value))
-  }
-
-  const raw = chunks.join("").trim()
-  // Extract JSON array from possible markdown wrapping
-  const jsonMatch = raw.match(/\[[\s\S]*\]/)
-  if (!jsonMatch) return []
-
-  try {
-    return JSON.parse(jsonMatch[0]) as PropSuggestion[]
-  } catch {
-    return []
+  return {
+    characters: Array.isArray(parsed.characters) ? parsed.characters : [],
+    locations: Array.isArray(parsed.locations) ? parsed.locations : [],
+    props: Array.isArray(parsed.props) ? parsed.props : [],
+    newProps: Array.isArray(parsed.newProps) ? parsed.newProps : [],
   }
 }
 
@@ -867,6 +1198,7 @@ export default function BiblePage() {
   const updateLocation = useBibleStore((state) => state.updateLocation)
   const updateProp = useBibleStore((state) => state.updateProp)
   const addProp = useBibleStore((state) => state.addProp)
+  const removeUnusedEntries = useBibleStore((state) => state.removeUnusedEntries)
   const updateStoryHistory = useBibleStore((state) => state.updateStoryHistory)
   const updateDirectorVision = useBibleStore((state) => state.updateDirectorVision)
   const selectedImageGenModel = useBoardStore((state) => state.selectedImageGenModel)
@@ -1123,20 +1455,77 @@ export default function BiblePage() {
     })
   }
 
+  const [scanStats, setScanStats] = useState<{ chars: number; locs: number; props: number } | null>(null)
+  const [cleanupStats, setCleanupStats] = useState<{ chars: number; locs: number; props: number } | null>(null)
+
+  const unusedCount = useMemo(() => {
+    const chars = characters.filter((c) => c.sceneIds.length === 0 && c.dialogueCount === 0).length
+    const locs = locations.filter((l) => l.sceneIds.length === 0).length
+    const prps = props.filter((p) => p.sceneIds.length === 0).length
+    return chars + locs + prps
+  }, [characters, locations, props])
+
+  const handleCleanup = () => {
+    const removed = removeUnusedEntries()
+    setCleanupStats(removed)
+    setTimeout(() => setCleanupStats(null), 4000)
+  }
+
   const handleSmartScan = async () => {
     setScanning(true)
     setSuggestions([])
+    setScanStats(null)
     try {
-      const actionTexts = blocks
-        .filter((b) => b.type === "action" || b.type === "scene_heading")
-        .map((b) => {
-          const scene = scenes.find((s) => s.blockIds.includes(b.id))
-          return { text: b.text, sceneId: scene?.id ?? "unknown" }
-        })
+      // Build full scenario text for context
+      const scenarioText = blocks.map((b) => b.text).join("\n")
+      if (!scenarioText.trim()) return
 
-      const existingNames = props.map((p) => p.name)
-      const results = await smartScanProps(actionTexts, existingNames)
-      setSuggestions(results)
+      const result = await smartScanAll(
+        scenarioText,
+        characters.map((c) => ({ id: c.id, name: c.name, description: c.description, appearancePrompt: c.appearancePrompt })),
+        locations.map((l) => ({ id: l.id, name: l.name, description: l.description, appearancePrompt: l.appearancePrompt })),
+        props.map((p) => ({ id: p.id, name: p.name, description: p.description, appearancePrompt: p.appearancePrompt })),
+      )
+
+      // Apply character fills
+      let charsFilled = 0
+      for (const c of result.characters) {
+        const patch: Partial<CharacterEntry> = {}
+        if (c.description) patch.description = c.description
+        if (c.appearancePrompt) patch.appearancePrompt = c.appearancePrompt
+        if (Object.keys(patch).length > 0) {
+          updateCharacter(c.id, patch)
+          charsFilled++
+        }
+      }
+
+      // Apply location fills
+      let locsFilled = 0
+      for (const l of result.locations) {
+        const patch: Partial<LocationEntry> = {}
+        if (l.description) patch.description = l.description
+        if (l.appearancePrompt) patch.appearancePrompt = l.appearancePrompt
+        if (Object.keys(patch).length > 0) {
+          updateLocation(l.id, patch)
+          locsFilled++
+        }
+      }
+
+      // Apply prop fills (existing props)
+      let propsFilled = 0
+      for (const p of result.props) {
+        const patch: Partial<PropEntry> = {}
+        if (p.description) patch.description = p.description
+        if (p.appearancePrompt) patch.appearancePrompt = p.appearancePrompt
+        if (Object.keys(patch).length > 0) {
+          updateProp(p.id, patch)
+          propsFilled++
+        }
+      }
+
+      // Show new prop suggestions
+      setSuggestions(result.newProps)
+      setScanStats({ chars: charsFilled, locs: locsFilled, props: propsFilled + result.newProps.length })
     } catch (err) {
       console.error("Smart scan error:", err)
     } finally {
@@ -1254,7 +1643,7 @@ export default function BiblePage() {
             </Link>
             <div className="flex items-center gap-3 text-[#D4A853]">
               <BookOpen className="h-5 w-5" />
-              <span className="text-sm uppercase tracking-[0.32em] text-white/65">KOZA BIBLE</span>
+              <span className="text-sm uppercase tracking-[0.32em] text-white/65">PIECE BIBLE</span>
             </div>
           </div>
 
@@ -1279,6 +1668,13 @@ export default function BiblePage() {
               className={`rounded-full px-4 py-2 text-sm uppercase tracking-[0.18em] transition-colors ${activeTab === "props" ? "bg-[#D4A853] text-black" : "border border-white/10 bg-white/4 text-white/70 hover:bg-white/8 hover:text-white"}`}
             >
               Props ({props.length})
+            </button>
+            <button
+              type="button"
+              onClick={() => setActiveTab("director")}
+              className={`rounded-full px-4 py-2 text-sm uppercase tracking-[0.18em] transition-colors ${activeTab === "director" ? "bg-[#D4A853] text-black" : "border border-white/10 bg-white/4 text-white/70 hover:bg-white/8 hover:text-white"}`}
+            >
+              Director
             </button>
             <div className="ml-auto flex items-center gap-2">
               <ProjectStylePicker projectStyle={projectStyle} setProjectStyle={setProjectStyle} />
@@ -1311,41 +1707,72 @@ export default function BiblePage() {
           onDirectorVisionSave={updateDirectorVision}
         />
 
-        {activeTab === "props" ? (
-          <>
-            <div className="mb-4 flex items-center gap-3">
-              <button
-                type="button"
-                onClick={() => void handleSmartScan()}
-                disabled={scanning || blocks.length === 0}
-                className="inline-flex items-center gap-2 rounded-full border border-[#D4A853]/30 bg-[#D4A853]/8 px-4 py-2 text-[11px] uppercase tracking-[0.16em] text-[#D4A853] transition-colors hover:bg-[#D4A853]/15 disabled:opacity-50"
-              >
-                {scanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
-                Smart Scan
-              </button>
-              {scanning ? (
-                <span className="text-[11px] text-white/30">Анализирую сценарий...</span>
-              ) : null}
+        {/* ─── Universal Smart Scan + Cleanup ─── */}
+        <div className="mb-4 flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={() => void handleSmartScan()}
+            disabled={scanning || blocks.length === 0}
+            className="inline-flex items-center gap-2 rounded-full border border-[#D4A853]/30 bg-[#D4A853]/8 px-4 py-2 text-[11px] uppercase tracking-[0.16em] text-[#D4A853] transition-colors hover:bg-[#D4A853]/15 disabled:opacity-50"
+          >
+            {scanning ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+            Smart Scan
+          </button>
+          {unusedCount > 0 ? (
+            <button
+              type="button"
+              onClick={handleCleanup}
+              className="inline-flex items-center gap-2 rounded-full border border-red-500/20 bg-red-500/8 px-4 py-2 text-[11px] uppercase tracking-[0.16em] text-red-400 transition-colors hover:bg-red-500/15"
+            >
+              <Trash2 className="h-3.5 w-3.5" />
+              Очистить ({unusedCount})
+            </button>
+          ) : null}
+          {scanning ? (
+            <span className="text-[11px] text-white/30">Анализирую сценарий — персонажи, локации, реквизит...</span>
+          ) : cleanupStats ? (
+            <span className="text-[11px] text-green-400/70">
+              Удалено: {cleanupStats.chars > 0 ? `${cleanupStats.chars} персонажей` : ""}
+              {cleanupStats.chars > 0 && cleanupStats.locs > 0 ? ", " : ""}
+              {cleanupStats.locs > 0 ? `${cleanupStats.locs} локаций` : ""}
+              {(cleanupStats.chars > 0 || cleanupStats.locs > 0) && cleanupStats.props > 0 ? ", " : ""}
+              {cleanupStats.props > 0 ? `${cleanupStats.props} предметов` : ""}
+            </span>
+          ) : scanStats ? (
+            <span className="text-[11px] text-white/40">
+              Заполнено: {scanStats.chars > 0 ? `${scanStats.chars} персонажей` : ""}
+              {scanStats.chars > 0 && scanStats.locs > 0 ? ", " : ""}
+              {scanStats.locs > 0 ? `${scanStats.locs} локаций` : ""}
+              {(scanStats.chars > 0 || scanStats.locs > 0) && scanStats.props > 0 ? ", " : ""}
+              {scanStats.props > 0 ? `${scanStats.props} новых предметов` : ""}
+              {scanStats.chars === 0 && scanStats.locs === 0 && scanStats.props === 0 ? "Всё уже заполнено" : ""}
+            </span>
+          ) : null}
+        </div>
+
+        {/* Prop suggestions from Smart Scan (visible on any tab) */}
+        {suggestions.length > 0 ? (
+          <div className="mb-6">
+            <p className="mb-3 text-[10px] uppercase tracking-[0.18em] text-[#D4A853]/60">
+              AI Suggestions — {suggestions.length} {suggestions.length === 1 ? "предмет" : "предметов"}
+            </p>
+            <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
+              {suggestions.map((s) => (
+                <SuggestionCard
+                  key={s.name}
+                  suggestion={s}
+                  onAccept={() => handleAcceptSuggestion(s)}
+                  onDismiss={() => handleDismissSuggestion(s)}
+                />
+              ))}
             </div>
+          </div>
+        ) : null}
 
-            {suggestions.length > 0 ? (
-              <div className="mb-6">
-                <p className="mb-3 text-[10px] uppercase tracking-[0.18em] text-[#D4A853]/60">
-                  AI Suggestions — {suggestions.length} {suggestions.length === 1 ? "предмет" : "предметов"}
-                </p>
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
-                  {suggestions.map((s) => (
-                    <SuggestionCard
-                      key={s.name}
-                      suggestion={s}
-                      onAccept={() => handleAcceptSuggestion(s)}
-                      onDismiss={() => handleDismissSuggestion(s)}
-                    />
-                  ))}
-                </div>
-              </div>
-            ) : null}
-
+        {activeTab === "director" ? (
+          <DirectorSection />
+        ) : activeTab === "props" ? (
+          <>
             <section className="grid grid-cols-1 gap-4 sm:grid-cols-2 md:grid-cols-3 xl:grid-cols-4">
               {sortedProps.map((entry) => (
                 <PropCard

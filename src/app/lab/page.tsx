@@ -33,7 +33,7 @@ import { type BibleReferenceImage, type CharacterEntry, type LocationEntry } fro
 import { DEAKINS_RULES, SHOT_TRANSITION_RULES } from "@/lib/cinematographyRules"
 import { saveBlob } from "@/lib/fileStorage"
 import { convertReferenceImagesToDataUrls, getShotGenerationReferenceImages } from "@/lib/imageGenerationReferences"
-import { type JenkinsShot } from "@/lib/jenkins"
+import { type JenkinsShot } from "@/lib/breakdownTypes"
 import { DEFAULT_PROJECT_STYLE } from "@/lib/projectStyle"
 import { buildImagePrompt, getReferencedBibleEntries } from "@/lib/promptBuilder"
 import { parseScenes, type Scene } from "@/lib/sceneParser"
@@ -189,6 +189,7 @@ function normalizeLabShot(item: unknown, index: number): LabShot {
     imagePrompt: typeof shot.imagePrompt === "string" ? shot.imagePrompt : "",
     videoPrompt: typeof shot.videoPrompt === "string" ? shot.videoPrompt : "",
     visualDescription: typeof shot.visualDescription === "string" ? shot.visualDescription : "",
+    svg: typeof shot.svg === "string" ? shot.svg : "",
   }
 }
 
@@ -993,7 +994,7 @@ function LabPageContent() {
             </button>
             <div className="flex items-center gap-2 text-sm font-semibold tracking-[0.22em] text-[#D4A853]">
               <FlaskConical className="h-4 w-4" />
-              KOZA PIPELINE LAB
+              PIECE PIPELINE LAB
             </div>
           </div>
 

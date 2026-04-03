@@ -4,13 +4,16 @@
   "private": true,
   "scripts": {
     "dev": "./start-dev.sh start",
+    "dev:clean": "lsof -ti :3001 | xargs kill -9 2>/dev/null; rm -rf .next && npx next dev -p 3001",
     "dev:status": "./start-dev.sh status",
     "dev:stop": "./start-dev.sh stop",
     "dev:restart": "./start-dev.sh restart",
     "build": "next build",
     "build:safe": "./safe-build.sh",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest"
   },
   "dependencies": {
     "@ai-sdk/anthropic": "^3.0.58",
@@ -37,9 +40,11 @@
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^6.0.1",
     "eslint": "^9",
     "eslint-config-next": "16.1.7",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "vitest": "^4.1.2"
   }
 }

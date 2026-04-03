@@ -109,22 +109,26 @@ start_on_port() {
 	local port="$1"
 
 	if [[ -z "$NODE_BIN" || ! -x "$NODE_BIN" ]]; then
-		echo "Node binary was not found for KOZA launcher"
+		echo "Node binary was not found for PIECE launcher"
 		return 1
 	fi
 
-	/usr/bin/nohup "$NODE_BIN" ./node_modules/next/dist/bin/next dev --webpack -p "$port" > "$LOG_FILE" 2>&1 &
+	# Always clean .next cache to prevent Turbopack SST/manifest bugs
+	echo "Cleaning .next cache..."
+	/bin/rm -rf "$ROOT_DIR/.next"
+
+	/usr/bin/nohup "$NODE_BIN" ./node_modules/next/dist/bin/next dev -p "$port" > "$LOG_FILE" 2>&1 &
 	local pid=$!
 	write_runtime_files "$pid" "$port"
 
 	if wait_for_health "$port"; then
-		echo "KOZA dev server is running on http://localhost:$port"
+		echo "PIECE dev server is running on http://localhost:$port"
 		return 0
 	fi
 
 	kill "$pid" 2>/dev/null || true
 	clear_runtime_files
-	echo "Failed to start KOZA dev server on port $port"
+	echo "Failed to start PIECE dev server on port $port"
 	return 1
 }
 
@@ -135,13 +139,13 @@ start_server() {
 	current_port="$(get_saved_port)"
 
 	if [[ -n "$current_pid" ]] && is_pid_running "$current_pid" && health_check "$current_port"; then
-		echo "KOZA dev server is already healthy on http://localhost:$current_port"
+		echo "PIECE dev server is already healthy on http://localhost:$current_port"
 		return 0
 	fi
 
 	if health_check "$DEFAULT_PORT"; then
 		echo "$DEFAULT_PORT" > "$PORT_FILE"
-		echo "KOZA dev server is already healthy on http://localhost:$DEFAULT_PORT"
+		echo "PIECE dev server is already healthy on http://localhost:$DEFAULT_PORT"
 		return 0
 	fi
 
@@ -158,7 +162,7 @@ stop_server() {
 
 	if [[ -z "$current_pid" ]]; then
 		clear_runtime_files
-		echo "No managed KOZA dev server PID found"
+		echo "No managed PIECE dev server PID found"
 		return 0
 	fi
 
@@ -173,7 +177,7 @@ stop_server() {
 	fi
 
 	clear_runtime_files
-	echo "Managed KOZA dev server stopped"
+	echo "Managed PIECE dev server stopped"
 }
 
 status_server() {

@@ -1,7 +1,7 @@
 "use client"
 
 import Link from "next/link"
-import { ArrowDownToLine, ArrowLeft, Clipboard, Settings, Sparkles, Trash2 } from "lucide-react"
+import { ArrowDownToLine, ArrowLeft, Clipboard, Film, Settings, Trash2 } from "lucide-react"
 import { useRouter, useSearchParams } from "next/navigation"
 import { Fragment, Suspense, useMemo, useState } from "react"
 import type { LogEntry, LogEntryType } from "@/store/devlog"
@@ -417,11 +417,32 @@ function DevConsoleContent() {
               Back
             </button>
             <Link
-              href="/dev/configurator"
-              className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/4 px-3 py-2 text-sm text-white/70 transition hover:text-white"
+              href="/dev/rundown"
+              className="inline-flex items-center gap-2 rounded-full border border-red-500/20 bg-red-500/8 px-3 py-2 text-sm text-red-300/70 transition hover:text-red-300"
             >
-              <Sparkles className="h-4 w-4" />
-              Configurator Sandbox
+              <Film className="h-4 w-4" />
+              Rundown
+            </Link>
+            <Link
+              href="/dev/segment-lab"
+              className="inline-flex items-center gap-2 rounded-full border border-pink-500/20 bg-pink-500/8 px-3 py-2 text-sm text-pink-300/70 transition hover:text-pink-300"
+            >
+              <Film className="h-4 w-4" />
+              Segment Lab
+            </Link>
+            <Link
+              href="/dev/track-lab"
+              className="inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/8 px-3 py-2 text-sm text-emerald-300/70 transition hover:text-emerald-300"
+            >
+              <Film className="h-4 w-4" />
+              Track Lab
+            </Link>
+            <Link
+              href="/dev/breakdown-studio"
+              className="inline-flex items-center gap-2 rounded-full border border-[#D4A853]/20 bg-[#D4A853]/8 px-3 py-2 text-sm text-[#E6C887]/70 transition hover:text-[#E6C887]"
+            >
+              <Film className="h-4 w-4" />
+              Breakdown Studio
             </Link>
             <Link
               href="/dev/settings"
@@ -438,7 +459,7 @@ function DevConsoleContent() {
               Production
             </Link>
             <div>
-              <h1 className="text-lg font-semibold tracking-[0.24em] text-white/90">KOZA DEV CONSOLE</h1>
+              <h1 className="text-lg font-semibold tracking-[0.24em] text-white/90">PIECE DEV CONSOLE</h1>
               <p className="text-xs text-white/35">System breakdown, image generation, prompt and sync logs</p>
             </div>
           </div>

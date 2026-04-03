@@ -14,6 +14,8 @@ import {
   Music,
   Volume2,
   Upload,
+  Subtitles,
+  VolumeX,
 } from "lucide-react"
 import { saveBlob, loadBlob } from "@/lib/fileStorage"
 import {
@@ -23,6 +25,9 @@ import {
   getShotStartTime,
   type TimelineShot,
 } from "@/store/timeline"
+import { useDialogueStore, getRecommendedShotDurationMs, type DialogueLine } from "@/store/dialogue"
+import { useVoiceTrackStore, resolveVoiceTimeline, type VoiceClip, type ShotInfo } from "@/store/voiceTrack"
+import { useSpeech, type SpeechSegment } from "@/hooks/useSpeech"
 
 /* ─── helpers ─── */
 
@@ -142,6 +147,166 @@ export default function TimelinePage() {
   const clearTimeline = useTimelineStore((s) => s.clearTimeline)
 
   usePlaybackTick()
+
+  /* ─── Voice Track ─── */
+  const voiceClips = useVoiceTrackStore((s) => s.clips)
+  const generateFromDialogue = useVoiceTrackStore((s) => s.generateFromDialogue)
+  const updateVoiceClip = useVoiceTrackStore((s) => s.updateClip)
+  const selectedVoiceClipId = useVoiceTrackStore((s) => s.selectedClipId)
+  const selectVoiceClip = useVoiceTrackStore((s) => s.selectClip)
+  const removeVoiceClip = useVoiceTrackStore((s) => s.removeClip)
+
+  // Build ShotInfo[] for voice clip resolution
+  const shotInfos: ShotInfo[] = useMemo(() => {
+    let acc = 0
+    return shots.map((s, i) => {
+      const info: ShotInfo = { id: s.id, sceneId: s.sceneId, startMs: acc, duration: s.duration, order: i }
+      acc += s.duration
+      return info
+    })
+  }, [shots])
+
+  // Resolved voice timeline (absolute positions)
+  const resolvedVoice = useMemo(
+    () => resolveVoiceTimeline(voiceClips, shotInfos),
+    [voiceClips, shotInfos],
+  )
+
+  // Split by track
+  const voiceTrackClips = useMemo(() => resolvedVoice.filter((r) => r.clip.track === "voice"), [resolvedVoice])
+  const voTrackClips = useMemo(() => resolvedVoice.filter((r) => r.clip.track === "vo" || r.clip.track === "narration"), [resolvedVoice])
+
+  /* ─── Dialogue & Speech ─── */
+  const dialogueLines = useDialogueStore((s) => s.lines)
+  const [subtitlesOn, setSubtitlesOn] = useState(true)
+  const [voiceOn, setVoiceOn] = useState(false)
+
+  // Build a time-indexed dialogue map: for each shot, compute absolute start time of each line
+  const dialogueTimeline = useMemo(() => {
+    if (dialogueLines.length === 0 || shots.length === 0) return [] as { line: DialogueLine; startMs: number; endMs: number }[]
+
+    const result: { line: DialogueLine; startMs: number; endMs: number }[] = []
+    // For now: assign dialogue lines sequentially to shots by scene order
+    // Lines with shotIds use those; lines without fall on their scene's shots
+    let globalOffset = 0
+
+    for (let i = 0; i < shots.length; i++) {
+      const shot = shots[i]
+      const shotStart = getShotStartTime(shots, i)
+
+      // Find dialogue lines for this shot (by shotId or by sceneId)
+      const shotLines = dialogueLines.filter(
+        (l) => l.shotIds.includes(shot.id) || (l.shotIds.length === 0 && l.sceneId === shot.sceneId),
+      )
+
+      let offset = 0
+      for (const line of shotLines) {
+        // Skip if already added
+        if (result.some((r) => r.line.id === line.id)) continue
+        const startMs = shotStart + offset
+        const endMs = startMs + line.estimatedDurationMs
+        result.push({ line, startMs, endMs })
+        offset += line.estimatedDurationMs
+      }
+    }
+
+    // Also add lines not matched to any shot — append at end
+    for (const line of dialogueLines) {
+      if (!result.some((r) => r.line.id === line.id)) {
+        const startMs = globalOffset
+        const endMs = startMs + line.estimatedDurationMs
+        result.push({ line, startMs, endMs })
+        globalOffset = endMs
+      }
+    }
+
+    return result.sort((a, b) => a.startMs - b.startMs)
+  }, [dialogueLines, shots])
+
+  // Current subtitle — prefer VoiceClips if available, fallback to dialogueTimeline
+  const currentDialogue = useMemo(() => {
+    if (!subtitlesOn && !voiceOn) return null
+
+    // Use voice clips if they exist
+    if (resolvedVoice.length > 0) {
+      const active = resolvedVoice.find((r) => currentTime >= r.startMs && currentTime < r.endMs)
+      if (active) {
+        return {
+          line: {
+            id: active.clip.id,
+            characterId: active.clip.characterId,
+            characterName: active.clip.characterName,
+            text: active.clip.text,
+            parenthetical: active.clip.emotion,
+            type: active.clip.track === "vo" ? "voiceover" as const : "dialogue" as const,
+            sceneId: active.clip.anchor.sceneId ?? null,
+            shotIds: active.clip.anchor.shotId ? [active.clip.anchor.shotId] : [],
+            estimatedDurationMs: active.clip.duration,
+            order: active.clip.order,
+          } satisfies DialogueLine,
+          startMs: active.startMs,
+          endMs: active.endMs,
+        }
+      }
+      return null
+    }
+
+    // Fallback to dialogue timeline
+    return dialogueTimeline.find((d) => currentTime >= d.startMs && currentTime < d.endMs) ?? null
+  }, [resolvedVoice, dialogueTimeline, currentTime, subtitlesOn, voiceOn])
+
+  // TTS
+  const speech = useSpeech({
+    defaultRate: playbackRate,
+    onEnd: () => {
+      // Voice finished
+    },
+  })
+
+  // Start/stop voice with playback
+  const prevPlayingRef = useRef(false)
+  useEffect(() => {
+    if (!voiceOn) {
+      if (speech.speaking) speech.stop()
+      prevPlayingRef.current = isPlaying
+      return
+    }
+
+    if (isPlaying && !prevPlayingRef.current) {
+      // Prefer VoiceClips, fallback to dialogueTimeline
+      const source = resolvedVoice.length > 0
+        ? resolvedVoice
+            .filter((r) => r.startMs >= currentTime - 200)
+            .map((r) => ({
+              id: r.clip.id,
+              text: r.clip.text,
+              characterName: r.clip.characterName,
+              lang: r.clip.lang,
+              rate: playbackRate * r.clip.speed,
+              pitch: r.clip.pitch,
+            }))
+        : dialogueTimeline
+            .filter((d) => d.startMs >= currentTime - 200)
+            .map((d) => ({
+              id: d.line.id,
+              text: d.line.text,
+              characterName: d.line.characterName,
+              lang: /[а-яё]/i.test(d.line.text) ? "ru-RU" : "en-US",
+              rate: playbackRate,
+            }))
+
+      if (source.length > 0) speech.speak(source)
+    } else if (!isPlaying && prevPlayingRef.current) {
+      speech.stop()
+    }
+
+    prevPlayingRef.current = isPlaying
+  }, [isPlaying, voiceOn]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  /* voice clip context menu */
+  const [clipMenu, setClipMenu] = useState<{ clipId: string; x: number; y: number } | null>(null)
+  const splitVoiceClip = useVoiceTrackStore((s) => s.splitClip)
+  const mergeVoiceClips = useVoiceTrackStore((s) => s.mergeClips)
 
   /* drag & drop state */
   const [isDragOver, setIsDragOver] = useState(false)
@@ -429,7 +594,7 @@ export default function TimelinePage() {
         <Link href="/?storyboard=open" className="text-xs text-white/40 hover:text-white/70 transition-colors">
           ← Back to Storyboard
         </Link>
-        <span className="text-xs font-medium tracking-wider text-white/60 uppercase">KOZA Timeline</span>
+        <span className="text-xs font-medium tracking-wider text-white/60 uppercase">PIECE Timeline</span>
       </header>
 
       {/* Main timeline block */}
@@ -477,6 +642,50 @@ export default function TimelinePage() {
           <TBtn title="Playback speed" onClick={cycleSpeed} className="ml-1 text-[10px] font-mono">
             ×{playbackRate}
           </TBtn>
+
+          {/* Subtitle & Voice toggles */}
+          <div className="ml-2 flex items-center gap-0.5 border-l border-white/[0.08] pl-2">
+            <TBtn
+              title={subtitlesOn ? "Hide subtitles" : "Show subtitles"}
+              onClick={() => setSubtitlesOn(!subtitlesOn)}
+              className={subtitlesOn ? "text-[#D4A853]" : ""}
+            >
+              <Subtitles size={13} />
+            </TBtn>
+            <TBtn
+              title={voiceOn ? "Mute voice" : "Enable voice"}
+              onClick={() => {
+                const next = !voiceOn
+                setVoiceOn(next)
+                if (!next && speech.speaking) speech.stop()
+              }}
+              className={voiceOn ? "text-emerald-400" : ""}
+            >
+              {voiceOn ? <Volume2 size={13} /> : <VolumeX size={13} />}
+            </TBtn>
+            {dialogueLines.length > 0 && (
+              <span className="text-[9px] text-white/20 ml-1">{dialogueLines.length} lines</span>
+            )}
+            {dialogueLines.length > 0 && (
+              <TBtn
+                title="Sync shot durations to dialogue length"
+                onClick={() => {
+                  for (const shot of shots) {
+                    const shotLines = dialogueLines.filter(
+                      (l) => l.shotIds.includes(shot.id) || (l.shotIds.length === 0 && l.sceneId === shot.sceneId),
+                    )
+                    const recommended = getRecommendedShotDurationMs(shotLines)
+                    if (recommended !== null && Math.abs(shot.duration - recommended) > 200) {
+                      updateShot(shot.id, { duration: recommended })
+                    }
+                  }
+                }}
+                className="text-[9px] font-mono"
+              >
+                Sync
+              </TBtn>
+            )}
+          </div>
 
           <div className="flex-1" />
 
@@ -545,6 +754,7 @@ export default function TimelinePage() {
               currentShotIdx={currentShotIdx}
               selectedShotId={selectedShotId}
               isPlaying={isPlaying}
+              subtitle={subtitlesOn ? currentDialogue : null}
             />
 
             {/* 3 — Video Track */}
@@ -591,13 +801,121 @@ export default function TimelinePage() {
               </div>
             </div>
 
-            {/* 4 — Audio Tracks */}
-            <AudioTrackRow icon={<Mic size={12} />} label="Voice" />
+            {/* 4 — Voice Tracks */}
+            <VoiceTrackRow
+              label="Voice"
+              icon={<Mic size={12} />}
+              clips={voiceTrackClips}
+              zoom={zoom}
+              scrollLeft={scrollLeft}
+              totalWidth={totalWidth}
+              playheadX={playheadX}
+              currentTime={currentTime}
+              selectedClipId={selectedVoiceClipId}
+              onSelectClip={selectVoiceClip}
+              onResizeClip={(id, dur) => updateVoiceClip(id, { duration: dur, durationSource: "estimate" })}
+              onContextMenu={(clipId, x, y) => setClipMenu({ clipId, x, y })}
+              color="#D4A853"
+            />
+            <VoiceTrackRow
+              label="V.O."
+              icon={<Volume2 size={12} />}
+              clips={voTrackClips}
+              zoom={zoom}
+              scrollLeft={scrollLeft}
+              totalWidth={totalWidth}
+              playheadX={playheadX}
+              currentTime={currentTime}
+              selectedClipId={selectedVoiceClipId}
+              onSelectClip={selectVoiceClip}
+              onResizeClip={(id, dur) => updateVoiceClip(id, { duration: dur, durationSource: "estimate" })}
+              onContextMenu={(clipId, x, y) => setClipMenu({ clipId, x, y })}
+              color="#8B5CF6"
+            />
+
+            {/* Generate button */}
+            {voiceClips.length === 0 && dialogueLines.length > 0 && (
+              <div className="flex h-8 items-center justify-center border-t border-white/[0.06]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const shotRefs = shots.map((s, i) => ({ id: s.id, sceneId: s.sceneId, order: i }))
+                    generateFromDialogue(dialogueLines, shotRefs)
+                  }}
+                  className="flex items-center gap-1.5 rounded-md bg-[#D4A853]/10 px-3 py-1 text-[10px] font-medium text-[#D4A853]/80 transition-colors hover:bg-[#D4A853]/20"
+                >
+                  <Mic size={11} />
+                  Generate Voice Track ({dialogueLines.length} lines)
+                </button>
+              </div>
+            )}
+
+            {/* 5 — Other Audio Tracks */}
             <AudioTrackRow icon={<Music size={12} />} label="Music" />
             <AudioTrackRow icon={<Volume2 size={12} />} label="SFX" />
           </>
         )}
       </div>
+      {/* Voice clip context menu */}
+      {clipMenu && (
+        <div
+          className="fixed z-50 min-w-[160px] rounded-lg border border-white/10 bg-[#1A1816] py-1 shadow-xl"
+          style={{ left: clipMenu.x, top: clipMenu.y }}
+          onClick={() => setClipMenu(null)}
+          onMouseLeave={() => setClipMenu(null)}
+        >
+          {(() => {
+            const clip = voiceClips.find((c) => c.id === clipMenu.clipId)
+            if (!clip) return null
+            // Find next clip of same character for merge
+            const sorted = voiceClips.filter((c) => c.characterId === clip.characterId).sort((a, b) => a.order - b.order)
+            const idx = sorted.findIndex((c) => c.id === clip.id)
+            const nextClip = sorted[idx + 1]
+
+            return (
+              <>
+                <div className="px-3 py-1 text-[9px] uppercase tracking-wider text-white/25">
+                  {clip.characterName}
+                </div>
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-[11px] text-white/70 hover:bg-white/8"
+                  onClick={() => {
+                    const mid = Math.floor(clip.text.length / 2)
+                    splitVoiceClip(clip.id, mid)
+                  }}
+                >
+                  ✂ Split
+                </button>
+                {nextClip && (
+                  <button
+                    type="button"
+                    className="flex w-full items-center gap-2 px-3 py-1.5 text-[11px] text-white/70 hover:bg-white/8"
+                    onClick={() => mergeVoiceClips(clip.id, nextClip.id)}
+                  >
+                    ⊕ Merge with next
+                  </button>
+                )}
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-[11px] text-white/70 hover:bg-white/8"
+                  onClick={() => updateVoiceClip(clip.id, { mode: clip.mode === "magnetic" ? "free" : "magnetic" })}
+                >
+                  {clip.mode === "magnetic" ? "🔓 Free mode" : "🧲 Magnetic mode"}
+                </button>
+                <div className="my-1 border-t border-white/6" />
+                <button
+                  type="button"
+                  className="flex w-full items-center gap-2 px-3 py-1.5 text-[11px] text-red-400/70 hover:bg-red-500/10"
+                  onClick={() => removeVoiceClip(clip.id)}
+                >
+                  ✕ Delete
+                </button>
+              </>
+            )
+          })()}
+        </div>
+      )}
     </main>
   )
 }
@@ -624,6 +942,173 @@ function TBtn({
     >
       {children}
     </button>
+  )
+}
+
+/* ─── VoiceTrackRow — renders voice clips on a track ─── */
+
+const CLIP_COLORS: Record<string, string> = {}
+const COLOR_POOL = ["#D4A853", "#8B5CF6", "#10B981", "#F59E0B", "#EC4899", "#3B82F6", "#EF4444"]
+let colorIdx = 0
+
+function getCharacterColor(characterId: string): string {
+  if (!CLIP_COLORS[characterId]) {
+    CLIP_COLORS[characterId] = COLOR_POOL[colorIdx % COLOR_POOL.length]
+    colorIdx++
+  }
+  return CLIP_COLORS[characterId]
+}
+
+function VoiceTrackRow({
+  label,
+  icon,
+  clips,
+  zoom,
+  scrollLeft,
+  totalWidth,
+  playheadX,
+  currentTime,
+  selectedClipId,
+  onSelectClip,
+  onResizeClip,
+  onContextMenu,
+  color,
+}: {
+  label: string
+  icon: React.ReactNode
+  clips: { clip: VoiceClip; startMs: number; endMs: number }[]
+  zoom: number
+  scrollLeft: number
+  totalWidth: number
+  playheadX: number
+  currentTime: number
+  selectedClipId: string | null
+  onSelectClip: (id: string | null) => void
+  onResizeClip: (id: string, duration: number) => void
+  onContextMenu?: (clipId: string, x: number, y: number) => void
+  color: string
+}) {
+  const resizingRef = useRef<{ clipId: string; startX: number; startDur: number } | null>(null)
+
+  const handleResizeStart = useCallback((e: React.MouseEvent, clipId: string, currentDuration: number) => {
+    e.stopPropagation()
+    e.preventDefault()
+    resizingRef.current = { clipId, startX: e.clientX, startDur: currentDuration }
+
+    const onMove = (ev: MouseEvent) => {
+      if (!resizingRef.current) return
+      const dx = ev.clientX - resizingRef.current.startX
+      const dMs = (dx / zoom) * 1000
+      const newDur = Math.max(300, resizingRef.current.startDur + dMs)
+      onResizeClip(resizingRef.current.clipId, Math.round(newDur))
+    }
+
+    const onUp = () => {
+      resizingRef.current = null
+      document.removeEventListener("mousemove", onMove)
+      document.removeEventListener("mouseup", onUp)
+    }
+
+    document.addEventListener("mousemove", onMove)
+    document.addEventListener("mouseup", onUp)
+  }, [zoom, onResizeClip])
+
+  const hasClips = clips.length > 0
+  // Scale height by clip count: base 40, add 8px per extra row
+  const trackHeight = hasClips ? Math.max(40, Math.min(80, 40 + (clips.length > 6 ? 16 : 0) + (clips.length > 12 ? 16 : 0))) : 24
+
+  return (
+    <div className="flex border-t border-white/[0.06]" style={{ height: trackHeight }}>
+      <div
+        style={{ width: TRACK_LABEL_W }}
+        className="flex shrink-0 items-center justify-center gap-1.5 border-r border-white/[0.06]"
+      >
+        <span style={{ color: `${color}88` }}>{icon}</span>
+        <span className="text-[9px] uppercase tracking-wider" style={{ color: `${color}88` }}>{label}</span>
+        {hasClips && (
+          <span className="text-[8px] text-white/20">{clips.length}</span>
+        )}
+      </div>
+      <div className="relative flex-1 overflow-hidden">
+        <div
+          className="relative h-full"
+          style={{ width: totalWidth, transform: `translateX(${-scrollLeft}px)` }}
+        >
+          {clips.map(({ clip, startMs, endMs }) => {
+            const left = (startMs / 1000) * zoom
+            const width = Math.max(4, (clip.duration / 1000) * zoom)
+            const isActive = currentTime >= startMs && currentTime < endMs
+            const isSelected = selectedClipId === clip.id
+            const charColor = getCharacterColor(clip.characterId)
+            const isStale = clip.audioTextVersion != null && clip.textVersion !== clip.audioTextVersion
+
+            return (
+              <div
+                key={clip.id}
+                className="absolute top-1 bottom-1 flex items-center overflow-hidden rounded-md border cursor-pointer transition-all"
+                style={{
+                  left,
+                  width,
+                  borderColor: isSelected ? charColor : isActive ? `${charColor}60` : `${charColor}25`,
+                  backgroundColor: isActive ? `${charColor}18` : `${charColor}0A`,
+                  boxShadow: isSelected ? `0 0 8px ${charColor}30` : undefined,
+                }}
+                onClick={() => onSelectClip(clip.id)}
+                onContextMenu={(e) => {
+                  e.preventDefault()
+                  onContextMenu?.(clip.id, e.clientX, e.clientY)
+                }}
+              >
+                {/* Clip content */}
+                <div className="flex-1 min-w-0 px-1.5 py-0.5">
+                  {width > 60 && (
+                    <div
+                      className="truncate text-[8px] font-bold uppercase tracking-wider"
+                      style={{ color: `${charColor}CC` }}
+                    >
+                      {clip.characterName}
+                    </div>
+                  )}
+                  {width > 100 && (
+                    <div className="truncate text-[9px] text-white/50 leading-tight">
+                      {clip.emotion && <span className="text-white/30">({clip.emotion}) </span>}
+                      {clip.text}
+                    </div>
+                  )}
+                </div>
+
+                {/* Stale indicator */}
+                {isStale && width > 30 && (
+                  <div className="absolute top-0.5 right-1 text-[8px] text-amber-400/60">⚠</div>
+                )}
+
+                {/* V.O. badge */}
+                {clip.track === "vo" && width > 40 && (
+                  <div
+                    className="absolute top-0.5 left-1 rounded-sm px-1 text-[7px] font-bold uppercase"
+                    style={{ backgroundColor: `${charColor}20`, color: `${charColor}AA` }}
+                  >
+                    V.O.
+                  </div>
+                )}
+
+                {/* Resize handle (right edge) */}
+                <div
+                  className="absolute right-0 top-0 bottom-0 w-1.5 cursor-ew-resize hover:bg-white/20"
+                  onMouseDown={(e) => handleResizeStart(e, clip.id, clip.duration)}
+                />
+              </div>
+            )
+          })}
+
+          {/* Playhead */}
+          <div
+            className="pointer-events-none absolute top-0 bottom-0 w-px"
+            style={{ left: playheadX, backgroundColor: color }}
+          />
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -724,12 +1209,14 @@ function PreviewPanel({
   currentShotIdx,
   selectedShotId,
   isPlaying,
+  subtitle,
 }: {
   shots: TimelineShot[]
   currentTime: number
   currentShotIdx: number
   selectedShotId: string | null
   isPlaying: boolean
+  subtitle: { line: DialogueLine; startMs: number; endMs: number } | null
 }) {
   const videoRef = useRef<HTMLVideoElement>(null)
   const [videoSrc, setVideoSrc] = useState<string | null>(null)
@@ -832,12 +1319,16 @@ function PreviewPanel({
             className="h-full w-full object-contain"
           />
         ) : (
-          <div className="flex h-[240px] w-[427px] flex-col items-center justify-center gap-2 bg-[#1A1816]">
-            <Film size={32} className="text-white/20" />
+          <div className="flex h-[240px] w-[427px] flex-col items-center justify-center gap-3 bg-[#1A1816]">
+            <Film size={32} className="text-white/15" />
             <span className="text-xs text-white/30">Shot {previewShotIdx + 1}</span>
             {previewShot.label && (
-              <span className="text-[11px] text-white/40">{previewShot.label}</span>
+              <span className="text-[11px] text-white/40 max-w-[300px] text-center">{previewShot.label}</span>
             )}
+            {previewShot.caption && (
+              <span className="text-[10px] text-white/25 max-w-[340px] text-center leading-4 italic">{previewShot.caption}</span>
+            )}
+            <span className="rounded-full border border-white/10 px-2.5 py-0.5 text-[9px] text-white/20">Requires generation</span>
           </div>
         )}
 
@@ -856,6 +1347,23 @@ function PreviewPanel({
         <span className="absolute bottom-2 right-2 rounded bg-black/50 px-2 py-1 font-mono text-[10px] text-white/60">
           {formatTime(localTimeMs)} / {formatTime(shotDurationMs)}
         </span>
+
+        {/* Subtitle overlay */}
+        {subtitle && (
+          <div className="absolute inset-x-0 bottom-10 flex flex-col items-center px-4 pointer-events-none">
+            {subtitle.line.characterName && (
+              <span className="mb-0.5 rounded bg-black/40 px-2 py-0.5 text-[9px] font-semibold uppercase tracking-wider text-[#D4A853]/80">
+                {subtitle.line.characterName}
+                {subtitle.line.parenthetical && (
+                  <span className="ml-1.5 font-normal normal-case text-white/40">({subtitle.line.parenthetical})</span>
+                )}
+              </span>
+            )}
+            <span className="rounded-md bg-black/70 px-3 py-1.5 text-center text-[13px] leading-5 text-white/90 backdrop-blur-sm max-w-[80%]">
+              {subtitle.line.text}
+            </span>
+          </div>
+        )}
       </div>
     </div>
   )
