@@ -61,10 +61,10 @@ describe("ModifierTemplate types", () => {
   it("canvas modifier stores serialized data", () => {
     const canvasData = {
       nodes: [
-        { id: "n1", type: "input", data: { text: "Hello" } },
-        { id: "n2", type: "imageGen", data: { model: "flux" } },
+        { id: "n1", type: "input", position: { x: 0, y: 0 }, data: { text: "Hello" } },
+        { id: "n2", type: "imageGen", position: { x: 300, y: 0 }, data: { model: "flux" } },
       ],
-      edges: [{ source: "n1", target: "n2" }],
+      edges: [{ id: "e1", source: "n1", sourceHandle: null, target: "n2", targetHandle: null }],
     }
 
     const mod: BlockModifier = {
@@ -75,6 +75,6 @@ describe("ModifierTemplate types", () => {
     }
 
     expect(mod.canvasData).toEqual(canvasData)
-    expect((mod.canvasData as typeof canvasData).nodes).toHaveLength(2)
+    expect(mod.canvasData!.nodes).toHaveLength(2)
   })
 })

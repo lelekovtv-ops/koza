@@ -8,6 +8,7 @@
  */
 
 import type { GenerationHistoryEntry } from "@/store/timeline"
+import type { CanvasData } from "@/lib/canvas/canvasTypes"
 
 // ─── Change Origin (for bidirectional sync loop prevention) ───
 
@@ -16,6 +17,7 @@ export type ChangeOrigin =
   | "storyboard"
   | "timeline"
   | "voice"
+  | "canvas"
   | "system"
 
 // ─── Production Visual ───────────────────────────────────────
@@ -47,7 +49,7 @@ export type ModifierType =
 export interface BlockModifier {
   type: ModifierType
   templateId: string | null
-  canvasData: unknown | null
+  canvasData: CanvasData | null
   params: Record<string, unknown>
 }
 

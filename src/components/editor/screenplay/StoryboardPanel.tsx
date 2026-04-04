@@ -36,6 +36,7 @@ import { buildFullTimingMap, buildSceneTimingMap, mapShotsToBlocks, placeShotsOn
 import { syncBus } from "@/lib/syncBus"
 import { enrichBlocksFromBreakdown } from "@/features/breakdown/enrichFromBreakdown"
 import { BlockCanvas } from "@/components/editor/canvas/BlockCanvas"
+import { useBlockCanvasStore } from "@/store/blockCanvas"
 import { useProjectsStore } from "@/store/projects"
 import { useProjectProfilesStore } from "@/store/projectProfiles"
 import { slugify, type CharacterEntry, type LocationEntry, type PropEntry } from "@/lib/bibleParser"
@@ -2024,7 +2025,7 @@ export function StoryboardPanel({
   const [scanningIds, setScanningIds] = useState<Set<string>>(new Set())
   const [pendingActionFocusShotId, setPendingActionFocusShotId] = useState<string | null>(null)
   const [isSplitScreen, setIsSplitScreen] = useState(false)
-  const [canvasShotId, setCanvasShotId] = useState<string | null>(null)
+  // canvasShotId removed — now using useBlockCanvasStore
   const [directorFieldVisibility, setDirectorFieldVisibility] = useState<DirectorFieldVisibility>("all")
   const [scriptFontSize] = useState(16)
   const [breakdownWarning, setBreakdownWarning] = useState<string | null>(null)
@@ -3849,6 +3850,22 @@ ${shotText}
                                 </div>
                               )}
                             </div>
+                            {/* Canvas button — top right corner of card */}
+                            {shot && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  const blockId = shot.blockRange?.[0] || shot.id
+                                  useBlockCanvasStore.getState().openBlock(blockId, shot.id)
+                                }}
+                                className="absolute right-2.5 top-2.5 flex items-center gap-1 rounded-md border border-cyan-500/25 bg-black/40 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-cyan-300/70 backdrop-blur-sm transition-all hover:bg-cyan-500/15 hover:text-cyan-200"
+                                title="Open in Canvas"
+                              >
+                                <Grid size={10} />
+                                <span className="hidden sm:inline">Canvas</span>
+                              </button>
+                            )}
 
                             {shot && (shot.generationHistory?.length ?? 0) > 1 && !isGenerating && (() => {
                               const total = shot.generationHistory.length
@@ -3945,7 +3962,11 @@ ${shotText}
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => shot && setCanvasShotId(shot.id)}
+                                  onClick={() => {
+                                    if (!shot) return
+                                    const blockId = shot.blockRange?.[0] || shot.id
+                                    useBlockCanvasStore.getState().openBlock(blockId, shot.id)
+                                  }}
                                   className="flex items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3.5 py-2 text-[12px] uppercase tracking-[0.14em] text-cyan-300 backdrop-blur-sm transition-colors hover:bg-cyan-500/20"
                                 >
                                   <Grid size={13} />
@@ -4203,6 +4224,23 @@ ${shotText}
                   }}
                 >
                   <div className="relative flex h-full flex-col text-[#E5E0DB]">
+                    {/* Canvas button — card level, outside image overflow */}
+                    {shot && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          e.preventDefault()
+                          const blockId = shot.blockRange?.[0] || shot.id
+                          useBlockCanvasStore.getState().openBlock(blockId, shot.id)
+                        }}
+                        className="absolute right-3 top-3 z-10 flex items-center gap-1 rounded-md border border-cyan-500/30 bg-black/60 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-cyan-300 backdrop-blur-sm transition-all hover:bg-cyan-500/20 hover:text-cyan-100 pointer-events-auto cursor-pointer"
+                        title="Open in Canvas"
+                      >
+                        <Grid size={10} />
+                        Canvas
+                      </button>
+                    )}
                     <div
                       className="relative overflow-hidden rounded-[10px] border border-white/8 bg-[#0E1014] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
                       style={{ aspectRatio: "16 / 8.7" }}
@@ -4237,6 +4275,7 @@ ${shotText}
                           </div>
                         )}
                       </div>
+                      {/* Canvas button removed from here — moved to card level below */}
 
                       {shot && (shot.generationHistory?.length ?? 0) > 1 && !isGenerating && (() => {
                         const total = shot.generationHistory.length
@@ -4785,30 +4824,7 @@ ${shotText}
       )}
 
       {/* Block Canvas — node graph editor per shot */}
-      {canvasShotId && (() => {
-        const canvasShot = shots.find((s) => s.id === canvasShotId)
-        if (!canvasShot) return null
-        // Find block linked to this shot
-        const blockId = canvasShot.blockRange?.[0]
-        const block = blockId ? scriptBlocks.find((b) => b.id === blockId) : null
-        const fallbackBlock = { id: canvasShotId, type: "action" as const, text: canvasShot.caption || canvasShot.label }
-        return (
-          <BlockCanvas
-            block={block || fallbackBlock}
-            shot={canvasShot}
-            onClose={() => setCanvasShotId(null)}
-            onSave={(canvasData) => {
-              // Save canvas graph to block modifier
-              if (block) {
-                useScriptStore.getState().updateBlockProduction(block.id, {
-                  modifier: { type: "canvas", templateId: null, canvasData, params: {} },
-                }, "system")
-              }
-              setCanvasShotId(null)
-            }}
-          />
-        )
-      })()}
+      <BlockCanvas />
 
     </aside>
     </>

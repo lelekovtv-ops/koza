@@ -1,224 +1,451 @@
 "use client"
 
-import { useCallback, useEffect, useMemo, useState } from "react"
+import { useCallback, useEffect, useRef, useState } from "react"
 import {
   ReactFlow,
   Background,
+  MiniMap,
   type Node,
   type Edge,
+  type OnConnect,
+  type Connection,
   useNodesState,
   useEdgesState,
-  type OnConnect,
   addEdge,
   BackgroundVariant,
+  useReactFlow,
+  ReactFlowProvider,
+  ConnectionLineType,
 } from "@xyflow/react"
 import "@xyflow/react/dist/style.css"
-import { X, Play, Save } from "lucide-react"
 import { blockCanvasNodeTypes } from "./blockCanvasNodes"
-import type { Block } from "@/lib/screenplayFormat"
-import type { TimelineShot } from "@/store/timeline"
-import { useScriptStore } from "@/store/script"
-import { useBibleStore } from "@/store/bible"
-import { buildImagePrompt } from "@/lib/promptBuilder"
+import { useBlockCanvasStore } from "@/store/blockCanvas"
+import { isValidCanvasConnection, getEdgeColor } from "@/lib/canvas/connectionValidator"
+import { getNodeDef, getPortDef } from "@/lib/canvas/nodeRegistry"
+import { CATEGORY_RING_COLORS } from "./nodes/shared"
+import { NodePalette } from "./NodePalette"
+import { NodeSidebar } from "./NodeSidebar"
+import { CanvasToolbar } from "./CanvasToolbar"
+import { runImageGenNode } from "@/lib/canvas/canvasGenerate"
 
-// ─── Types ───────────────────────────────────────────────────
+// ─── Palette state ──────────────────────────────────────────
 
-interface BlockCanvasProps {
-  block: Block
-  shot: TimelineShot | null
-  onClose: () => void
-  onSave: (canvasData: unknown) => void
-}
-
-// ─── Build initial graph from block data ─────────────────────
-
-function buildInitialGraph(
-  block: Block,
-  shot: TimelineShot | null,
-): { nodes: Node[]; edges: Edge[] } {
-  const { characters, locations, props: bibleProps } = useBibleStore.getState()
-
-  // Find characters/locations mentioned in this block's scene
-  const sceneChars = characters.filter((c) =>
-    shot?.caption?.toUpperCase().includes(c.name.toUpperCase()) ||
-    block.text.toUpperCase().includes(c.name.toUpperCase())
-  )
-  const sceneLocs = locations.filter((l) =>
-    shot?.sceneId && l.sceneIds.includes(shot.sceneId)
-  )
-  const sceneProps = bibleProps.filter((p) =>
-    shot?.sceneId && p.sceneIds.includes(shot.sceneId)
-  )
-
-  // Build prompt if shot exists
-  const prompt = shot
-    ? buildImagePrompt(shot, characters, locations, undefined, bibleProps)
-    : ""
-
-  const nodes: Node[] = [
-    {
-      id: "block-text",
-      type: "blockText",
-      position: { x: 0, y: 80 },
-      data: {
-        label: "Block Text",
-        text: block.text,
-        blockType: block.type,
-      },
-    },
-    {
-      id: "bible-ref",
-      type: "bibleRef",
-      position: { x: 0, y: 260 },
-      data: {
-        label: "Bible",
-        characters: sceneChars.map((c) => c.name),
-        locations: sceneLocs.map((l) => l.name),
-        props: sceneProps.map((p) => p.name),
-      },
-    },
-    {
-      id: "style-input",
-      type: "styleInput",
-      position: { x: 0, y: 440 },
-      data: {
-        label: "Style Layer",
-        styleName: "From Project",
-        stylePrompt: useBibleStore.getState().directorVision || "No style set",
-        enabled: true,
-      },
-    },
-    {
-      id: "prompt-builder",
-      type: "promptBuilder",
-      position: { x: 320, y: 140 },
-      data: {
-        label: "Prompt Builder",
-        prompt,
-        isProcessing: false,
-      },
-    },
-    {
-      id: "image-gen",
-      type: "imageGen",
-      position: { x: 640, y: 100 },
-      data: {
-        label: "Image Generation",
-        model: "Nano Banana 2",
-        thumbnailUrl: shot?.thumbnailUrl || null,
-        isGenerating: false,
-      },
-    },
-    {
-      id: "output",
-      type: "output",
-      position: { x: 640, y: 340 },
-      data: {
-        label: "Shot Output",
-        thumbnailUrl: shot?.thumbnailUrl || null,
-        prompt,
-        duration: shot?.duration || block.durationMs || 3000,
-      },
-    },
-  ]
-
-  const edges: Edge[] = [
-    { id: "e-text-prompt", source: "block-text", target: "prompt-builder", animated: true, style: { stroke: "#10B981", strokeWidth: 1.5 } },
-    { id: "e-bible-prompt", source: "bible-ref", target: "prompt-builder", animated: true, style: { stroke: "#F59E0B", strokeWidth: 1.5 } },
-    { id: "e-style-prompt", source: "style-input", target: "prompt-builder", animated: true, style: { stroke: "#8B5CF6", strokeWidth: 1.5 } },
-    { id: "e-prompt-gen", source: "prompt-builder", target: "image-gen", animated: true, style: { stroke: "#3B82F6", strokeWidth: 1.5 } },
-    { id: "e-gen-output", source: "image-gen", target: "output", animated: true, style: { stroke: "#D4A853", strokeWidth: 1.5 } },
-  ]
-
-  return { nodes, edges }
-}
-
-// ─── Restore saved graph or build new ────────────────────────
-
-function getInitialGraph(block: Block, shot: TimelineShot | null) {
-  // Try to restore from block.modifier.canvasData
-  if (block.modifier?.type === "canvas" && block.modifier.canvasData) {
-    const saved = block.modifier.canvasData as { nodes?: Node[]; edges?: Edge[] }
-    if (saved.nodes?.length) {
-      return { nodes: saved.nodes, edges: saved.edges || [] }
-    }
+interface PaletteState {
+  screen: { x: number; y: number }
+  canvas: { x: number; y: number }
+  // When opened from a dangling edge drop
+  connectFrom?: {
+    nodeId: string
+    handleId: string
+    handleType: "source" | "target"
   }
-  return buildInitialGraph(block, shot)
 }
 
-// ─── Component ───────────────────────────────────────────────
+// ─── Inner Component (needs ReactFlow context) ──────────────
 
-export function BlockCanvas({ block, shot, onClose, onSave }: BlockCanvasProps) {
-  const initial = useMemo(() => getInitialGraph(block, shot), [block.id])
-  const [nodes, setNodes, onNodesChange] = useNodesState(initial.nodes)
-  const [edges, setEdges, onEdgesChange] = useEdgesState(initial.edges)
+function BlockCanvasInner() {
+  const {
+    activeBlockId,
+    nodes: storeNodes,
+    edges: storeEdges,
+    selectedNodeId,
+    setNodes: setStoreNodes,
+    setEdges: setStoreEdges,
+    selectNode,
+    addNode,
+    updateNodeData,
+    closeBlock,
+    saveToBlock,
+  } = useBlockCanvasStore()
 
+  const [nodes, setNodes, onNodesChange] = useNodesState(storeNodes)
+  const [edges, setEdges, onEdgesChange] = useEdgesState(storeEdges)
+  const [palette, setPalette] = useState<PaletteState | null>(null)
+  const reactFlow = useReactFlow()
+  const pendingConnectRef = useRef<{ nodeId: string; handleId: string; handleType: "source" | "target" } | null>(null)
+
+  // Sync from store → local only on initial open
+  const openedRef = useRef<string | null>(null)
+  useEffect(() => {
+    if (activeBlockId && activeBlockId !== openedRef.current) {
+      openedRef.current = activeBlockId
+      setNodes(storeNodes)
+      setEdges(storeEdges)
+    }
+  }, [activeBlockId]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Listen for node data updates from custom events (from nodes)
+  useEffect(() => {
+    const handler = (e: Event) => {
+      const { nodeId, patch } = (e as CustomEvent).detail
+      updateNodeData(nodeId, patch)
+      setNodes((nds) =>
+        nds.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, ...patch } } : n)),
+      )
+    }
+    window.addEventListener("canvas-node-update", handler)
+    return () => window.removeEventListener("canvas-node-update", handler)
+  }, [updateNodeData, setNodes])
+
+  // Run generation node — called from ImageGenNode "Run Model" button
+  const handleRunNode = useCallback(async (nodeId: string) => {
+    const node = nodes.find((n) => n.id === nodeId)
+    if (!node) return
+
+    // Set generating state
+    setNodes((nds) => nds.map((n) =>
+      n.id === nodeId ? { ...n, data: { ...n.data, isGenerating: true } } : n,
+    ))
+
+    try {
+      const { imageUrl } = await runImageGenNode(node)
+
+      // Update ImageGen node with result
+      setNodes((nds) => nds.map((n) =>
+        n.id === nodeId ? { ...n, data: { ...n.data, isGenerating: false, thumbnailUrl: imageUrl } } : n,
+      ))
+
+      // Also update connected Output/ShotOutput nodes
+      const outEdges = edges.filter((e) => e.source === nodeId)
+      for (const edge of outEdges) {
+        setNodes((nds) => nds.map((n) =>
+          n.id === edge.target ? { ...n, data: { ...n.data, thumbnailUrl: imageUrl } } : n,
+        ))
+      }
+    } catch (err) {
+      console.error("[Canvas] Generation failed:", err)
+      setNodes((nds) => nds.map((n) =>
+        n.id === nodeId ? { ...n, data: { ...n.data, isGenerating: false } } : n,
+      ))
+    }
+  }, [nodes, edges, setNodes])
+
+  // Inject onRun callbacks into generation nodes
+  const nodesWithCallbacks = nodes.map((n) => {
+    if (n.type === "imageGen" || n.type === "videoGen") {
+      return { ...n, data: { ...n.data, onRun: () => handleRunNode(n.id) } }
+    }
+    return n
+  })
+
+  // Connection with type validation + smoothstep + color
   const onConnect: OnConnect = useCallback(
-    (connection) => setEdges((eds) => addEdge({ ...connection, animated: true, style: { stroke: "#ffffff30", strokeWidth: 1.5 } }, eds)),
-    [setEdges],
+    (connection) => {
+      const sourceNode = nodes.find((n) => n.id === connection.source)
+      const color = sourceNode?.type
+        ? getEdgeColor(sourceNode.type, connection.sourceHandle || "")
+        : "#6B7280"
+
+      setEdges((eds) =>
+        addEdge(
+          {
+            ...connection,
+            type: "smoothstep",
+            animated: false,
+            style: { stroke: color, strokeWidth: 2 },
+          },
+          eds,
+        ),
+      )
+    },
+    [nodes, setEdges],
   )
 
-  const handleSave = useCallback(() => {
-    const canvasData = {
-      nodes: nodes.map((n) => ({ id: n.id, type: n.type, position: n.position, data: n.data })),
-      edges: edges.map((e) => ({ id: e.id, source: e.source, target: e.target })),
+  // Track edge drag start
+  const onConnectStart = useCallback((_: unknown, params: { nodeId: string | null; handleId: string | null; handleType: "source" | "target" | null }) => {
+    if (params.nodeId && params.handleId && params.handleType) {
+      pendingConnectRef.current = { nodeId: params.nodeId, handleId: params.handleId, handleType: params.handleType }
     }
-    onSave(canvasData)
-  }, [nodes, edges, onSave])
+  }, [])
 
-  // Esc to close
+  // Edge dropped on empty canvas → open palette to create + auto-connect
+  const onConnectEnd = useCallback((event: MouseEvent | TouchEvent) => {
+    const pending = pendingConnectRef.current
+    pendingConnectRef.current = null
+    if (!pending) return
+
+    // Check if dropped on a node (ReactFlow handles that via onConnect)
+    const target = (event as MouseEvent).target as HTMLElement
+    if (target?.closest(".react-flow__node")) return
+
+    // Dropped on empty space → show palette
+    const clientX = "clientX" in event ? event.clientX : event.changedTouches[0].clientX
+    const clientY = "clientY" in event ? event.clientY : event.changedTouches[0].clientY
+    const canvasPos = reactFlow.screenToFlowPosition({ x: clientX, y: clientY })
+
+    setPalette({
+      screen: { x: clientX, y: clientY },
+      canvas: canvasPos,
+      connectFrom: pending,
+    })
+  }, [reactFlow])
+
+  // Manual save
+  const handleManualSave = useCallback(() => {
+    setStoreNodes(nodes)
+    setStoreEdges(edges)
+    setTimeout(() => saveToBlock(), 50)
+  }, [nodes, edges, setStoreNodes, setStoreEdges, saveToBlock])
+
+  const isValidConnection = useCallback(
+    (connection: Edge | Connection) => {
+      const conn: Connection = {
+        source: connection.source,
+        target: connection.target,
+        sourceHandle: connection.sourceHandle ?? null,
+        targetHandle: connection.targetHandle ?? null,
+      }
+      return isValidCanvasConnection(conn, nodes)
+    },
+    [nodes],
+  )
+
+  // Right-click → palette
+  const handleContextMenu = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault()
+      const canvasPos = reactFlow.screenToFlowPosition({ x: e.clientX, y: e.clientY })
+      setPalette({ screen: { x: e.clientX, y: e.clientY }, canvas: canvasPos })
+    },
+    [reactFlow],
+  )
+
+  // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose()
-      if (e.key === "s" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); handleSave() }
+      if (e.key === "Tab" && !e.shiftKey && !e.metaKey) {
+        e.preventDefault()
+        const rect = document.querySelector(".react-flow")?.getBoundingClientRect()
+        if (rect) {
+          const cx = rect.left + rect.width / 2
+          const cy = rect.top + rect.height / 2
+          const canvasPos = reactFlow.screenToFlowPosition({ x: cx, y: cy })
+          setPalette({ screen: { x: cx - 112, y: cy - 160 }, canvas: canvasPos })
+        }
+      }
+      if (e.key === "Escape") {
+        e.preventDefault()
+        e.stopPropagation()
+        if (palette) {
+          setPalette(null)
+        } else {
+          closeBlock()
+        }
+        return
+      }
+      if (e.key === "s" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault()
+        handleManualSave()
+      }
+      // Duplicate node: Cmd+D
+      if (e.key === "d" && (e.metaKey || e.ctrlKey)) {
+        e.preventDefault()
+        if (selectedNodeId) {
+          const node = nodes.find((n) => n.id === selectedNodeId)
+          if (node?.type) {
+            addNode(node.type, { x: node.position.x + 60, y: node.position.y + 60 })
+            setTimeout(() => {
+              const latest = useBlockCanvasStore.getState()
+              setNodes(latest.nodes)
+            }, 0)
+          }
+        }
+      }
+      if (e.key === "Delete" || e.key === "Backspace") {
+        if (selectedNodeId && document.activeElement === document.body) {
+          useBlockCanvasStore.getState().removeNode(selectedNodeId)
+          setNodes((nds) => nds.filter((n) => n.id !== selectedNodeId))
+          setEdges((eds) => eds.filter((e) => e.source !== selectedNodeId && e.target !== selectedNodeId))
+        }
+      }
     }
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
-  }, [onClose, handleSave])
+  }, [palette, closeBlock, reactFlow, selectedNodeId, nodes, edges, handleManualSave, addNode, setNodes, setEdges])
+
+  // Add node from palette (with optional auto-connect from dangling edge)
+  const handleAddNode = useCallback(
+    (type: string, position: { x: number; y: number }) => {
+      addNode(type, position)
+
+      const connectFrom = palette?.connectFrom
+      setTimeout(() => {
+        const latest = useBlockCanvasStore.getState()
+        const newNode = latest.nodes[latest.nodes.length - 1]
+        setNodes(latest.nodes)
+
+        // Auto-connect if palette was opened from a dangling edge
+        if (connectFrom && newNode) {
+          const def = getNodeDef(type)
+          if (!def) return
+
+          let source: string, sourceHandle: string, target: string, targetHandle: string
+
+          if (connectFrom.handleType === "source") {
+            source = connectFrom.nodeId
+            sourceHandle = connectFrom.handleId
+            target = newNode.id
+            const sourcePort = getPortDef(
+              nodes.find((n) => n.id === connectFrom.nodeId)?.type || "",
+              connectFrom.handleId,
+            )
+            const compatInput = def.inputs.find((p) =>
+              p.dataType === "any" || !sourcePort || sourcePort.dataType === "any" || p.dataType === sourcePort.dataType,
+            )
+            targetHandle = compatInput?.id || def.inputs[0]?.id || ""
+          } else {
+            target = connectFrom.nodeId
+            targetHandle = connectFrom.handleId
+            source = newNode.id
+            const targetPort = getPortDef(
+              nodes.find((n) => n.id === connectFrom.nodeId)?.type || "",
+              connectFrom.handleId,
+            )
+            const compatOutput = def.outputs.find((p) =>
+              p.dataType === "any" || !targetPort || targetPort.dataType === "any" || p.dataType === targetPort.dataType,
+            )
+            sourceHandle = compatOutput?.id || def.outputs[0]?.id || ""
+          }
+
+          if (sourceHandle && targetHandle) {
+            const sourceNode = [...latest.nodes, ...nodes].find((n) => n.id === source)
+            const color = sourceNode?.type
+              ? getEdgeColor(sourceNode.type, sourceHandle)
+              : "#6B7280"
+
+            setEdges((eds) => addEdge({
+              source,
+              sourceHandle,
+              target,
+              targetHandle,
+              type: "smoothstep",
+              animated: false,
+              style: { stroke: color, strokeWidth: 2 },
+            }, eds))
+          }
+        }
+      }, 0)
+    },
+    [addNode, setNodes, setEdges, palette, nodes],
+  )
+
+  const handleNodeClick = useCallback(
+    (_: React.MouseEvent, node: Node) => selectNode(node.id),
+    [selectNode],
+  )
+
+  const handlePaneClick = useCallback(() => {
+    selectNode(null)
+    setPalette(null)
+  }, [selectNode])
+
+  const selectedNode = nodes.find((n) => n.id === selectedNodeId) || null
+
+  if (!activeBlockId) return null
 
   return (
-    <div className="fixed inset-0 z-[200] bg-[#0A0B0E]">
-      {/* Header */}
-      <div className="absolute top-0 left-0 right-0 z-10 flex items-center justify-between border-b border-white/[0.06] bg-[#0A0B0E]/90 backdrop-blur-md px-4 h-12">
-        <div className="flex items-center gap-3">
-          <span className="text-[10px] font-bold uppercase tracking-[0.2em] text-white/30">Block Canvas</span>
-          <span className="text-[11px] text-white/50 truncate max-w-md">{block.text.slice(0, 60)}{block.text.length > 60 ? "..." : ""}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <button
-            onClick={handleSave}
-            className="flex items-center gap-1.5 rounded-lg bg-[#D4A853]/10 px-3 py-1.5 text-[11px] font-medium text-[#D4A853] hover:bg-[#D4A853]/20 transition-colors"
-          >
-            <Save size={13} /> Save
-          </button>
-          <button
-            onClick={onClose}
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-white/30 hover:bg-white/5 hover:text-white/60 transition-colors"
-          >
-            <X size={16} />
-          </button>
-        </div>
-      </div>
+    <div className="fixed inset-0 z-200 bg-[#08090C]">
+      {/* Toolbar */}
+      <CanvasToolbar
+        onSave={handleManualSave}
+        onRunAll={() => { /* dataflow engine */ }}
+        onFitView={() => reactFlow.fitView({ padding: 0.3 })}
+        onZoomIn={() => reactFlow.zoomIn()}
+        onZoomOut={() => reactFlow.zoomOut()}
+        onClose={closeBlock}
+      />
 
       {/* ReactFlow Canvas */}
-      <div className="absolute inset-0 top-12">
+      <div
+        className="absolute inset-0"
+        style={{ right: selectedNode ? 288 : 0, transition: "right 200ms ease" }}
+        onContextMenu={handleContextMenu}
+      >
         <ReactFlow
-          nodes={nodes}
+          nodes={nodesWithCallbacks}
           edges={edges}
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onConnectStart={onConnectStart}
+          onConnectEnd={onConnectEnd}
+          isValidConnection={isValidConnection}
+          onNodeClick={handleNodeClick}
+          onPaneClick={handlePaneClick}
           nodeTypes={blockCanvasNodeTypes}
           fitView
           fitViewOptions={{ padding: 0.3 }}
-          minZoom={0.3}
-          maxZoom={2}
-          defaultEdgeOptions={{ animated: true }}
+          minZoom={0.15}
+          maxZoom={4}
+          snapToGrid
+          snapGrid={[16, 16]}
+          connectionLineType={ConnectionLineType.SmoothStep}
+          connectionLineStyle={{ stroke: "#ffffff30", strokeWidth: 2 }}
+          defaultEdgeOptions={{
+            type: "smoothstep",
+            animated: false,
+            style: { strokeWidth: 2 },
+          }}
           proOptions={{ hideAttribution: true }}
+          deleteKeyCode={null}
         >
-          <Background variant={BackgroundVariant.Dots} gap={20} size={1} color="rgba(255,255,255,0.03)" />
+          <Background
+            variant={BackgroundVariant.Dots}
+            gap={24}
+            size={1}
+            color="rgba(255,255,255,0.04)"
+          />
+          <MiniMap
+            nodeColor={(node) => {
+              const c = CATEGORY_RING_COLORS[node.type || ""] || "#333"
+              return c
+            }}
+            nodeStrokeWidth={0}
+            nodeBorderRadius={4}
+            maskColor="rgba(0,0,0,0.7)"
+            style={{
+              backgroundColor: "#0D0E12",
+              border: "1px solid rgba(255,255,255,0.06)",
+              borderRadius: 12,
+              bottom: 16,
+              right: 16,
+              width: 180,
+              height: 120,
+            }}
+          />
         </ReactFlow>
       </div>
+
+      {/* Node Palette (context menu) */}
+      {palette && (
+        <NodePalette
+          position={palette.screen}
+          canvasPosition={palette.canvas}
+          onAdd={handleAddNode}
+          onClose={() => setPalette(null)}
+        />
+      )}
+
+      {/* Node Sidebar */}
+      {selectedNode && (
+        <NodeSidebar
+          node={selectedNode}
+          onClose={() => selectNode(null)}
+        />
+      )}
     </div>
+  )
+}
+
+// ─── Wrapper with ReactFlowProvider ─────────────────────────
+
+export function BlockCanvas() {
+  const activeBlockId = useBlockCanvasStore((s) => s.activeBlockId)
+  if (!activeBlockId) return null
+
+  return (
+    <ReactFlowProvider>
+      <BlockCanvasInner />
+    </ReactFlowProvider>
   )
 }
