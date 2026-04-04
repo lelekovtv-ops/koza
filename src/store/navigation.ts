@@ -1,7 +1,7 @@
 import { create } from "zustand"
 
-export type StoryboardViewMode = "scenes" | "board" | "list" | "inspector" | "director" | "prompt"
-export type BibleTab = "characters" | "locations" | "props"
+export type StoryboardViewMode = "scenes" | "board" | "list" | "inspector" | "director" | "prompt" | "tracks"
+export type BibleTab = "characters" | "locations" | "props" | "director"
 export type ProductionRole = "all" | "operator" | "art" | "actors" | "producer"
 
 interface NavigationState {

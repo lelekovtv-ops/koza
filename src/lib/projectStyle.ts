@@ -32,6 +32,11 @@ export const STYLE_PRESETS = [
     prompt: "Anime style, cel shading, dramatic lighting, cinematic composition",
   },
   {
+    id: "animation",
+    label: "Анимация",
+    prompt: "3D animation, vibrant saturated colors, expressive cartoon characters, volumetric lighting, fantasy illustration",
+  },
+  {
     id: "custom",
     label: "Custom",
     prompt: "",

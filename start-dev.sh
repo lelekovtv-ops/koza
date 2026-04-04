@@ -113,10 +113,6 @@ start_on_port() {
 		return 1
 	fi
 
-	# Always clean .next cache to prevent Turbopack SST/manifest bugs
-	echo "Cleaning .next cache..."
-	/bin/rm -rf "$ROOT_DIR/.next"
-
 	/usr/bin/nohup "$NODE_BIN" ./node_modules/next/dist/bin/next dev -p "$port" > "$LOG_FILE" 2>&1 &
 	local pid=$!
 	write_runtime_files "$pid" "$port"

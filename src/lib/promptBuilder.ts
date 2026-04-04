@@ -155,8 +155,10 @@ function hasPropVisualAnchors(props: PropEntry[]): boolean {
   return props.some((prop) => Boolean(prop.generatedImageUrl) || prop.referenceImages.length > 0)
 }
 
-function buildImageStyleSuffix(style: string): string {
-  return `${style}. 16:9. No text.`
+function buildImageStyleSuffix(_style: string): string {
+  // Style is now applied as a separate layer at generation time (see styleLayer.ts)
+  // Content prompts stay style-free for easy style swapping
+  return "16:9. No text, no watermark."
 }
 
 /** Strip all known style preset prompts + common style keywords from text */
@@ -250,10 +252,10 @@ export function buildVideoPrompt(
   shot: TimelineShot,
   characters: CharacterEntry[],
   locations: LocationEntry[],
-  style?: string,
+  _style?: string,
   props?: PropEntry[],
 ): string {
-  const artStyle = style || DEFAULT_PROJECT_STYLE
+  // Style is applied as a separate layer at generation time (see styleLayer.ts)
   const excluded = new Set(shot.excludedBibleIds ?? [])
   const shotCharacters = getCharactersForShot(shot, characters).filter((c) => !excluded.has(`char-${c.id}`))
   const charRefs = formatCharacterRefs(shotCharacters)
@@ -264,11 +266,10 @@ export function buildVideoPrompt(
 
   if (shot.videoPrompt) {
     return [
-      stripKnownStyleDirective(shot.videoPrompt, artStyle),
+      shot.videoPrompt,
       charRefs ? `Characters: ${charRefs}` : "",
       location?.appearancePrompt ? `Environment: ${location.appearancePrompt}.` : "",
       propRefs ? `Props: ${propRefs}` : "",
-      `Visual style: ${artStyle}.`,
     ].filter(Boolean).join(" ")
   }
 
@@ -280,7 +281,6 @@ export function buildVideoPrompt(
     location?.appearancePrompt ? `Environment: ${location.appearancePrompt}.` : "",
     propRefs ? `Props: ${propRefs}` : "",
     `${shot.cameraMotion || "static"} camera.`,
-    `Visual style: ${artStyle}.`,
     "Cinematic pace.",
   ].filter(Boolean).join(" ")
 }

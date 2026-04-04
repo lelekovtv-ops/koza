@@ -212,31 +212,30 @@ export default function SegmentLabPage() {
 
   const scriptLines = useMemo(() => scriptText.split("\n"), [scriptText])
 
-  // ── Active jobs at current time ──
-  const activeJobIds = useMemo(() => {
-    if (!plan) return new Set<string>()
-    const ids = new Set<string>()
-    for (const job of plan.jobs) {
-      if (currentTime >= job.startMs && currentTime < job.startMs + job.durationMs) {
-        ids.add(job.id)
-      }
-    }
-    return ids
-  }, [plan, currentTime])
-
-  // Find job's startMs — jobs don't have startMs natively, need to compute from segment
-  // Actually they DO have durationMs but not startMs. We need to derive startMs from their segment.
+  // Find job's startMs — jobs don't have startMs natively, derive from their segment.
   const jobPositions = useMemo(() => {
     if (!plan) return new Map<string, { startMs: number; durationMs: number }>()
     const map = new Map<string, { startMs: number; durationMs: number }>()
     for (const job of plan.jobs) {
-      // Find the segment this job is attached to
       const seg = segments.find((s) => s.id === job.segmentId)
       const startMs = seg?.startMs ?? 0
       map.set(job.id, { startMs, durationMs: job.durationMs })
     }
     return map
   }, [plan, segments])
+
+  // ── Active jobs at current time ──
+  const activeJobIds = useMemo(() => {
+    if (!plan) return new Set<string>()
+    const ids = new Set<string>()
+    for (const job of plan.jobs) {
+      const pos = jobPositions.get(job.id)
+      if (pos && currentTime >= pos.startMs && currentTime < pos.startMs + pos.durationMs) {
+        ids.add(job.id)
+      }
+    }
+    return ids
+  }, [plan, currentTime, jobPositions])
 
   // Recompute active jobs with positions
   const activeJobIdsComputed = useMemo(() => {

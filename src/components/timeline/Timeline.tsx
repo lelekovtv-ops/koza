@@ -36,7 +36,8 @@ const SHOT_TRACK_H = 64
 const AUDIO_TRACK_H = 48
 const RULER_H = 24
 const HEADER_H = 40
-const PLAYHEAD_COLOR = "#D4A853"
+import { getAccentColors } from "@/lib/themeColors"
+function getPlayheadColor() { return getAccentColors().accent }
 const RATE_STEPS = [0.5, 1, 1.5, 2] as const
 
 /* ─── helpers ─── */
@@ -176,7 +177,7 @@ function ShotThumb({
         left: x,
         width: Math.max(2, width),
         height: SHOT_TRACK_H,
-        background: selected ? "rgba(212,168,83,0.18)" : "rgba(255,255,255,0.04)",
+        background: selected ? getAccentColors().accent18 : "rgba(255,255,255,0.04)",
         opacity: isDragged ? 0.5 : 1,
       }}
       title={shot.label}
@@ -195,7 +196,7 @@ function ShotThumb({
         <ShotPlaceholder shot={shot} width={Math.max(2, width)} height={SHOT_TRACK_H} />
       )}
       {selected && (
-        <div className="absolute inset-0 border-2 rounded-[1px]" style={{ borderColor: PLAYHEAD_COLOR }} />
+        <div className="absolute inset-0 border-2 rounded-[1px]" style={{ borderColor: getPlayheadColor() }} />
       )}
     </button>
   )
@@ -348,8 +349,8 @@ function AudioClipRect({
         left: x,
         width: w,
         height: AUDIO_TRACK_H - 8,
-        background: selected ? "rgba(212,168,83,0.35)" : "rgba(255,255,255,0.08)",
-        border: selected ? `1px solid ${PLAYHEAD_COLOR}` : "1px solid rgba(255,255,255,0.1)",
+        background: selected ? getAccentColors().accent35 : "rgba(255,255,255,0.08)",
+        border: selected ? `1px solid ${getPlayheadColor()}` : "1px solid rgba(255,255,255,0.1)",
         overflow: "hidden",
       }}
       title={clip.trackId}
@@ -434,7 +435,7 @@ function Ruler({
     // Playhead triangle
     const phX = msToX(currentTime, zoom) - scrollLeft
     if (phX >= -6 && phX <= canvasW + 6) {
-      ctx.fillStyle = PLAYHEAD_COLOR
+      ctx.fillStyle = getPlayheadColor()
       ctx.beginPath()
       ctx.moveTo(phX - 5, 0)
       ctx.lineTo(phX + 5, 0)
@@ -1090,7 +1091,7 @@ export default function Timeline() {
                     left: indicatorX - 1,
                     width: 2,
                     height: SHOT_TRACK_H,
-                    background: PLAYHEAD_COLOR,
+                    background: getPlayheadColor(),
                   }}
                 />
               )
@@ -1103,7 +1104,7 @@ export default function Timeline() {
                 left: playheadX,
                 width: 1,
                 height: SHOT_TRACK_H,
-                background: PLAYHEAD_COLOR,
+                background: getPlayheadColor(),
               }}
             />
           </div>
@@ -1145,7 +1146,7 @@ export default function Timeline() {
                     left: playheadX,
                     width: 1,
                     height: AUDIO_TRACK_H,
-                    background: PLAYHEAD_COLOR,
+                    background: getPlayheadColor(),
                     opacity: 0.5,
                   }}
                 />

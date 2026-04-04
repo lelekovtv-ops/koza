@@ -3,11 +3,11 @@
 import { StoryboardPanel } from "@/components/editor/screenplay/StoryboardPanel"
 import { useRouter } from "next/navigation"
 import { useCallback } from "react"
-import { useSceneSync } from "@/hooks/useSceneSync"
+import { useSyncOrchestrator } from "@/hooks/useSyncOrchestrator"
 
 export default function WorkspacePage() {
   const router = useRouter()
-  useSceneSync()
+  useSyncOrchestrator()
 
   const handleClose = useCallback(() => {
     router.push("/")

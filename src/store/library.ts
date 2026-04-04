@@ -17,9 +17,15 @@ export type LibraryFile = {
   projectId: string
   folder: string
   origin: 'uploaded' | 'generated'
+  /** Prompt used for generation (only for generated images) */
+  prompt?: string
+  /** Model used for generation */
+  model?: string
+  /** Full prompt sent to API (with Bible context etc.) */
+  fullPrompt?: string
 }
 
-type PersistedLibraryFile = Omit<LibraryFile, 'url' | 'thumbnailUrl'>
+type PersistedLibraryFile = Omit<LibraryFile, 'url' | 'thumbnailUrl'> & { prompt?: string; model?: string; fullPrompt?: string }
 
 interface LibraryState {
   files: LibraryFile[]
@@ -101,6 +107,9 @@ export const useLibraryStore = create<LibraryState>()(
           projectId: file.projectId,
           folder: file.folder,
           origin: file.origin,
+          prompt: file.prompt,
+          model: file.model,
+          fullPrompt: file.fullPrompt,
         }))
 
         return {

@@ -39,3 +39,17 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# ONNX Runtime WASM binaries
+public/ort-wasm-*
+public/models/
+
+# Next.js broken/duplicate caches
+.next-broken-dev-*
+.next-dev*.log
+.next-dev*.pid
+.next-dev*.port
+/.next */
+
+# Claude Code
+.claude/

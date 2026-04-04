@@ -42,6 +42,7 @@ import {
 } from "./screenplay/screenplayKeyboardBehavior"
 import { createRenderElement, createRenderLeaf } from "./screenplay/screenplayRenderers"
 import { palette, focusPalette } from "./screenplay/screenplayTheme"
+import { useThemeStore } from "@/store/theme"
 import {
   findSlugSuggestion,
   getCurrentElementEntry,
@@ -78,13 +79,9 @@ import {
   SCREENPLAY_PAGE_PADDING_TOP_PX,
   SCREENPLAY_PAGE_WIDTH_PX,
   SCREENPLAY_PARENTHETICAL_INDENT_CH,
-  SCREENPLAY_SCENE_HEADING_MARGIN_TOP_PX,
-  SCREENPLAY_CHARACTER_MARGIN_TOP_PX,
-  SCREENPLAY_TRANSITION_MARGIN_TOP_PX,
-  SCREENPLAY_ACTION_AFTER_SCENE_HEADING_MARGIN_TOP_PX,
-  SCREENPLAY_ACTION_AFTER_ACTION_MARGIN_TOP_PX,
-  SCREENPLAY_TEXT_AREA_HEIGHT_PX,
 } from "./screenplay/screenplayLayoutConstants"
+import { calculatePageBreaks } from "./screenplay/screenplayPageBreaks"
+import { useBibleStore } from "@/store/bible"
 import type { ScreenplayColors } from "./screenplay/screenplayUiTypes"
 import type {
   ScreenplayElement,
@@ -92,8 +89,11 @@ import type {
 } from "@/lib/screenplayTypes"
 import { createScreenplayElement } from "@/lib/screenplayTypes"
 import { useScenesStore } from "@/store/scenes"
+import { useScreenplaySettings, PAPER_THEMES } from "@/store/screenplaySettings"
 import { useNavigationStore } from "@/store/navigation"
 import { useBlockLockStatus } from "@/hooks/useBlockLockStatus"
+import { useTimelineStore } from "@/store/timeline"
+import { buildFullTimingMap } from "@/lib/placementEngine"
 
 // ─── Types ───────────────────────────────────────────────
 
@@ -339,12 +339,36 @@ const SlateScreenplayEditor = forwardRef<
   const blocks = useScriptStore((s) => s.blocks)
   const setBlocks = useScriptStore((s) => s.setBlocks)
   const setScenario = useScriptStore((s) => s.setScenario)
+  const appTheme = useThemeStore((s) => s.theme)
   const isDark = theme === "sepia"
   const scenes = useScenesStore((s) => s.scenes)
   const scrollToBlockId = useNavigationStore((s) => s.scrollToBlockId)
   const clearScrollRequest = useNavigationStore((s) => s.clearScrollRequest)
   const highlightBlockId = useNavigationStore((s) => s.highlightBlockId)
   const blockLockMap = useBlockLockStatus()
+  const timelineShots = useTimelineStore((s) => s.shots)
+
+  // Duration map: blockId → ms (from placement engine)
+  const durationMap = useMemo(() => {
+    if (blocks.length === 0 || scenes.length === 0) return new Map<string, number>()
+    const maps = buildFullTimingMap(blocks, scenes)
+    const result = new Map<string, number>()
+    for (const m of maps) {
+      for (const b of m.blocks) result.set(b.blockId, b.durationMs)
+    }
+    return result
+  }, [blocks, scenes])
+
+  // Shot status map: blockId → "empty" | "prompt" | "image"
+  const shotStatusMap = useMemo(() => {
+    const result = new Map<string, "empty" | "prompt" | "image">()
+    for (const shot of timelineShots) {
+      if (!shot.blockRange) continue
+      const status = shot.thumbnailUrl ? "image" : shot.imagePrompt ? "prompt" : "empty"
+      for (const bid of shot.blockRange) result.set(bid, status)
+    }
+    return result
+  }, [timelineShots])
 
   const lastPushedRef = useRef(scenario)
   const embeddedInitialFocusDoneRef = useRef(false)
@@ -379,6 +403,18 @@ const SlateScreenplayEditor = forwardRef<
   const [typewriterSound, setTypewriterSound] = useState(false)
   const [slugGhost, setSlugGhost] = useState<{ ghost: string; full: string } | null>(null)
   const [autocomplete, setAutocomplete] = useState<AutocompleteState | null>(null)
+
+  // Bible data for enriched autocomplete
+  const bibleCharacters = useBibleStore((s) => s.characters)
+  const bibleLocations = useBibleStore((s) => s.locations)
+  const screenplaySettings = useScreenplaySettings()
+  const showBibleMarkers = screenplaySettings.bibleMarkers
+  const paperTheme = PAPER_THEMES[screenplaySettings.paperTheme]
+  const idleFade = screenplaySettings.idleFade
+  const bibleAutocomplete = useMemo(() => ({
+    characterNames: bibleCharacters.map((c) => c.name),
+    locationNames: bibleLocations.map((l) => l.name),
+  }), [bibleCharacters, bibleLocations])
   const standaloneScrollRef = useRef<HTMLDivElement | null>(null)
   const embeddedRootRef = useRef<HTMLDivElement | null>(null)
   const hasAnimatedSecondPageRef = useRef(false)
@@ -434,13 +470,23 @@ const SlateScreenplayEditor = forwardRef<
   // ── Colors ──
 
   const colors = useMemo<ScreenplayColors>(() => {
+    if (appTheme === "architect") {
+      let nextColors: ScreenplayColors = { ...palette.architect }
+      if (focusMode) nextColors = { ...nextColors, ...focusPalette.architect }
+      return nextColors
+    }
+    if (appTheme === "synthwave") {
+      let nextColors: ScreenplayColors = { ...palette.synthwave }
+      if (focusMode) nextColors = { ...nextColors, ...focusPalette.synthwave }
+      return nextColors
+    }
     let nextColors: ScreenplayColors = isDark ? { ...palette.sepia } : { ...palette.light }
     if (focusMode) {
       const fp = isDark ? focusPalette.sepia : focusPalette.light
       nextColors = { ...nextColors, ...fp }
     }
     return nextColors
-  }, [focusMode, isDark])
+  }, [focusMode, isDark, appTheme])
 
   // ── Stats ──
 
@@ -486,78 +532,14 @@ const SlateScreenplayEditor = forwardRef<
     return Math.max(1, Math.ceil((estimatedLines || 1) / SCREENPLAY_LINES_PER_PAGE))
   }, [editor.children])
 
-  // ── Page break calculation for paginated layout ──
+  // ── Page break calculation (industry-standard rules) ──
 
-  const { pageBreakMargins, visualPageCount } = useMemo(() => {
-    const PAGE_H = SCREENPLAY_PAGE_HEIGHT_PX
-    const GAP = SCREENPLAY_PAGE_GAP_PX
-    const PAD_TOP = SCREENPLAY_PAGE_PADDING_TOP_PX
-    const CONTENT_H = SCREENPLAY_TEXT_AREA_HEIGHT_PX
-    const LINE_H = SCREENPLAY_LINE_HEIGHT_PX
-    const FONT_SZ = SCREENPLAY_FONT_SIZE_PX
-
-    const contentWidth =
-      SCREENPLAY_PAGE_WIDTH_PX - SCREENPLAY_PAGE_PADDING_LEFT_PX - SCREENPLAY_PAGE_PADDING_RIGHT_PX
-    const charsPerLine = Math.max(20, Math.floor(contentWidth / (FONT_SZ * 0.6)))
-
-    const pageContentStart = (n: number) => n * (PAGE_H + GAP) + PAD_TOP
-    const pageContentEnd = (n: number) => pageContentStart(n) + CONTENT_H
-
-    const margins = new Map<number, number>()
-    let pageIdx = 0
-    let visualY = PAD_TOP
-
-    for (let i = 0; i < editor.children.length; i++) {
-      const node = editor.children[i]
-      if (!SlateElement.isElement(node)) continue
-      const el = node as ScreenplayElement
-
-      // Normal margin
-      let normalMargin = 0
-      if (i > 0) {
-        if (el.type === "scene_heading") normalMargin = SCREENPLAY_SCENE_HEADING_MARGIN_TOP_PX
-        else if (el.type === "character") normalMargin = SCREENPLAY_CHARACTER_MARGIN_TOP_PX
-        else if (el.type === "transition") normalMargin = SCREENPLAY_TRANSITION_MARGIN_TOP_PX
-        else if (el.type === "action") {
-          const prev = editor.children[i - 1]
-          if (SlateElement.isElement(prev)) {
-            const pt = (prev as ScreenplayElement).type
-            if (pt === "scene_heading") normalMargin = SCREENPLAY_ACTION_AFTER_SCENE_HEADING_MARGIN_TOP_PX
-            else if (pt === "action") normalMargin = SCREENPLAY_ACTION_AFTER_ACTION_MARGIN_TOP_PX
-          }
-        }
-      }
-
-      // Estimate element height in pixels
-      const text = Node.string(el).trim()
-      let avail = charsPerLine
-      if (el.type === "character") avail -= SCREENPLAY_CHARACTER_INDENT_CH
-      else if (el.type === "dialogue")
-        avail -= SCREENPLAY_DIALOGUE_INDENT_LEFT_CH + SCREENPLAY_DIALOGUE_INDENT_RIGHT_CH
-      else if (el.type === "parenthetical") avail -= SCREENPLAY_PARENTHETICAL_INDENT_CH
-      avail = Math.max(8, avail)
-      const lines = !text ? 1 : Math.max(1, Math.ceil(text.length / avail))
-      const elemH = lines * LINE_H
-
-      const elemTop = visualY + normalMargin
-      const elemBottom = elemTop + elemH
-      const curPageEnd = pageContentEnd(pageIdx)
-
-      if (elemBottom > curPageEnd && visualY > pageContentStart(pageIdx)) {
-        // Element crosses page boundary; push to next page
-        pageIdx++
-        const newTop = pageContentStart(pageIdx)
-        margins.set(i, newTop - visualY)
-        visualY = newTop + elemH
-      } else {
-        visualY = elemBottom
-      }
-
-      while (visualY > pageContentEnd(pageIdx)) pageIdx++
-    }
-
-    return { pageBreakMargins: margins, visualPageCount: pageIdx + 1 }
-  }, [editor.children])
+  const pageBreakInfo = useMemo(
+    () => calculatePageBreaks(editor.children),
+    [editor.children],
+  )
+  const pageBreakMargins = pageBreakInfo.margins
+  const visualPageCount = pageBreakInfo.pageCount
 
   // ── Typewriter sound ──
 
@@ -716,7 +698,7 @@ const SlateScreenplayEditor = forwardRef<
       }
 
       try {
-        const model = computeAutocompleteModel(editor)
+        const model = computeAutocompleteModel(editor, bibleAutocomplete)
         if (!model || model.items.length === 0) {
           setAutocomplete(null)
         } else {
@@ -822,8 +804,9 @@ const SlateScreenplayEditor = forwardRef<
       const isMod = e.metaKey || e.ctrlKey
 
       if (e.key === "Enter" && e.shiftKey) {
-        // Trigger grammar assist, but keep native Enter screenplay flow intact.
+        e.preventDefault()
         applyGrammarToPreviousBlock()
+        return
       }
 
       // Typewriter sound for normal keys
@@ -951,8 +934,8 @@ const SlateScreenplayEditor = forwardRef<
   // ── Render element (with industry-standard indents) ──
 
   const renderElement = useMemo(
-    () => createRenderElement({ editor, colors, editorFontSize, editorLineHeightPx, pageBreakMargins: scaledPageBreakMargins, sceneMap, highlightBlockId, lockedBlockIds }),
-    [editor, colors, editorFontSize, editorLineHeightPx, scaledPageBreakMargins, sceneMap, highlightBlockId, lockedBlockIds]
+    () => createRenderElement({ editor, colors, editorFontSize, editorLineHeightPx, pageBreakMargins: scaledPageBreakMargins, moreAfter: pageBreakInfo.moreAfter, contdBefore: pageBreakInfo.contdBefore, sceneMap, highlightBlockId, lockedBlockIds, durationMap, shotStatusMap }),
+    [editor, colors, editorFontSize, editorLineHeightPx, scaledPageBreakMargins, pageBreakInfo.moreAfter, pageBreakInfo.contdBefore, sceneMap, highlightBlockId, lockedBlockIds, durationMap, shotStatusMap]
   )
 
   useEffect(() => {
@@ -1026,44 +1009,125 @@ const SlateScreenplayEditor = forwardRef<
     }
   }, [embedded, visualPageCount, zoomScale])
 
-  const decorate = useCallback((entry: [Node, number[]]) => {
-    if (!aiRippleRange) return []
+  // Bible name patterns for inline highlighting in action/dialogue blocks
+  const bibleNamePatterns = useMemo(() => {
+    const names: { pattern: RegExp; kind: "character" | "location" | "prop" }[] = []
+    // Use Unicode-aware lookbehind/lookahead for word boundaries (works with Cyrillic)
+    const wb = (escaped: string) => `(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`
+    for (const c of bibleCharacters) {
+      if (c.name.length > 1) {
+        try {
+          const esc = c.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+          names.push({ pattern: new RegExp(wb(esc), "giu"), kind: "character" })
+        } catch { /* skip */ }
+      }
+    }
+    for (const l of bibleLocations) {
+      if (l.name.length > 1) {
+        try {
+          const esc = l.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+          names.push({ pattern: new RegExp(wb(esc), "giu"), kind: "location" })
+        } catch { /* skip */ }
+      }
+    }
+    return names
+  }, [bibleCharacters, bibleLocations])
 
+  const decorate = useCallback((entry: [Node, number[]]) => {
     const [node, path] = entry
     if (!Text.isText(node)) return []
 
-    const startOffset = Math.max(0, aiRippleRange.start)
-    const endOffset = Math.max(startOffset + 1, aiRippleRange.end)
+    const ranges: Range[] = []
 
-    const anchor = getPointFromAbsoluteOffset(editor, startOffset)
-    const focus = getPointFromAbsoluteOffset(editor, endOffset)
-    if (!anchor || !focus) return []
+    // AI ripple highlighting
+    if (aiRippleRange) {
+      const startOffset = Math.max(0, aiRippleRange.start)
+      const endOffset = Math.max(startOffset + 1, aiRippleRange.end)
 
-    const globalRange: Range = { anchor, focus }
-    const nodeRange = Editor.range(editor, path)
-    const intersection = Range.intersection(globalRange, nodeRange)
-    if (!intersection) return []
+      const anchor = getPointFromAbsoluteOffset(editor, startOffset)
+      const focus = getPointFromAbsoluteOffset(editor, endOffset)
+      if (anchor && focus) {
+        const globalRange: Range = { anchor, focus }
+        const nodeRange = Editor.range(editor, path)
+        const intersection = Range.intersection(globalRange, nodeRange)
+        if (intersection) {
+          const intersectionStart = getAbsoluteOffsetFromPoint(editor, Range.start(intersection))
+          const intersectionEnd = getAbsoluteOffsetFromPoint(editor, Range.end(intersection))
+          if (intersectionStart !== null && intersectionEnd !== null) {
+            ranges.push({
+              anchor: intersection.anchor,
+              focus: intersection.focus,
+              aiRipple: true,
+              aiRippleToken: aiRippleRange.token,
+              aiRippleRangeLength: Math.max(1, endOffset - startOffset),
+              aiRippleSegmentStart: Math.max(0, intersectionStart - startOffset),
+              aiRippleSegmentLength: Math.max(1, intersectionEnd - intersectionStart),
+            } as Range)
+          }
+        }
+      }
+    }
 
-    const intersectionStart = getAbsoluteOffsetFromPoint(editor, Range.start(intersection))
-    const intersectionEnd = getAbsoluteOffsetFromPoint(editor, Range.end(intersection))
-    if (intersectionStart === null || intersectionEnd === null) return []
+    // Bible entity icons — in action, dialogue, scene_heading, character blocks
+    if (showBibleMarkers && path.length >= 2) {
+      const parentPath = path.slice(0, -1)
+      try {
+        const parentNode = Node.get(editor, parentPath)
+        if (SlateElement.isElement(parentNode)) {
+          const elType = (parentNode as ScreenplayElement).type
+          const text = node.text
 
-    const rippleRangeLength = Math.max(1, endOffset - startOffset)
-    const rippleSegmentStart = Math.max(0, intersectionStart - startOffset)
-    const rippleSegmentLength = Math.max(1, intersectionEnd - intersectionStart)
+          // Character block → single character icon at end of name
+          if (elType === "character" && text.trim().length > 1) {
+            const charName = text.trim().replace(/\s*\(.*\)\s*$/, "").trim()
+            const upperName = charName.toUpperCase()
+            if (bibleCharacters.some((c) => c.name.toUpperCase() === upperName)) {
+              const end = text.length
+              const start = Math.max(0, end - 1)
+              ranges.push({
+                anchor: { path, offset: start },
+                focus: { path, offset: end },
+                bibleHighlight: "character",
+              } as Range)
+            }
+          }
 
-    return [
-      {
-        anchor: intersection.anchor,
-        focus: intersection.focus,
-        aiRipple: true,
-        aiRippleToken: aiRippleRange.token,
-        aiRippleRangeLength: rippleRangeLength,
-        aiRippleSegmentStart: rippleSegmentStart,
-        aiRippleSegmentLength: rippleSegmentLength,
-      },
-    ]
-  }, [aiRippleRange, editor])
+          // Scene heading → single location icon at the end of heading
+          if (elType === "scene_heading" && text.trim().length > 1) {
+            const upper = text.toUpperCase()
+            const hasMatch = bibleLocations.some((loc) => loc.name.length >= 2 && upper.includes(loc.name.toUpperCase()))
+            if (hasMatch) {
+              // Mark only the last character so a single icon appears at end
+              const end = text.length
+              const start = Math.max(0, end - 1)
+              ranges.push({
+                anchor: { path, offset: start },
+                focus: { path, offset: end },
+                bibleHighlight: "location",
+              } as Range)
+            }
+          }
+
+          // Action & dialogue → character/location/prop names
+          if (elType === "action" || elType === "dialogue") {
+            for (const { pattern, kind } of bibleNamePatterns) {
+              pattern.lastIndex = 0
+              let match: RegExpExecArray | null
+              while ((match = pattern.exec(text)) !== null) {
+                ranges.push({
+                  anchor: { path, offset: match.index },
+                  focus: { path, offset: match.index + match[0].length },
+                  bibleHighlight: kind,
+                } as Range)
+              }
+            }
+          }
+        }
+      } catch { /* ignore */ }
+    }
+
+    return ranges
+  }, [aiRippleRange, editor, bibleNamePatterns, showBibleMarkers, bibleCharacters, bibleLocations])
 
   // ── Render leaf ──
 
@@ -1087,6 +1151,8 @@ const SlateScreenplayEditor = forwardRef<
           position: "relative",
           width: SCREENPLAY_PAGE_WIDTH_PX,
           minHeight: visualPageCount * SCREENPLAY_PAGE_HEIGHT_PX + (visualPageCount - 1) * SCREENPLAY_PAGE_GAP_PX,
+          opacity: focusMode && idleFade ? 0.04 : 1,
+          transition: idleFade ? "opacity 3s ease-in-out" : "opacity 0.4s ease-out",
         }}
       >
         {/* Page paper backgrounds */}
@@ -1099,17 +1165,19 @@ const SlateScreenplayEditor = forwardRef<
               left: 0,
               width: "100%",
               height: SCREENPLAY_PAGE_HEIGHT_PX,
-              backgroundColor: "#FFFFFF",
-              borderRadius: 3,
-              border: "1px solid #E5E0DB",
-              boxShadow: "0 8px 60px rgba(0,0,0,0.4)",
+              backgroundColor: focusMode ? "rgba(0,0,0,0.35)" : appTheme === "architect" ? colors.surfaceBg : paperTheme.bg,
+              borderRadius: focusMode ? 8 : 3,
+              border: focusMode ? "1px solid rgba(255,255,255,0.06)" : appTheme === "architect" ? `1px solid ${colors.border}` : `1px solid ${paperTheme.bg === "#FFFFFF" ? "#E5E0DB" : "rgba(255,255,255,0.06)"}`,
+              boxShadow: focusMode ? "0 0 60px rgba(0,0,0,0.4)" : appTheme === "architect" ? colors.shadow : "0 8px 60px rgba(0,0,0,0.4)",
+              backdropFilter: focusMode ? "blur(6px) saturate(0.95)" : undefined,
+              WebkitBackdropFilter: focusMode ? "blur(6px) saturate(0.95)" : undefined,
               pointerEvents: "none",
             }}
           />
         ))}
 
-        {/* Page numbers */}
-        {visualPageCount > 1 && Array.from({ length: visualPageCount }).map((_, i) => (
+        {/* Page numbers (hidden in focus mode) */}
+        {!focusMode && visualPageCount > 1 && Array.from({ length: visualPageCount }).map((_, i) => (
           <div
             key={`emb-pgnum-${i}`}
             style={{
@@ -1117,7 +1185,7 @@ const SlateScreenplayEditor = forwardRef<
               top: i * (SCREENPLAY_PAGE_HEIGHT_PX + SCREENPLAY_PAGE_GAP_PX) + SCREENPLAY_PAGE_PADDING_TOP_PX * 0.35,
               right: SCREENPLAY_PAGE_PADDING_RIGHT_PX * 0.5,
               fontSize: 11,
-              color: "rgba(0,0,0,0.3)",
+              color: paperTheme.bg === "#FFFFFF" ? "rgba(0,0,0,0.3)" : "rgba(255,255,255,0.2)",
               pointerEvents: "none",
               zIndex: 2,
               fontFamily: "'Courier Prime', monospace",
@@ -1143,8 +1211,8 @@ const SlateScreenplayEditor = forwardRef<
               zIndex: 1,
               padding: `${SCREENPLAY_PAGE_PADDING_TOP_PX}px ${SCREENPLAY_PAGE_PADDING_RIGHT_PX}px ${SCREENPLAY_PAGE_PADDING_BOTTOM_PX}px ${SCREENPLAY_PAGE_PADDING_LEFT_PX}px`,
               outline: "none",
-              color: "#1a1a1a",
-              caretColor: "#333",
+              color: focusMode ? "rgba(255,255,255,0.85)" : appTheme === "architect" ? colors.text : paperTheme.text,
+              caretColor: focusMode ? "#D4A853" : appTheme === "architect" ? colors.muted : paperTheme.text,
               background: "transparent",
               minHeight: visualPageCount * SCREENPLAY_PAGE_HEIGHT_PX + (visualPageCount - 1) * SCREENPLAY_PAGE_GAP_PX,
               fontFamily: "'Courier Prime', 'Courier New', monospace",
@@ -1258,9 +1326,9 @@ const SlateScreenplayEditor = forwardRef<
         />
 
         {/* EDITOR AREA */}
-        <div className="relative flex-1 overflow-hidden" style={{ backgroundColor: focusMode ? "transparent" : (isDark ? "#201E1B" : "#EDEDED"), padding: focusMode ? "40px 0" : "0 0 0 72px" }}>
+        <div className="relative flex-1 overflow-hidden" style={{ backgroundColor: focusMode ? "transparent" : (appTheme === "architect" ? "#080808" : isDark ? "#201E1B" : "#EDEDED"), padding: focusMode ? "40px 0" : "0 0 0 72px" }}>
           {/* Top shadow — page slides under */}
-          <div className="pointer-events-none absolute inset-x-0 top-0 z-50 h-28" style={{ background: `linear-gradient(to bottom, ${isDark ? '#201E1B' : '#EDEDED'} 0%, ${isDark ? '#201E1Bcc' : '#EDEDEDcc'} 40%, transparent 100%)` }} />
+          <div className="pointer-events-none absolute inset-x-0 top-0 z-50 h-28" style={{ background: `linear-gradient(to bottom, ${appTheme === "architect" ? '#080808' : isDark ? '#201E1B' : '#EDEDED'} 0%, ${appTheme === "architect" ? '#080808cc' : isDark ? '#201E1Bcc' : '#EDEDEDcc'} 40%, transparent 100%)` }} />
           <div
             ref={standaloneScrollRef}
             className="relative h-full w-full overflow-auto"

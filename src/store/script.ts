@@ -15,10 +15,12 @@ import {
   removeBlock,
   type BlockType,
 } from "@/lib/screenplayFormat"
+import type { ChangeOrigin, ShotGroup } from "@/lib/productionTypes"
 
 type ScriptDocument = {
   scenario: string   // plain text (export from blocks, kept for compat)
   blocks: Block[]    // source of truth
+  shotGroups: ShotGroup[]  // explicit shot groupings for storyboard/timeline
   title: string
   author: string
   draft: string
@@ -33,13 +35,23 @@ interface ScriptState extends ScriptDocument {
   // ── Scenario (plain text, legacy compat) ──
   setScenario: (text: string) => void
 
-  // ── Block operations ──
-  setBlocks: (blocks: Block[]) => void
-  addBlockAfter: (afterId: string, type: BlockType) => void
-  updateBlock: (id: string, text: string) => void
-  changeType: (id: string, type: BlockType) => void
-  deleteBlock: (id: string) => void
+  // ── Block operations (origin param for bidirectional sync loop prevention) ──
+  setBlocks: (blocks: Block[], origin?: ChangeOrigin) => void
+  addBlockAfter: (afterId: string, type: BlockType, origin?: ChangeOrigin) => void
+  updateBlock: (id: string, text: string, origin?: ChangeOrigin) => void
+  changeType: (id: string, type: BlockType, origin?: ChangeOrigin) => void
+  deleteBlock: (id: string, origin?: ChangeOrigin) => void
+  updateBlockProduction: (id: string, patch: Partial<Block>, origin?: ChangeOrigin) => void
   setFlow: (flow: Partial<FlowConfig>) => void
+
+  // ── Shot groups ──
+  setShotGroups: (groups: ShotGroup[]) => void
+  addShotGroup: (group: ShotGroup) => void
+  updateShotGroup: (id: string, patch: Partial<ShotGroup>) => void
+  removeShotGroup: (id: string) => void
+
+  // ── Demo scripts ──
+  loadDemo: (id: string) => void
 
   // ── Metadata ──
   setTitle: (title: string) => void
@@ -49,84 +61,21 @@ interface ScriptState extends ScriptDocument {
 
   // ── Project switching ──
   setActiveProject: (projectId: string | null) => void
+
+  // ── Last change origin (for sync loop prevention) ──
+  _lastOrigin: ChangeOrigin | undefined
 }
 
-const DEMO_SCREENPLAY = `INT. КВАРТИРА БОРИСА — НОЧЬ
-
-Тесная комната. Единственный источник света — мерцающий экран старого телевизора. БОРИС (55) сидит за столом, перебирая документы. Пепельница полная. Руки дрожат.
-
-На стене — фотографии. Женщина, ребёнок. Выцветшие.
-
-БОРИС
-(шёпотом)
-Они не должны были узнать.
-
-Борис встаёт. Подходит к окну. Отодвигает штору. Свет фар скользит по стене.
-
-EXT. УЛИЦА У ДОМА БОРИСА — НОЧЬ
-
-Чёрный автомобиль класса люкс медленно подъезжает к старому дому. Останавливается. Двигатель глохнет. Тишина.
-
-Дверь открывается. Из машины выходит НЕЗНАКОМЕЦ (40). Дорогое пальто. Лицо скрыто тенью. Хлопает дверью — звук разносится по пустой улице.
-
-INT. КВАРТИРА БОРИСА — НОЧЬ
-
-Борис вздрагивает от звука. Отступает от окна. Лицо бледнеет.
-
-БОРИС
-Нет. Нет-нет-нет.
-
-Борис бросается к шкафу. Начинает лихорадочно собирать вещи в старую сумку. Роняет что-то — звук разбитого стекла.
-
-Останавливается. Смотрит на разбитую рамку с фотографией на полу.
-
-БОРИС
-(тихо, себе)
-Прости.
-
-Поднимает фотографию. Засовывает в карман пиджака.
-
-EXT. ПОДЪЕЗД — НОЧЬ
-
-Незнакомец подходит к двери подъезда. Достаёт телефон.
-
-НЕЗНАКОМЕЦ
-(в телефон)
-Я на месте. Он дома.
-
-Пауза.
-
-НЕЗНАКОМЕЦ
-Понял. Без следов.
-
-Убирает телефон. Открывает дверь подъезда.
-
-INT. ЛЕСТНИЧНАЯ КЛЕТКА — НОЧЬ
-
-Гулкие шаги по бетонным ступеням. Камера следует за Незнакомцем снизу вверх. Тусклая лампочка раскачивается.
-
-INT. КВАРТИРА БОРИСА — НОЧЬ
-
-Борис слышит шаги на лестнице. Замирает. Сумка в руке.
-
-Смотрит на дверь. Смотрит на окно. Четвёртый этаж.
-
-Шаги всё ближе.
-
-Борис тихо подходит к двери. Прислушивается. Шаги останавливаются.
-
-Тишина.
-
-Стук в дверь. Три раза. Медленно.`
 
 const createDefaultScript = (): ScriptDocument => {
-  const defaultBlocks = parseTextToBlocks(DEMO_SCREENPLAY)
+  const blocks = [makeBlock("action")]
   return {
-    scenario: exportBlocksToText(defaultBlocks),
-    blocks: defaultBlocks,
-    title: "НЕЗНАКОМЕЦ",
-    author: "KOZA AI",
-    draft: "First Draft",
+    scenario: "",
+    blocks,
+    shotGroups: [],
+    title: "",
+    author: "",
+    draft: "",
     date: new Date().toLocaleDateString("en-US", {
       month: "long",
       day: "numeric",
@@ -155,12 +104,15 @@ function updateCurrentProjectScript(
   }
 }
 
+export const DEMO_SCRIPT_LIST: { id: string; label: string }[] = []
+
 export const useScriptStore = create<ScriptState>()(
   persist(
     (set) => ({
       ...createDefaultScript(),
       activeProjectId: null,
       projectScripts: {},
+      _lastOrigin: undefined as ChangeOrigin | undefined,
 
       // ── Scenario (plain text import) ──
       setScenario: (text) => {
@@ -173,17 +125,21 @@ export const useScriptStore = create<ScriptState>()(
         }))
       },
 
+      // ── Demo scripts (deprecated — kept for compat) ──
+      loadDemo: () => {},
+
       // ── Block operations ──
-      setBlocks: (blocks) => {
+      setBlocks: (blocks, origin) => {
         const scenario = syncScenario(blocks)
         set((state) => ({
           blocks,
           scenario,
+          _lastOrigin: origin,
           ...updateCurrentProjectScript(state, { blocks, scenario }),
         }))
       },
 
-      addBlockAfter: (afterId, type) => {
+      addBlockAfter: (afterId, type, origin) => {
         const newBlock = makeBlock(type)
         set((state) => {
           const blocks = insertBlockAfter(state.blocks, afterId, newBlock)
@@ -191,37 +147,40 @@ export const useScriptStore = create<ScriptState>()(
           return {
             blocks,
             scenario,
+            _lastOrigin: origin,
             ...updateCurrentProjectScript(state, { blocks, scenario }),
           }
         })
         return newBlock.id
       },
 
-      updateBlock: (id, text) => {
+      updateBlock: (id, text, origin) => {
         set((state) => {
           const blocks = updateBlockText(state.blocks, id, text)
           const scenario = syncScenario(blocks)
           return {
             blocks,
             scenario,
+            _lastOrigin: origin,
             ...updateCurrentProjectScript(state, { blocks, scenario }),
           }
         })
       },
 
-      changeType: (id, type) => {
+      changeType: (id, type, origin) => {
         set((state) => {
           const blocks = changeBlockType(state.blocks, id, type)
           const scenario = syncScenario(blocks)
           return {
             blocks,
             scenario,
+            _lastOrigin: origin,
             ...updateCurrentProjectScript(state, { blocks, scenario }),
           }
         })
       },
 
-      deleteBlock: (id) => {
+      deleteBlock: (id, origin) => {
         set((state) => {
           const blocks = removeBlock(state.blocks, id)
           const finalBlocks = blocks.length === 0 ? [makeBlock("action")] : blocks
@@ -229,7 +188,61 @@ export const useScriptStore = create<ScriptState>()(
           return {
             blocks: finalBlocks,
             scenario,
+            _lastOrigin: origin,
             ...updateCurrentProjectScript(state, { blocks: finalBlocks, scenario }),
+          }
+        })
+      },
+
+      updateBlockProduction: (id, patch, origin) => {
+        set((state) => {
+          const blocks = state.blocks.map((b) =>
+            b.id === id ? { ...b, ...patch, id: b.id, type: b.type, text: b.text } : b
+          )
+          return {
+            blocks,
+            _lastOrigin: origin,
+            ...updateCurrentProjectScript(state, { blocks }),
+          }
+        })
+      },
+
+      // ── Shot groups ──
+      setShotGroups: (shotGroups) => {
+        set((state) => ({
+          shotGroups,
+          ...updateCurrentProjectScript(state, { shotGroups }),
+        }))
+      },
+
+      addShotGroup: (group) => {
+        set((state) => {
+          const shotGroups = [...state.shotGroups, group]
+          return {
+            shotGroups,
+            ...updateCurrentProjectScript(state, { shotGroups }),
+          }
+        })
+      },
+
+      updateShotGroup: (id, patch) => {
+        set((state) => {
+          const shotGroups = state.shotGroups.map((g) =>
+            g.id === id ? { ...g, ...patch } : g
+          )
+          return {
+            shotGroups,
+            ...updateCurrentProjectScript(state, { shotGroups }),
+          }
+        })
+      },
+
+      removeShotGroup: (id) => {
+        set((state) => {
+          const shotGroups = state.shotGroups.filter((g) => g.id !== id)
+          return {
+            shotGroups,
+            ...updateCurrentProjectScript(state, { shotGroups }),
           }
         })
       },
@@ -271,6 +284,10 @@ export const useScriptStore = create<ScriptState>()(
           // Migrate old projects that have scenario but no blocks
           if (projectScript.scenario && (!projectScript.blocks || projectScript.blocks.length === 0)) {
             projectScript.blocks = parseTextToBlocks(projectScript.scenario)
+          }
+          // Migrate old projects that don't have shotGroups
+          if (!projectScript.shotGroups) {
+            projectScript.shotGroups = []
           }
           return {
             activeProjectId: projectId,

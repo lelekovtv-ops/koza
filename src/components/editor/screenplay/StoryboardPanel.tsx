@@ -2,11 +2,12 @@
 
 import Image from "next/image"
 import { useRouter } from "next/navigation"
-import { AlertTriangle, BookOpen, Camera, ChevronLeft, ChevronRight, Clapperboard, Copy, Crop, Download, Film, FlipHorizontal2, FlipVertical2, Grid, Image as ImageIcon, List, Loader2, Maximize, Minimize, MoreHorizontal, Pause, Pencil, Play, Plus, RefreshCw, RotateCcw, RotateCw, Settings, SkipBack, SkipForward, Sparkles, Trash2, Video, Wand2, X } from "lucide-react"
+import { AlertTriangle, BookOpen, Camera, ChevronLeft, ChevronRight, Clapperboard, Copy, Crop, Download, Film, FlipHorizontal2, FlipVertical2, Grid, Image as ImageIcon, List, Loader2, Maximize, Minimize, MoreHorizontal, Music, Pause, Pencil, Play, Plus, RefreshCw, RotateCcw, RotateCw, Settings, SkipBack, SkipForward, Sparkles, Trash2, Video, Volume2, Wand2, X } from "lucide-react"
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { breakdownScene, buildBreakdownBibleContext, buildScenePromptDrafts, createSceneTimelineShotsFromBreakdown } from "@/features/breakdown"
+import { buildBreakdownBibleContext, buildScenePromptDrafts, createSceneTimelineShotsFromBreakdown } from "@/features/breakdown"
 import { breakdownSceneFincher } from "@/lib/fincher"
-import { getTotalDuration, useTimelineStore } from "@/store/timeline"
+import type { JenkinsShot } from "@/lib/breakdownTypes"
+import { createTimelineShot, getTotalDuration, useTimelineStore } from "@/store/timeline"
 import type { TimelineShot } from "@/store/timeline"
 import { timelineShotToStoryboardView, createShotFromStoryboardDefaults } from "@/lib/storyboardBridge"
 import { useScriptStore } from "@/store/script"
@@ -27,10 +28,19 @@ import { useBreakdownConfigStore } from "@/store/breakdownConfig"
 import { useReEditConfigStore } from "@/store/reEditConfig"
 import { devlog } from "@/store/devlog"
 import { useLibraryStore } from "@/store/library"
+import { useDialogueStore } from "@/store/dialogue"
+import { useVoiceTrackStore } from "@/store/voiceTrack"
+import { useSpeech } from "@/hooks/useSpeech"
+import { MoodSynth, detectMoodFromText, type Mood } from "@/lib/moodSynth"
+import { buildFullTimingMap, buildSceneTimingMap, mapShotsToBlocks, placeShotsOnTimeline, placeVoiceClips } from "@/lib/placementEngine"
+import { syncBus } from "@/lib/syncBus"
+import { enrichBlocksFromBreakdown } from "@/features/breakdown/enrichFromBreakdown"
+import { BlockCanvas } from "@/components/editor/canvas/BlockCanvas"
 import { useProjectsStore } from "@/store/projects"
 import { useProjectProfilesStore } from "@/store/projectProfiles"
 import { slugify, type CharacterEntry, type LocationEntry, type PropEntry } from "@/lib/bibleParser"
 import { generateBibleImageFromModal, EditableDuration, SceneBibleBubble } from "./StoryboardShared"
+import { getAccentColors } from "@/lib/themeColors"
 
 const SHOT_SIZE_OPTIONS = ["WIDE", "MEDIUM", "CLOSE", "EXTREME CLOSE", "OVER SHOULDER", "POV", "INSERT", "AERIAL", "TWO SHOT"] as const
 const CAMERA_MOTION_OPTIONS = ["Static", "Pan Left", "Pan Right", "Pan Up", "Tilt Down", "Push In", "Pull Out", "Track Left", "Track Right", "Track Around", "Dolly In", "Crane Up", "Crane Down", "Drone In", "Handheld", "Steadicam"] as const
@@ -112,20 +122,7 @@ function applyLucBessonProfileToScene({
     sceneId: string,
     sceneText: string,
     sceneBlockIds: string[],
-    jenkinsShots: Array<{
-      label: string
-      type: "image"
-      duration: number
-      notes: string
-      shotSize?: string
-      cameraMotion?: string
-      caption?: string
-      directorNote?: string
-      cameraNote?: string
-      videoPrompt?: string
-      imagePrompt?: string
-      visualDescription?: string
-    }>,
+    jenkinsShots: JenkinsShot[],
   ) => number
 }) {
   useBibleStore.setState((state) => {
@@ -210,7 +207,8 @@ function applyLucBessonProfileToScene({
     targetScene.id,
     lucBessonProfile.sceneText.trim() || selectedSceneContext || targetScene.title,
     targetScene.blockIds,
-    lucBessonProfile.shots.map((shot) => ({
+    lucBessonProfile.shots.map((shot, i) => ({
+      id: `luc-${i}`,
       label: shot.label,
       type: "image" as const,
       duration: 3200,
@@ -223,6 +221,7 @@ function applyLucBessonProfileToScene({
       videoPrompt: "",
       imagePrompt: shot.imagePrompt,
       visualDescription: shot.visualDescription,
+      svg: "",
     })),
   )
 }
@@ -725,7 +724,26 @@ function DirectorShotCard({
       onClick={onSelect}
     >
       <div className="flex items-center justify-between gap-3">
-        <p className={`text-[10px] uppercase tracking-[0.18em] ${selected ? "text-[#E4D0AC]" : "text-[#8D919B]"}`}>Shot {String(index + 1).padStart(2, "0")}</p>
+        <div className="flex items-center gap-2">
+          <p className={`text-[10px] uppercase tracking-[0.18em] ${selected ? "text-[#E4D0AC]" : "text-[#8D919B]"}`}>Shot {String(index + 1).padStart(2, "0")}</p>
+          {/* Modifier type selector */}
+          <select
+            value={(shot as TimelineShot & { _modifierType?: string })._modifierType || "default"}
+            onChange={(e) => {
+              e.stopPropagation()
+              // Store modifier type on shot for now (will move to block.modifier later)
+              onUpdate({ notes: `[modifier:${e.target.value}] ${shot.notes.replace(/\[modifier:\w+\]\s*/, "")}` } as Partial<TimelineShot>)
+            }}
+            onClick={(e) => e.stopPropagation()}
+            className="h-6 rounded border border-white/10 bg-white/5 px-1.5 text-[9px] uppercase tracking-wider text-white/50 outline-none hover:bg-white/8 cursor-pointer"
+          >
+            <option value="default">Default</option>
+            <option value="ai-avatar">AI Avatar</option>
+            <option value="b-roll">B-Roll</option>
+            <option value="effect">Effect</option>
+            <option value="title-card">Title Card</option>
+          </select>
+        </div>
 
         <div className="flex items-center gap-1">
           <button
@@ -1029,14 +1047,14 @@ async function generateShotImage(
   devlog.image("image_style_inject", "Style", projectStyle, {}, group)
 
   let apiUrl: string
-  let body: { prompt: string; model?: string; referenceImages?: string[] }
+  let body: { prompt: string; model?: string; referenceImages?: string[]; stylePrompt?: string }
 
   if (selectedModel === "gpt-image") {
     apiUrl = "/api/gpt-image"
     body = { prompt, referenceImages }
   } else {
     apiUrl = "/api/nano-banana"
-    body = { prompt, model: selectedModel, referenceImages }
+    body = { prompt, model: selectedModel, referenceImages, stylePrompt: projectStyle || undefined }
   }
 
   devlog.image("image_api_call", `API call: ${apiUrl}`, JSON.stringify(body, null, 2), {
@@ -1056,18 +1074,26 @@ async function generateShotImage(
       throw new Error((err as { error?: string }).error || `Generation failed: ${response.status}`)
     }
 
-    const contentType = response.headers.get("content-type") || ""
-    if (contentType.includes("application/json")) {
+    const respContentType = response.headers.get("content-type") || ""
+    if (respContentType.includes("application/json")) {
       const err = await response.json()
       throw new Error((err as { error?: string }).error || "API returned JSON instead of image")
     }
 
-    const blob = await response.blob()
+    console.log("[KOZA] Image response received, reading arrayBuffer...")
+    const arrayBuffer = await response.arrayBuffer()
+    const blob = new Blob([arrayBuffer], { type: respContentType || "image/png" })
+    console.log(`[KOZA] Blob created: ${blob.size} bytes, type: ${blob.type}`)
     if (blob.size < 1000) {
       throw new Error(`Image too small (${blob.size} bytes), likely an error response`)
     }
     const blobKey = `shot-thumb-${shot.id}-${Date.now()}`
-    const persisted = await trySaveBlob(blobKey, blob)
+    let persisted = false
+    try {
+      persisted = await trySaveBlob(blobKey, blob)
+    } catch (e) {
+      console.warn("[KOZA] trySaveBlob failed, continuing without persistence:", e)
+    }
 
     const projectId = useProjectsStore.getState().activeProjectId || "global"
     const objectUrl = URL.createObjectURL(blob)
@@ -1121,6 +1147,802 @@ interface StoryboardPanelProps {
   backgroundColor: string
   onClose: () => void
   onToggleExpanded: () => void
+}
+
+// ─── Embedded Track View (text-to-timeline inside storyboard) ────
+
+type TrackId = "visual" | "voice" | "titles" | "music" | "mood"
+
+interface TrackBlock {
+  id: string
+  track: TrackId
+  text: string
+  label?: string
+  startMs: number
+  durationMs: number
+}
+
+const TRACK_STYLES: Record<TrackId, { label: string; color: string }> = {
+  visual: { label: "VISUAL", color: "#D4A853" },
+  voice: { label: "VOICE", color: "#8B5CF6" },
+  titles: { label: "TITLES", color: "#F59E0B" },
+  music: { label: "MUSIC", color: "#3B82F6" },
+  mood: { label: "MOOD", color: "#EC4899" },
+}
+
+const TRACKS_ORDER: TrackId[] = ["visual", "voice", "titles", "mood"]
+
+/**
+ * Parse screenplay blocks into track blocks.
+ *
+ * Phase 1: Collect raw segments in screenplay order.
+ * Phase 2: Lay them out on timeline — voice/dialogue sets the pace,
+ *          action runs PARALLEL (doesn't add time, fills gaps in visual).
+ * Phase 3: Build continuous VISUAL track from action + heading blocks,
+ *          stretched to fill the entire timeline with no gaps.
+ */
+function parseBlocksToTrackBlocks(
+  blocks: { id: string; type: string; text: string; durationMs?: number; durationSource?: string }[],
+  scenes: { id: string; blockIds: string[]; title: string }[],
+): TrackBlock[] {
+  // Phase 1: collect raw items
+  type RawItem = {
+    id: string
+    kind: "heading" | "action" | "dialogue" | "transition"
+    text: string
+    speaker?: string
+    isVO?: boolean
+    manualDurationMs?: number
+  }
+
+  const items: RawItem[] = []
+  let currentChar: string | null = null
+
+  for (const block of blocks) {
+    const text = block.text.trim()
+    if (!text) { currentChar = null; continue }
+
+    // If block has manual duration, pass it through
+    const manualDur = block.durationSource === "manual" || block.durationSource === "media"
+      ? block.durationMs : undefined
+
+    if (block.type === "scene_heading") {
+      currentChar = null
+      items.push({ id: block.id, kind: "heading", text, manualDurationMs: manualDur })
+    } else if (block.type === "character") {
+      currentChar = text.replace(/\s*\(.*\)\s*$/, "").trim()
+    } else if (block.type === "parenthetical") {
+      // skip
+    } else if (block.type === "dialogue" && currentChar) {
+      const isVO = /V\.?O\.?/i.test(currentChar)
+      items.push({ id: block.id, kind: "dialogue", text, speaker: currentChar, isVO, manualDurationMs: manualDur })
+    } else if (block.type === "transition") {
+      currentChar = null
+      items.push({ id: block.id, kind: "transition", text, manualDurationMs: manualDur })
+    } else {
+      currentChar = null
+      items.push({ id: block.id, kind: "action", text, manualDurationMs: manualDur })
+    }
+  }
+
+  // Phase 2: lay out on timeline
+  // Voice/dialogue = time-definers. Action/heading = visual fill.
+  const DIALOGUE_WPM = 155
+  const HEADING_MS = 2000
+  const TRANSITION_MS = 1200
+  const ACTION_WPM_VISUAL = 60 // visual pacing: ~1 sec per 1 word of action
+
+  const estDialogue = (text: string) => {
+    const words = text.trim().split(/\s+/).filter(Boolean).length
+    return Math.max(800, Math.round((words / DIALOGUE_WPM) * 60_000) + 300)
+  }
+
+  const estAction = (text: string) => {
+    const words = text.trim().split(/\s+/).filter(Boolean).length
+    // Action: longer text = longer establishing. Min 2s, max 15s
+    return Math.max(2000, Math.min(15000, Math.round((words / ACTION_WPM_VISUAL) * 60_000)))
+  }
+
+  // Phase 2: lay out — everything advances time, but visual is continuous
+  type TimedItem = {
+    id: string
+    kind: "heading" | "action" | "dialogue" | "transition"
+    text: string
+    label: string
+    speaker?: string
+    isVO?: boolean
+    startMs: number
+    durationMs: number
+    track: TrackId
+  }
+
+  const timedItems: TimedItem[] = []
+  let timeMs = 0
+
+  for (let idx = 0; idx < items.length; idx++) {
+    const item = items[idx]
+    const nextItem = items[idx + 1]
+
+    if (item.kind === "heading") {
+      const nextIsAction = nextItem?.kind === "action"
+      const autoDur = nextIsAction ? 0 : HEADING_MS
+      const dur = item.manualDurationMs ?? autoDur
+      timedItems.push({ ...item, label: item.text.slice(0, 30), startMs: timeMs, durationMs: Math.max(dur, 500), track: "visual" })
+      timeMs += dur
+    } else if (item.kind === "action") {
+      const dur = item.manualDurationMs ?? estAction(item.text)
+      timedItems.push({ ...item, label: "", startMs: timeMs, durationMs: dur, track: "visual" })
+      timeMs += dur
+    } else if (item.kind === "dialogue") {
+      const dur = item.manualDurationMs ?? estDialogue(item.text)
+      timedItems.push({ ...item, label: item.speaker ?? "", startMs: timeMs, durationMs: dur, track: "voice" })
+      timeMs += dur
+    } else if (item.kind === "transition") {
+      const dur = item.manualDurationMs ?? TRANSITION_MS
+      timedItems.push({ ...item, label: "TRANSITION", startMs: timeMs, durationMs: dur, track: "titles" })
+      timeMs += dur
+    }
+  }
+
+  const totalMs = Math.max(timeMs, 3000)
+
+  // Phase 3: Build result + continuous VISUAL track
+  const result: TrackBlock[] = []
+
+  // Voice + titles from dialogue
+  for (const ti of timedItems) {
+    if (ti.kind === "dialogue") {
+      result.push({ id: ti.id + "-v", track: "voice", text: ti.text, label: ti.speaker, startMs: ti.startMs, durationMs: ti.durationMs })
+      result.push({ id: ti.id + "-t", track: "titles", text: `${ti.speaker}: ${ti.text}`, label: ti.speaker, startMs: ti.startMs, durationMs: ti.durationMs })
+    }
+    if (ti.kind === "transition") {
+      result.push({ id: ti.id, track: "titles", text: ti.text, label: ti.label, startMs: ti.startMs, durationMs: ti.durationMs })
+    }
+  }
+
+  // Visual: continuous track from heading + action items, stretched to fill gaps
+  const visualItems = timedItems.filter((ti) => ti.kind === "heading" || ti.kind === "action")
+
+  if (visualItems.length > 0) {
+    for (let i = 0; i < visualItems.length; i++) {
+      const v = visualItems[i]
+      const nextV = visualItems[i + 1]
+      // Stretch this visual block to fill until the next visual block starts
+      // (covers any dialogue time between action blocks)
+      const endMs = nextV ? nextV.startMs : totalMs
+      const stretchedDur = Math.max(v.durationMs, endMs - v.startMs)
+
+      result.push({
+        id: v.id,
+        track: "visual",
+        text: v.text,
+        label: v.label,
+        startMs: v.startMs,
+        durationMs: stretchedDur,
+      })
+    }
+  }
+
+  return result
+}
+
+function EmbeddedTrackView({
+  blocks: scriptBlocks,
+  scenes,
+  shots,
+}: {
+  blocks: { id: string; type: string; text: string; durationMs?: number; durationSource?: string }[]
+  scenes: { id: string; blockIds: string[]; title: string }[]
+  shots: { id: string; sceneId: string | null; duration: number; label: string; caption?: string; thumbnailUrl?: string | null; shotSize?: string; cameraMotion?: string }[]
+}) {
+  const [currentTime, setCurrentTime] = useState(0)
+  const [isPlaying, setIsPlaying] = useState(false)
+  const [voiceOn, setVoiceOn] = useState(true)
+  const [musicOn, setMusicOn] = useState(false)
+
+  // Mood curve: array of {timeMs, value} keyframes. Value: 1.0=joyful, 0.7=calm, 0.5=sad, 0.3=tense, 0.0=dramatic
+  const [moodKeyframes, setMoodKeyframes] = useState<{ timeMs: number; value: number }[]>([])
+  const [zoom, setZoom] = useState(80)
+  const [scrollLeft, setScrollLeft] = useState(0)
+  const playRef = useRef<number | null>(null)
+  const lastFrameRef = useRef(0)
+  const speech = useSpeech({})
+  const spokenBlockIdRef = useRef<string | null>(null)
+  const synthRef = useRef<MoodSynth | null>(null)
+  const currentMoodBlockRef = useRef<string | null>(null)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const trackBlocks = useMemo(() => {
+    const parsed = parseBlocksToTrackBlocks(scriptBlocks, scenes)
+
+    // If no real shots — return text-only blocks (voice is already the timebase)
+    if (shots.length === 0) return parsed
+
+    // With real shots: use placement engine for content-aware positioning
+    const voiceAndTitles = parsed.filter((b) => b.track !== "visual")
+
+    // Build shot map by scene
+    const shotsByScene = new Map<string, typeof shots>()
+    for (const s of shots) {
+      if (!s.sceneId) continue
+      const arr = shotsByScene.get(s.sceneId) ?? []
+      arr.push(s)
+      shotsByScene.set(s.sceneId, arr)
+    }
+
+    // Use placement engine for each scene
+    const placedShotBlocks: TrackBlock[] = []
+
+    const timingMaps = buildFullTimingMap(scriptBlocks, scenes)
+
+    for (const map of timingMaps) {
+      const sceneShots = shotsByScene.get(map.sceneId)
+      if (!sceneShots || sceneShots.length === 0) continue
+
+      const shotInputs = sceneShots.map((s) => ({
+        id: s.id,
+        label: s.label,
+        caption: s.caption,
+        directorNote: undefined as string | undefined,
+        notes: undefined as string | undefined,
+      }))
+
+      const mapped = mapShotsToBlocks(shotInputs, map)
+      const placed = placeShotsOnTimeline(mapped, map)
+
+      for (const ps of placed) {
+        const shotData = sceneShots.find((s) => s.id === ps.shotId)
+        placedShotBlocks.push({
+          id: ps.shotId,
+          track: "visual",
+          text: shotData?.caption || shotData?.label || "",
+          label: shotData?.shotSize || "SHOT",
+          startMs: ps.startMs,
+          durationMs: ps.durationMs,
+        })
+      }
+    }
+
+    // Rebuild voice/titles from placement engine for sync
+    const allPlaced = placedShotBlocks
+    const placedVoice = placeVoiceClips(timingMaps, allPlaced.map((b) => ({
+      shotId: b.id,
+      sceneId: timingMaps.find((m) => m.blocks.some((bl) => bl.startMs <= b.startMs && bl.endMs >= b.startMs))?.sceneId ?? "",
+      blockRange: ["", ""] as [string, string],
+      startMs: b.startMs,
+      durationMs: b.durationMs,
+      coveredBlockIds: [],
+    })))
+
+    // If placement engine produced voice clips, use them instead of parsed ones
+    if (placedVoice.length > 0) {
+      const nonVoiceTitles = voiceAndTitles.filter((b) => b.track !== "voice" && b.track !== "titles")
+      const placedVoiceBlocks: TrackBlock[] = []
+      for (const pv of placedVoice) {
+        placedVoiceBlocks.push({
+          id: pv.dialogueBlockId + "-v",
+          track: "voice",
+          text: pv.text,
+          label: pv.speaker,
+          startMs: pv.startMs,
+          durationMs: pv.durationMs,
+        })
+        placedVoiceBlocks.push({
+          id: pv.dialogueBlockId + "-t",
+          track: "titles",
+          text: `${pv.speaker}: ${pv.text}`,
+          label: pv.speaker,
+          startMs: pv.startMs,
+          durationMs: pv.durationMs,
+        })
+      }
+      return [...placedShotBlocks, ...placedVoiceBlocks, ...nonVoiceTitles]
+    }
+
+    return [...placedShotBlocks, ...voiceAndTitles]
+  }, [scriptBlocks, scenes, shots])
+  const totalDuration = useMemo(() => trackBlocks.reduce((max, b) => Math.max(max, b.startMs + b.durationMs), 0), [trackBlocks])
+  const totalWidth = (totalDuration / 1000) * zoom
+  const playheadX = (currentTime / 1000) * zoom
+
+  const activeIds = useMemo(
+    () => new Set(trackBlocks.filter((b) => currentTime >= b.startMs && currentTime < b.startMs + b.durationMs).map((b) => b.id)),
+    [trackBlocks, currentTime],
+  )
+
+  // Playback
+  useEffect(() => {
+    if (!isPlaying) { if (playRef.current) cancelAnimationFrame(playRef.current); return }
+    lastFrameRef.current = performance.now()
+    const tick = (now: number) => {
+      const dt = now - lastFrameRef.current
+      lastFrameRef.current = now
+      setCurrentTime((t) => {
+        const next = t + dt
+        if (next >= totalDuration) { setIsPlaying(false); return totalDuration }
+        return next
+      })
+      playRef.current = requestAnimationFrame(tick)
+    }
+    playRef.current = requestAnimationFrame(tick)
+    return () => { if (playRef.current) cancelAnimationFrame(playRef.current) }
+  }, [isPlaying, totalDuration])
+
+  // Auto-scroll
+  useEffect(() => {
+    if (!isPlaying || !containerRef.current) return
+    const viewW = containerRef.current.clientWidth - 70
+    const phInView = playheadX - scrollLeft
+    if (phInView > viewW * 0.6) setScrollLeft(Math.max(0, playheadX - viewW * 0.33))
+    if (phInView < 0) setScrollLeft(Math.max(0, playheadX - viewW * 0.1))
+  }, [isPlaying, playheadX, scrollLeft])
+
+  // Wheel scroll
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    const handler = (e: WheelEvent) => {
+      e.preventDefault()
+      if (e.ctrlKey || e.metaKey) {
+        setZoom((z) => Math.max(20, Math.min(200, z + (e.deltaY > 0 ? -8 : 8))))
+      } else {
+        const dx = Math.abs(e.deltaX) > 2 ? e.deltaX : e.deltaY
+        setScrollLeft((s) => Math.max(0, s + dx * 1.5))
+      }
+    }
+    el.addEventListener("wheel", handler, { passive: false })
+    return () => el.removeEventListener("wheel", handler)
+  }, [])
+
+  // Keyboard
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.target as HTMLElement).tagName === "TEXTAREA" || (e.target as HTMLElement).tagName === "INPUT") return
+      if (e.code === "Space") { e.preventDefault(); setIsPlaying((p) => !p) }
+    }
+    window.addEventListener("keydown", handler)
+    return () => window.removeEventListener("keydown", handler)
+  }, [])
+
+  // TTS: speak voice blocks with 500ms pre-buffer
+  const voiceBlocks = useMemo(
+    () => trackBlocks.filter((b) => b.track === "voice").sort((a, b) => a.startMs - b.startMs),
+    [trackBlocks],
+  )
+
+  useEffect(() => {
+    if (!voiceOn || !isPlaying) return
+    const active = voiceBlocks.find(
+      (b) => currentTime >= b.startMs - 500 && currentTime < b.startMs + b.durationMs,
+    )
+    if (active && active.id !== spokenBlockIdRef.current) {
+      spokenBlockIdRef.current = active.id
+      speech.speak([{
+        id: active.id,
+        text: active.text,
+        lang: /[а-яё]/i.test(active.text) ? "ru-RU" : "en-US",
+        rate: 1,
+      }])
+    } else if (!active && spokenBlockIdRef.current) {
+      spokenBlockIdRef.current = null
+    }
+  }, [currentTime, voiceBlocks, voiceOn, isPlaying]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Stop on pause
+  useEffect(() => {
+    if (!isPlaying && speech.speaking) {
+      speech.stop()
+      spokenBlockIdRef.current = null
+    }
+  }, [isPlaying]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Stop when voice off
+  useEffect(() => {
+    if (!voiceOn && speech.speaking) {
+      speech.stop()
+      spokenBlockIdRef.current = null
+    }
+  }, [voiceOn]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── Music: mood synth follows visual/action blocks ──
+  useEffect(() => {
+    if (!musicOn) {
+      synthRef.current?.stop()
+      currentMoodBlockRef.current = null
+      return
+    }
+    if (!synthRef.current) synthRef.current = new MoodSynth()
+  }, [musicOn])
+
+  // Auto-generate mood keyframes from text analysis
+  useEffect(() => {
+    const visuals = trackBlocks.filter((b) => b.track === "visual")
+    if (visuals.length === 0) return
+    // Only auto-generate if user hasn't manually edited
+    if (moodKeyframes.length > 0 && moodKeyframes.some((k) => k.timeMs > 0)) return
+
+    const MOOD_TO_VALUE: Record<Mood, number> = {
+      joyful: 1.0, calm: 0.75, silent: 0.6, sad: 0.45, mysterious: 0.35, tense: 0.2, dramatic: 0.08, action: 0.0,
+    }
+
+    const kfs = visuals.map((v) => {
+      const mood = detectMoodFromText(v.text)
+      return { timeMs: v.startMs, value: MOOD_TO_VALUE[mood] ?? 0.5 }
+    })
+    setMoodKeyframes(kfs)
+  }, [trackBlocks]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Get mood from curve value
+  const moodFromValue = (value: number): Mood => {
+    if (value > 0.85) return "joyful"
+    if (value > 0.6) return "calm"
+    if (value > 0.48) return "sad"
+    if (value > 0.3) return "mysterious"
+    if (value > 0.15) return "tense"
+    if (value > 0.05) return "dramatic"
+    return "action"
+  }
+
+  // Interpolate mood value at current time
+  const getMoodValueAtTime = (timeMs: number): number => {
+    if (moodKeyframes.length === 0) return 0.5
+    if (timeMs <= moodKeyframes[0].timeMs) return moodKeyframes[0].value
+    if (timeMs >= moodKeyframes[moodKeyframes.length - 1].timeMs) return moodKeyframes[moodKeyframes.length - 1].value
+    for (let i = 0; i < moodKeyframes.length - 1; i++) {
+      const a = moodKeyframes[i], b = moodKeyframes[i + 1]
+      if (timeMs >= a.timeMs && timeMs < b.timeMs) {
+        const t = (timeMs - a.timeMs) / (b.timeMs - a.timeMs)
+        return a.value + (b.value - a.value) * t
+      }
+    }
+    return 0.5
+  }
+
+  // Change mood when curve value changes significantly
+  const lastMoodRef = useRef<Mood>("calm")
+  useEffect(() => {
+    if (!musicOn || !isPlaying) return
+    const value = getMoodValueAtTime(currentTime)
+    const mood = moodFromValue(value)
+    if (mood !== lastMoodRef.current) {
+      lastMoodRef.current = mood
+      if (synthRef.current) {
+        if (!synthRef.current.playing) synthRef.current.start(mood)
+        else synthRef.current.setMood(mood)
+      }
+    }
+  }, [currentTime, musicOn, isPlaying, moodKeyframes]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Stop music on pause
+  useEffect(() => {
+    if (!isPlaying) {
+      synthRef.current?.stop()
+      currentMoodBlockRef.current = null
+    }
+  }, [isPlaying])
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => { synthRef.current?.destroy(); synthRef.current = null }
+  }, [])
+
+  const fmtTime = (ms: number) => {
+    const s = Math.floor(ms / 1000)
+    return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`
+  }
+
+  const currentVoice = trackBlocks.find((b) => b.track === "voice" && activeIds.has(b.id))
+
+  return (
+    <div className="flex h-full flex-col" ref={containerRef}>
+      {/* Mini transport */}
+      <div className="flex h-9 items-center gap-2 border-b border-white/[0.06] px-4 shrink-0">
+        <button onClick={() => { setCurrentTime(0); setScrollLeft(0); setIsPlaying(false) }} className="p-1.5 text-white/35 hover:text-white/70">
+          <SkipBack size={13} />
+        </button>
+        <button onClick={() => setIsPlaying(!isPlaying)} className="p-1.5 text-white/35 hover:text-white/70">
+          {isPlaying ? <Pause size={13} /> : <Play size={13} />}
+        </button>
+        <span className="ml-1 font-mono text-[11px]">
+          <span className="text-emerald-400/80">{fmtTime(currentTime)}</span>
+          <span className="text-white/25"> / {fmtTime(totalDuration)}</span>
+        </span>
+        <button
+          onClick={() => setVoiceOn(!voiceOn)}
+          className={`ml-2 rounded p-1 transition-colors ${voiceOn ? "text-emerald-400" : "text-white/20 hover:text-white/40"}`}
+          title={voiceOn ? "Выключить голос" : "Включить голос"}
+        >
+          <Volume2 size={13} />
+        </button>
+        <button
+          onClick={() => setMusicOn(!musicOn)}
+          className={`rounded p-1 transition-colors ${musicOn ? "text-blue-400" : "text-white/20 hover:text-white/40"}`}
+          title={musicOn ? "Выключить музыку" : "Включить музыку"}
+        >
+          <Music size={13} />
+        </button>
+        <div className="flex-1" />
+        {currentVoice && (
+          <span className="truncate text-[11px] text-white/45 max-w-[400px]">
+            <span className="text-[#8B5CF6]/80 font-semibold">{currentVoice.label}: </span>
+            {currentVoice.text}
+          </span>
+        )}
+        <div className="flex-1" />
+        <span className="text-[9px] text-white/15">{trackBlocks.length} blocks</span>
+      </div>
+
+      {/* Ruler */}
+      <div className="flex h-7 border-b border-white/[0.04] shrink-0 bg-white/[0.01]">
+        <div className="w-[90px] shrink-0" />
+        <div
+          className="relative flex-1 overflow-hidden cursor-pointer"
+          onClick={(e) => {
+            const x = e.clientX - e.currentTarget.getBoundingClientRect().left + scrollLeft
+            setCurrentTime(Math.max(0, Math.min(totalDuration, (x / zoom) * 1000)))
+          }}
+        >
+          <div style={{ width: totalWidth, transform: `translateX(${-scrollLeft}px)` }} className="h-full relative">
+            {Array.from({ length: Math.ceil(totalDuration / 5000) + 1 }).map((_, i) => (
+              <span key={i} className="absolute top-2 text-[9px] text-white/20 font-mono" style={{ left: i * 5 * zoom + 3 }}>
+                {Math.floor(i * 5 / 60)}:{String((i * 5) % 60).padStart(2, "0")}
+              </span>
+            ))}
+            <div className="absolute top-0 bottom-0 w-px bg-emerald-400/80" style={{ left: playheadX }} />
+            <div className="absolute top-0 w-2.5 h-3 -translate-x-1/2 bg-emerald-400" style={{ left: playheadX, clipPath: "polygon(0 0, 100% 0, 50% 100%)" }} />
+          </div>
+        </div>
+      </div>
+
+      {/* Tracks */}
+      <div className="flex-1 overflow-hidden">
+        {TRACKS_ORDER.map((trackId) => {
+          const style = TRACK_STYLES[trackId]
+
+          // ── Special MOOD track: SVG curve with draggable keyframes ──
+          if (trackId === "mood") {
+            const MOOD_H = 72
+            const labels = [
+              { y: 0.05, label: "😊", desc: "Joyful" },
+              { y: 0.25, label: "😌", desc: "Calm" },
+              { y: 0.5, label: "😢", desc: "Sad" },
+              { y: 0.7, label: "😰", desc: "Tense" },
+              { y: 0.95, label: "💥", desc: "Dramatic" },
+            ]
+
+            // Build SVG path from keyframes
+            const pathPoints = moodKeyframes.map((kf) => ({
+              x: (kf.timeMs / 1000) * zoom,
+              y: (1 - kf.value) * (MOOD_H - 8) + 4, // invert: high value = top
+            }))
+            const svgPath = pathPoints.length > 1
+              ? `M ${pathPoints.map((p) => `${p.x},${p.y}`).join(" L ")}`
+              : ""
+
+            // Current mood indicator
+            const currentValue = getMoodValueAtTime(currentTime)
+            const currentY = (1 - currentValue) * (MOOD_H - 8) + 4
+            const currentMoodLabel = moodFromValue(currentValue)
+
+            return (
+              <div key={trackId} className="flex border-b border-white/[0.03]" style={{ height: MOOD_H }}>
+                <div className="w-[90px] shrink-0 flex flex-col items-center justify-between py-1 border-r border-white/[0.04]">
+                  {labels.map((l) => (
+                    <span key={l.y} className="text-[8px] text-white/20" title={l.desc}>{l.label}</span>
+                  ))}
+                </div>
+                <div className="relative flex-1 overflow-hidden">
+                  <div style={{ width: totalWidth, transform: `translateX(${-scrollLeft}px)` }} className="relative h-full">
+                    {/* Background gradient zones */}
+                    <div className="absolute inset-0 opacity-30" style={{
+                      background: "linear-gradient(180deg, #10B98120 0%, #3B82F610 25%, #8B5CF610 50%, #F59E0B10 75%, #EF444420 100%)",
+                    }} />
+
+                    {/* Grid lines */}
+                    {labels.map((l) => (
+                      <div key={l.y} className="absolute left-0 right-0 border-t border-white/[0.03]" style={{ top: `${l.y * 100}%` }} />
+                    ))}
+
+                    {/* Mood curve */}
+                    {svgPath && (
+                      <svg className="absolute inset-0 pointer-events-none" width={totalWidth} height={MOOD_H} style={{ overflow: "visible" }}>
+                        <path d={svgPath} fill="none" stroke="#EC4899" strokeWidth={2} opacity={0.6} />
+                        {/* Filled area under curve */}
+                        {pathPoints.length > 1 && (
+                          <path
+                            d={`${svgPath} L ${pathPoints[pathPoints.length - 1].x},${MOOD_H} L ${pathPoints[0].x},${MOOD_H} Z`}
+                            fill="#EC489915"
+                          />
+                        )}
+                      </svg>
+                    )}
+
+                    {/* Draggable keyframe points */}
+                    {moodKeyframes.map((kf, ki) => {
+                      const x = (kf.timeMs / 1000) * zoom
+                      const y = (1 - kf.value) * (MOOD_H - 8) + 4
+                      return (
+                        <div
+                          key={ki}
+                          className="absolute w-3 h-3 rounded-full bg-[#EC4899] border-2 border-[#EC4899]/50 cursor-ns-resize hover:scale-150 transition-transform"
+                          style={{ left: x - 6, top: y - 6 }}
+                          onMouseDown={(e) => {
+                            e.preventDefault()
+                            const startY = e.clientY
+                            const startVal = kf.value
+                            const onMove = (ev: MouseEvent) => {
+                              const dy = ev.clientY - startY
+                              const newVal = Math.max(0, Math.min(1, startVal - dy / (MOOD_H - 8)))
+                              setMoodKeyframes((prev) => prev.map((k, i) => i === ki ? { ...k, value: newVal } : k))
+                            }
+                            const onUp = () => {
+                              document.removeEventListener("mousemove", onMove)
+                              document.removeEventListener("mouseup", onUp)
+                            }
+                            document.addEventListener("mousemove", onMove)
+                            document.addEventListener("mouseup", onUp)
+                          }}
+                        />
+                      )
+                    })}
+
+                    {/* Add keyframe on double-click */}
+                    <div
+                      className="absolute inset-0"
+                      onDoubleClick={(e) => {
+                        const rect = e.currentTarget.getBoundingClientRect()
+                        const x = e.clientX - rect.left + scrollLeft
+                        const y = e.clientY - rect.top
+                        const timeMs = (x / zoom) * 1000
+                        const value = Math.max(0, Math.min(1, 1 - (y - 4) / (MOOD_H - 8)))
+                        setMoodKeyframes((prev) =>
+                          [...prev, { timeMs, value }].sort((a, b) => a.timeMs - b.timeMs),
+                        )
+                      }}
+                    />
+
+                    {/* Playhead + current mood indicator */}
+                    <div className="pointer-events-none absolute top-0 bottom-0 w-px bg-[#EC4899]/60" style={{ left: playheadX }} />
+                    <div
+                      className="pointer-events-none absolute w-5 h-5 rounded-full border-2 border-[#EC4899] bg-[#0B0A09] flex items-center justify-center text-[8px]"
+                      style={{ left: playheadX - 10, top: currentY - 10 }}
+                    >
+                      <span className="text-[#EC4899]/80">{labels.find((l) => Math.abs(l.y - (1 - currentValue)) < 0.15)?.label ?? "🎵"}</span>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )
+          }
+
+          // ── Normal tracks ──
+          const tBlocks = trackBlocks.filter((b) => b.track === trackId)
+          if (tBlocks.length === 0) return null
+
+          const trackHeight = trackId === "visual" && shots.length > 0 ? 62 : 48
+
+          return (
+            <div key={trackId} className="flex border-b border-white/[0.03]" style={{ height: trackHeight }}>
+              <div className="w-[90px] shrink-0 flex items-center justify-center border-r border-white/[0.04]">
+                <span className="text-[9px] font-bold uppercase tracking-[0.15em]" style={{ color: `${style.color}66` }}>
+                  {style.label}
+                </span>
+              </div>
+              <div className="relative flex-1 overflow-hidden">
+                <div style={{ width: totalWidth, transform: `translateX(${-scrollLeft}px)` }} className="relative h-full">
+                  {tBlocks.map((block) => {
+                    const left = (block.startMs / 1000) * zoom
+                    const width = Math.max(8, (block.durationMs / 1000) * zoom)
+                    const isActive = activeIds.has(block.id)
+
+                    // For VISUAL: is this block a shot? (after breakdown each shot = own block)
+                    const shot = trackId === "visual" ? shots.find((s) => s.id === block.id) : null
+                    const hasThumb = shot?.thumbnailUrl != null
+
+                    return (
+                      <div
+                        key={block.id}
+                        className={`absolute overflow-hidden cursor-pointer ${shot ? "top-[2px] bottom-[2px] rounded" : "top-[4px] bottom-[4px] rounded-md"}`}
+                        style={{
+                          left,
+                          width: Math.max(4, width),
+                          border: shot
+                            ? `1.5px solid ${isActive ? "#ffffff50" : style.color + "50"}`
+                            : `1px solid ${isActive ? style.color + "50" : style.color + "15"}`,
+                          backgroundColor: shot ? "#111" : (isActive ? `${style.color}12` : `${style.color}06`),
+                          boxShadow: shot && isActive ? `0 0 6px ${style.color}30` : undefined,
+                        }}
+                        onClick={() => {
+                          // Click-to-seek: click clip on timeline → select shot + seek
+                          setCurrentTime(block.startMs)
+                          if (shot) {
+                            useTimelineStore.getState().selectShot(shot.id)
+                            if (shot.sceneId) useScenesStore.getState().selectScene(shot.sceneId)
+                          }
+                        }}
+                      >
+                        {shot ? (
+                        /* Shot: filmstrip thumbnail — repeats across clip like DaVinci/FCP */
+                        <div
+                          className="absolute inset-0 overflow-hidden"
+                          style={hasThumb ? {
+                            backgroundImage: `url(${shot.thumbnailUrl})`,
+                            backgroundRepeat: "repeat-x",
+                            backgroundSize: "auto 100%",
+                            backgroundPosition: "left center",
+                            opacity: isActive ? 0.85 : 0.55,
+                          } : undefined}
+                        >
+                          {!hasThumb && (
+                            <div className="absolute inset-0 flex items-center justify-center bg-white/[0.03]">
+                              <Film size={12} className="text-white/12" />
+                            </div>
+                          )}
+                          {/* Dark overlay for readability */}
+                          {hasThumb && <div className="absolute inset-0 bg-gradient-to-b from-black/40 via-transparent to-black/25" />}
+                          {/* Shot size label */}
+                          {width > 25 && (
+                            <span className="absolute top-0.5 left-1 text-[7px] font-bold text-white/70 drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)] uppercase tracking-wider">
+                              {shot.shotSize?.slice(0, 4) || "SHOT"}
+                            </span>
+                          )}
+                          {/* Duration */}
+                          {width > 35 && (
+                            <span className="absolute bottom-0.5 right-1 text-[7px] text-white/40 font-mono drop-shadow-[0_1px_2px_rgba(0,0,0,0.9)]">
+                              {(shot.duration / 1000).toFixed(1)}s
+                            </span>
+                          )}
+                        </div>
+                      ) : (
+                        /* No shot: action text from screenplay */
+                        <div className="px-2 py-1 min-w-0 h-full flex flex-col justify-center">
+                          {width > 80 && (
+                            <div className="truncate text-[10px] text-white/30 leading-tight italic">{block.text}</div>
+                          )}
+                          {width > 50 && (
+                            <div className="text-[8px] text-white/15 mt-auto mb-0.5">{(block.durationMs / 1000).toFixed(1)}s</div>
+                          )}
+                        </div>
+                      )}
+                      {/* ── Drag-resize handle (right edge) ── */}
+                      <div
+                        className="absolute top-0 bottom-0 right-0 w-[5px] cursor-ew-resize hover:bg-white/20 active:bg-white/30 transition-colors z-10"
+                        onMouseDown={(e) => {
+                          e.preventDefault()
+                          e.stopPropagation()
+                          const startX = e.clientX
+                          const startDur = block.durationMs
+                          const onMove = (ev: MouseEvent) => {
+                            const dx = ev.clientX - startX
+                            const newDur = Math.max(500, startDur + (dx / zoom) * 1000)
+                            block.durationMs = newDur
+                            // Force re-render by updating parent state
+                            setCurrentTime((t) => t)
+                          }
+                          const onUp = (ev: MouseEvent) => {
+                            document.removeEventListener("mousemove", onMove)
+                            document.removeEventListener("mouseup", onUp)
+                            const dx = ev.clientX - startX
+                            const finalDur = Math.max(500, startDur + (dx / zoom) * 1000)
+                            // Emit via SyncBus for bidirectional sync
+                            syncBus.dispatch("timeline", "duration-change", { durationMs: Math.round(finalDur) }, { blockId: block.id })
+                          }
+                          document.addEventListener("mousemove", onMove)
+                          document.addEventListener("mouseup", onUp)
+                        }}
+                      />
+                      </div>
+                    )
+                  })}
+                  <div className="pointer-events-none absolute top-0 bottom-0 w-px bg-emerald-400/60" style={{ left: playheadX }} />
+                </div>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+    </div>
+  )
 }
 
 export function StoryboardPanel({
@@ -1202,6 +2024,7 @@ export function StoryboardPanel({
   const [scanningIds, setScanningIds] = useState<Set<string>>(new Set())
   const [pendingActionFocusShotId, setPendingActionFocusShotId] = useState<string | null>(null)
   const [isSplitScreen, setIsSplitScreen] = useState(false)
+  const [canvasShotId, setCanvasShotId] = useState<string | null>(null)
   const [directorFieldVisibility, setDirectorFieldVisibility] = useState<DirectorFieldVisibility>("all")
   const [scriptFontSize] = useState(16)
   const [breakdownWarning, setBreakdownWarning] = useState<string | null>(null)
@@ -1311,8 +2134,8 @@ export function StoryboardPanel({
   const [editInstruction, setEditInstruction] = useState("")
   const [editingIds, setEditingIds] = useState<Set<string>>(new Set())
   const editInputRef = useRef<HTMLInputElement>(null)
-  const breakdownConfig = useBreakdownConfigStore((s) => s.global)
-  const setBreakdownGlobalConfig = useBreakdownConfigStore((s) => s.setGlobal)
+  const breakdownConfig = {} as Record<string, string>
+  const setBreakdownGlobalConfig = (_config: Record<string, string>) => {}
   const selectedScene = useMemo(() => scenes.find((scene) => scene.id === selectedSceneId) ?? null, [scenes, selectedSceneId])
   const inspectorShots = useMemo(
     () => (selectedSceneId ? shotsBySceneId.get(selectedSceneId) ?? [] : shots),
@@ -1370,35 +2193,102 @@ export function StoryboardPanel({
     sceneId: string,
     sceneText: string,
     sceneBlockIds: string[],
-    jenkinsShots: Array<{
-      label: string
-      type: "image"
-      duration: number
-      notes: string
-      shotSize?: string
-      cameraMotion?: string
-      caption?: string
-      directorNote?: string
-      cameraNote?: string
-      videoPrompt?: string
-      imagePrompt?: string
-      visualDescription?: string
-    }>,
+    jenkinsShots: JenkinsShot[],
   ) => {
+    // Get scene blocks for placement engine
+    const allBlocks = useScriptStore.getState().blocks
+    const sceneBlocks = sceneBlockIds
+      .map((id) => allBlocks.find((b) => b.id === id))
+      .filter((b) => b != null)
+
+    const existingSceneShots = useTimelineStore.getState().shots.filter((s) => s.sceneId === sceneId)
     const preservedShots = useTimelineStore.getState().shots.filter((shot) => shot.sceneId !== sceneId)
-    const replacementShots = createSceneTimelineShotsFromBreakdown({
+
+    const newBreakdownShots = createSceneTimelineShotsFromBreakdown({
       sceneId,
       sceneText,
       sceneBlockIds,
-    }, jenkinsShots)
+    }, jenkinsShots, sceneBlocks)
 
-    reorderShots([...preservedShots, ...replacementShots])
+    // Merge strategy: update existing shots, add new ones
+    const mergedShots: typeof newBreakdownShots = []
+
+    for (let i = 0; i < newBreakdownShots.length; i++) {
+      const newShot = newBreakdownShots[i]
+      const existingShot = existingSceneShots[i]
+
+      if (existingShot) {
+        // Update existing shot — preserve user edits (thumbnails, locked state, custom refs)
+        mergedShots.push(createTimelineShot({
+          ...existingShot,
+          // Update from breakdown
+          label: newShot.label,
+          shotSize: newShot.shotSize,
+          cameraMotion: newShot.cameraMotion,
+          caption: newShot.caption,
+          directorNote: newShot.directorNote,
+          cameraNote: newShot.cameraNote,
+          imagePrompt: existingShot.locked ? existingShot.imagePrompt : newShot.imagePrompt,
+          videoPrompt: existingShot.locked ? existingShot.videoPrompt : newShot.videoPrompt,
+          visualDescription: newShot.visualDescription,
+          duration: existingShot.locked ? existingShot.duration : newShot.duration,
+          blockRange: newShot.blockRange,
+          sourceText: newShot.sourceText,
+          // Preserve user data
+          thumbnailUrl: existingShot.thumbnailUrl,
+          thumbnailBlobKey: existingShot.thumbnailBlobKey,
+          originalUrl: existingShot.originalUrl,
+          originalBlobKey: existingShot.originalBlobKey,
+          generationHistory: existingShot.generationHistory,
+          activeHistoryIndex: existingShot.activeHistoryIndex,
+          customReferenceUrls: existingShot.customReferenceUrls,
+          excludedBibleIds: existingShot.excludedBibleIds,
+          locked: existingShot.locked,
+          notes: existingShot.notes,
+        }))
+      } else {
+        // New shot from breakdown
+        mergedShots.push(newShot)
+      }
+    }
+
+    // Log merge info
+    const updated = Math.min(existingSceneShots.length, newBreakdownShots.length)
+    const added = Math.max(0, newBreakdownShots.length - existingSceneShots.length)
+    const removed = Math.max(0, existingSceneShots.length - newBreakdownShots.length)
+    console.log(`[KOZA] Breakdown merge: ${updated} updated, ${added} added, ${removed} removed`)
+
+    reorderShots([...preservedShots, ...mergedShots])
     selectScene(sceneId)
     setViewMode("board")
-    setExpandedShotId(replacementShots[0]?.id ?? null)
+    setExpandedShotId(mergedShots[0]?.id ?? null)
     setExpandedSceneShotIds((current) => new Set(current).add(sceneId))
 
-    return replacementShots.length
+    // Auto-generate voice clips using placement engine
+    const dialogueLines = useDialogueStore.getState().lines
+    if (dialogueLines.length > 0) {
+      const allShots = useTimelineStore.getState().shots
+      const voiceStore = useVoiceTrackStore.getState()
+      if (sceneBlocks.length > 0) {
+        const timingMap = buildSceneTimingMap(sceneId, sceneBlocks, 0)
+        const shotInputs = mergedShots.map((s: { id: string; label: string; caption: string; directorNote: string; notes: string }) => ({
+          id: s.id,
+          label: s.label,
+          caption: s.caption,
+          directorNote: s.directorNote,
+          notes: s.notes,
+        }))
+        const mapped = mapShotsToBlocks(shotInputs, timingMap)
+        const placed = placeShotsOnTimeline(mapped, timingMap)
+        const placedVoice = placeVoiceClips([timingMap], placed)
+        voiceStore.generateFromPlacement(placedVoice, placed, sceneId)
+      } else {
+        const shotRefs = allShots.map((s, i) => ({ id: s.id, sceneId: s.sceneId, order: i }))
+        voiceStore.generateFromDialogue(dialogueLines, shotRefs)
+      }
+    }
+
+    return mergedShots.length
   }, [reorderShots, selectScene])
 
   const handleJenkinsBreakdown = useCallback(async () => {
@@ -1407,7 +2297,8 @@ export function StoryboardPanel({
     setJenkinsLoading(true)
     try {
       const bible = buildBreakdownBibleContext(characters, locations, bibleProps)
-      const { shots: jenkinsShots, diagnostics } = await breakdownSceneFincher(text, { bible, style: projectStyle })
+      const dirProfile = useBibleStore.getState().directorProfile
+      const { shots: jenkinsShots, diagnostics } = await breakdownSceneFincher(text, { bible, style: projectStyle, directorSystemPrompt: dirProfile?.systemPrompt })
 
       if (diagnostics.usedFallback && shots.length > 0) {
         const warning = "Breakdown switched to fallback mode. Existing storyboard shots were preserved to avoid overwriting the stronger result."
@@ -1446,7 +2337,7 @@ export function StoryboardPanel({
     }
   }, [scenario, jenkinsLoading, addShot, characters, locations, projectStyle, shots])
 
-  const handleSceneBreakdown = useCallback(async (scene: { id: string; blockIds: string[]; title: string }) => {
+  const handleSceneBreakdown = useCallback(async (scene: { id: string; blockIds: string[]; title: string; estimatedDurationMs?: number }) => {
     if (workflowProfile === "legacy-luc-besson" && lucBessonProfile) {
       applyLucBessonProfileToScene({
         lucBessonProfile,
@@ -1461,6 +2352,21 @@ export function StoryboardPanel({
     }
 
     if (breakdownLoadingSceneId) return
+
+    // Check if scene already has shots with generated content — soft confirm
+    const existingSceneShots = shots.filter((s) => s.sceneId === scene.id)
+    const hasGeneratedContent = existingSceneShots.some((s) => s.thumbnailUrl || s.locked)
+    if (hasGeneratedContent) {
+      const lockedCount = existingSceneShots.filter((s) => s.locked).length
+      const withImages = existingSceneShots.filter((s) => s.thumbnailUrl).length
+      const parts = [
+        `${existingSceneShots.length} шотов`,
+        withImages > 0 ? `${withImages} с картинками` : "",
+        lockedCount > 0 ? `${lockedCount} locked` : "",
+      ].filter(Boolean).join(", ")
+      if (!confirm(`Обновить ${parts}?\n\nКартинки и locked промпты сохранятся.`)) return
+    }
+
     setBreakdownLoadingSceneId(scene.id)
 
     // Animated progress stages
@@ -1497,10 +2403,58 @@ export function StoryboardPanel({
         return
       }
       const bible = buildBreakdownBibleContext(characters, locations, bibleProps)
+      const directorProfile = useBibleStore.getState().directorProfile
+
+      // Build timeline segments from scene blocks for the AI
+      const sceneBlockData = scene.blockIds
+        .map((bid) => scriptBlocks.find((b) => b.id === bid))
+        .filter((b) => b != null)
+
+      const timelineSegments: import("@/lib/fincher").TimelineSegment[] = []
+      let segTimeMs = 0
+      let segChar: string | null = null
+      const DIALOGUE_WPM = 155
+      const ACTION_WPM = 100
+
+      for (const blk of sceneBlockData) {
+        const txt = blk.text.trim()
+        if (!txt) { segChar = null; continue }
+
+        if (blk.type === "scene_heading") {
+          segChar = null
+          const dur = 2500
+          timelineSegments.push({ startMs: segTimeMs, endMs: segTimeMs + dur, type: "heading", text: txt })
+          segTimeMs += dur
+        } else if (blk.type === "character") {
+          segChar = txt.replace(/\s*\(.*\)\s*$/, "").trim()
+        } else if (blk.type === "parenthetical") {
+          // skip
+        } else if (blk.type === "dialogue" && segChar) {
+          const words = txt.split(/\s+/).filter(Boolean).length
+          const dur = Math.max(800, Math.round((words / DIALOGUE_WPM) * 60_000) + 300)
+          const isVO = /V\.?O\.?/i.test(segChar)
+          timelineSegments.push({ startMs: segTimeMs, endMs: segTimeMs + dur, type: "voice", speaker: segChar, text: txt, isVO })
+          segTimeMs += dur
+        } else if (blk.type === "transition") {
+          segChar = null
+          timelineSegments.push({ startMs: segTimeMs, endMs: segTimeMs + 1500, type: "transition", text: txt })
+          segTimeMs += 1500
+        } else {
+          segChar = null
+          const words = txt.split(/\s+/).filter(Boolean).length
+          const dur = Math.max(1500, Math.round((words / ACTION_WPM) * 60_000))
+          timelineSegments.push({ startMs: segTimeMs, endMs: segTimeMs + dur, type: "action", text: txt })
+          segTimeMs += dur
+        }
+      }
+
       const { shots: jenkinsShots, diagnostics } = await breakdownSceneFincher(sceneText, {
         sceneId: scene.id,
         bible,
         style: projectStyle,
+        directorSystemPrompt: directorProfile?.systemPrompt,
+        sceneDurationMs: scene.estimatedDurationMs || segTimeMs || undefined,
+        timelineSegments,
       })
       clearInterval(progressTimer)
 
@@ -1517,7 +2471,43 @@ export function StoryboardPanel({
 
       replaceSceneShots(scene.id, sceneText, scene.blockIds, jenkinsShots)
 
-      if (useBreakdownConfigStore.getState().autoPromptBuild) {
+      // Enrich blocks with production fields from breakdown
+      const sceneBlocksFull = scene.blockIds
+        .map((bid) => scriptBlocks.find((b) => b.id === bid))
+        .filter((b): b is typeof scriptBlocks[number] => b != null)
+
+      if (sceneBlocksFull.length > 0) {
+        const enrichResult = enrichBlocksFromBreakdown({
+          sceneId: scene.id,
+          sceneBlocks: sceneBlocksFull,
+          shots: jenkinsShots,
+        })
+
+        // Update blocks with production fields
+        const { updateBlockProduction } = useScriptStore.getState()
+        for (const enrichedBlock of enrichResult.enrichedBlocks) {
+          const original = sceneBlocksFull.find((b) => b.id === enrichedBlock.id)
+          if (original && enrichedBlock !== original) {
+            updateBlockProduction(enrichedBlock.id, {
+              visual: enrichedBlock.visual,
+              shotGroupId: enrichedBlock.shotGroupId,
+              durationMs: enrichedBlock.durationMs,
+            }, "system")
+          }
+        }
+
+        // Save shot groups
+        const { setShotGroups, shotGroups: existingSG } = useScriptStore.getState()
+        const otherSceneSG = existingSG.filter((sg) => sg.sceneId !== scene.id)
+        setShotGroups([...otherSceneSG, ...enrichResult.shotGroups])
+      }
+
+      // Only run promptBuilder if NO pipeline preset is active
+      // (pipeline presets already generate their own prompts — don't overwrite)
+      const pipelinePreset = useBreakdownConfigStore.getState().activePipelinePreset
+      const hasPipelinePrompts = pipelinePreset && pipelinePreset.modules.length > 0
+
+      if (useBreakdownConfigStore.getState().autoPromptBuild && !hasPipelinePrompts) {
         const sceneShots = useTimelineStore.getState().shots.filter((s) => s.sceneId === scene.id).sort((a, b) => a.order - b.order)
         if (sceneShots.length > 0) {
           const promptDrafts = buildScenePromptDrafts(sceneShots, characters, locations, projectStyle, bibleProps)
@@ -1557,14 +2547,23 @@ export function StoryboardPanel({
     setPromptLoadingSceneId(scene.id)
 
     try {
-      const promptDrafts = buildScenePromptDrafts(sceneShots, characters, locations, projectStyle, bibleProps)
+      // If pipeline preset is active and shots already have prompts from pipeline — skip overwrite
+      const pipelinePreset = useBreakdownConfigStore.getState().activePipelinePreset
+      const hasPipelinePrompts = pipelinePreset && pipelinePreset.modules.length > 0
+      const allHavePrompts = hasPipelinePrompts && sceneShots.every((s) => s.imagePrompt && s.imagePrompt.length > 20)
 
-      promptDrafts.forEach((draft) => {
-        updateShot(draft.shotId, {
-          imagePrompt: draft.imagePrompt,
-          videoPrompt: draft.videoPrompt,
+      if (allHavePrompts) {
+        // Prompts from pipeline already exist — don't overwrite
+        console.log("[StoryboardPanel] Pipeline prompts preserved, skipping promptBuilder")
+      } else {
+        const promptDrafts = buildScenePromptDrafts(sceneShots, characters, locations, projectStyle, bibleProps)
+        promptDrafts.forEach((draft) => {
+          updateShot(draft.shotId, {
+            imagePrompt: draft.imagePrompt,
+            videoPrompt: draft.videoPrompt,
+          })
         })
-      })
+      }
 
       selectScene(scene.id)
       setViewMode("board")
@@ -1578,7 +2577,7 @@ export function StoryboardPanel({
 
   const handleLucBessonBreakdown = useCallback(() => {
     if (!lucBessonProfile) {
-      setBreakdownWarning("Luc Besson профиль ещё не подключён из configurator")
+      setBreakdownWarning("Luc Besson профиль ещё не подключён")
       return
     }
 
@@ -1652,6 +2651,68 @@ export function StoryboardPanel({
   const handleSceneQuickAdd = useCallback((scene: { id: string; headingBlockId: string }) => {
     createShotForScene(scene)
   }, [createShotForScene])
+
+  const [breakdownShotId, setBreakdownShotId] = useState<string | null>(null)
+
+  const handleBreakdownShot = useCallback(async (shotId: string) => {
+    const shot = useTimelineStore.getState().shots.find((s) => s.id === shotId)
+    if (!shot || breakdownShotId) return
+
+    const text = shot.sourceText || shot.caption
+    if (!text.trim()) return
+
+    setBreakdownShotId(shotId)
+    try {
+      const bible = buildBreakdownBibleContext(characters, locations, bibleProps)
+      const dirProfile = useBibleStore.getState().directorProfile
+      const { shots: jenkinsShots } = await breakdownSceneFincher(text, {
+        bible,
+        style: projectStyle,
+        directorSystemPrompt: dirProfile?.systemPrompt,
+      })
+
+      if (jenkinsShots.length <= 1) {
+        // AI didn't split — nothing to do
+        setBreakdownShotId(null)
+        return
+      }
+
+      // Replace the single shot with multiple shots at the same position
+      const allShots = useTimelineStore.getState().shots
+      const shotIndex = allShots.findIndex((s) => s.id === shotId)
+      const newShots = jenkinsShots.map((js, i) => createTimelineShot({
+        label: `${shot.label}.${i + 1}`,
+        shotSize: js.shotSize ?? "",
+        cameraMotion: js.cameraMotion ?? "",
+        duration: js.duration,
+        caption: js.caption ?? "",
+        directorNote: js.directorNote ?? "",
+        cameraNote: js.cameraNote ?? "",
+        imagePrompt: js.imagePrompt ?? "",
+        videoPrompt: js.videoPrompt ?? "",
+        visualDescription: js.visualDescription ?? "",
+        notes: js.notes,
+        type: js.type,
+        sceneId: shot.sceneId,
+        blockRange: shot.blockRange,
+        locked: false,
+        autoSynced: false,
+        sourceText: text,
+      }))
+
+      // Splice: remove original, insert new shots at same position
+      const updated = [...allShots]
+      updated.splice(shotIndex, 1, ...newShots)
+      reorderShots(updated)
+
+      // Select first new shot
+      if (newShots[0]) selectShot(newShots[0].id)
+    } catch (error) {
+      console.error("Shot breakdown error:", error)
+    } finally {
+      setBreakdownShotId(null)
+    }
+  }, [breakdownShotId, characters, locations, bibleProps, projectStyle, reorderShots, selectShot])
 
   const handleGenerateImage = useCallback(async (shotId: string) => {
     const shot = useTimelineStore.getState().shots.find((s) => s.id === shotId)
@@ -2169,7 +3230,7 @@ ${shotText}
     ghost.style.width = `${el.offsetWidth}px`
     ghost.style.opacity = "0.85"
     ghost.style.transform = "scale(1.04) rotate(1.5deg)"
-    ghost.style.boxShadow = "0 30px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(212,168,83,0.3)"
+    ghost.style.boxShadow = `0 30px 60px rgba(0,0,0,0.5), 0 0 0 1px ${getAccentColors().shadowGlow}`
     ghost.style.borderRadius = "14px"
     ghost.style.position = "fixed"
     ghost.style.top = "-9999px"
@@ -2217,9 +3278,14 @@ ${shotText}
   const sceneTitle = selectedScene?.title || "Storyboard Workspace"
   const isDirectorWorkflow = viewMode === "scenes" || viewMode === "director"
   const isDuoMode = isExpanded && isSplitScreen
-  const panelChrome = backgroundColor === "#0B0C10"
-    ? "linear-gradient(180deg, rgba(16,18,24,0.98) 0%, rgba(12,13,18,0.98) 100%)"
-    : `linear-gradient(180deg, ${backgroundColor} 0%, #0E1016 100%)`
+  const activeTheme = typeof document !== "undefined" ? document.documentElement.getAttribute("data-theme") : null
+  const panelChrome = activeTheme === "synthwave"
+    ? "linear-gradient(180deg, rgba(17,11,34,0.98) 0%, rgba(10,6,20,0.98) 100%)"
+    : activeTheme === "architect"
+      ? "linear-gradient(180deg, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.75) 100%)"
+      : backgroundColor === "#0B0C10"
+        ? "linear-gradient(180deg, rgba(16,18,24,0.98) 0%, rgba(12,13,18,0.98) 100%)"
+        : `linear-gradient(180deg, ${backgroundColor} 0%, #0E1016 100%)`
 
   const parsedScenesContent = (
     <div className="flex flex-col gap-1.5 rounded-[18px] border border-white/8 bg-white/3 p-3">
@@ -2282,7 +3348,7 @@ ${shotText}
                       className="h-full rounded-lg"
                       style={{
                         width: `${breakdownStage.progress * 100}%`,
-                        background: "linear-gradient(90deg, rgba(212,168,83,0.08) 0%, rgba(212,168,83,0.18) 60%, rgba(212,168,83,0.06) 100%)",
+                        background: `linear-gradient(90deg, ${getAccentColors().glowGradient(0.08)} 0%, ${getAccentColors().glowGradient(0.18)} 60%, ${getAccentColors().glowGradient(0.06)} 100%)`,
                         transition: "width 1.2s cubic-bezier(0.22, 1, 0.36, 1)",
                       }}
                     />
@@ -2308,6 +3374,7 @@ ${shotText}
                     <div className="mt-1 flex items-center gap-3 text-[10px] text-[#7F8590]">
                       <span>{scene.blockIds.length} blocks</span>
                       <span>{relatedShots.length} shots</span>
+                      <span>{Math.round(scene.estimatedDurationMs / 1000)}s</span>
                       {relatedShots.length > 0 ? <span>{isShotsExpanded ? "shots open" : "double click to open"}</span> : null}
                     </div>
                   )}
@@ -2429,56 +3496,64 @@ ${shotText}
 
   const workspaceChrome = (
     <div className={isDuoMode ? "sticky top-0 z-30 bg-[#0E1016]" : ""}>
-      <div className="border-b border-white/6 px-5 py-3 text-[#E5E0DB]">
-        <div className="flex flex-wrap items-center justify-between gap-4 text-[#9FA4AE]">
-          <div className="flex flex-wrap items-center gap-2.5">
+      <div className="border-b border-white/6 px-3 py-2 text-[#E5E0DB]">
+        <div className="flex items-center gap-3 text-[#9FA4AE] overflow-x-auto scrollbar-none">
+          <div className="flex items-center gap-1 shrink-0">
             <button
               type="button"
               onClick={() => setViewMode("scenes")}
-              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] uppercase tracking-[0.14em] transition-colors ${isDirectorWorkflow ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
+              className={`flex items-center gap-1 rounded-md px-2 py-1 text-[11px] uppercase tracking-[0.1em] transition-colors whitespace-nowrap ${isDirectorWorkflow ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
             >
-              <Camera size={13} />
+              <Camera size={12} />
               Director Cut
             </button>
             <button
               type="button"
               onClick={() => setViewMode("board")}
-              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] uppercase tracking-[0.14em] transition-colors ${viewMode === "board" ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
+              className={`flex items-center gap-1 rounded-md px-2 py-1 text-[11px] uppercase tracking-[0.1em] transition-colors whitespace-nowrap ${viewMode === "board" ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
             >
-              <Grid size={13} />
+              <Grid size={12} />
               Board
             </button>
             <button
               type="button"
               onClick={() => setViewMode("list")}
-              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] uppercase tracking-[0.14em] transition-colors ${viewMode === "list" ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
+              className={`flex items-center gap-1 rounded-md px-2 py-1 text-[11px] uppercase tracking-[0.1em] transition-colors whitespace-nowrap ${viewMode === "list" ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
             >
-              <List size={13} />
+              <List size={12} />
               Shot List
             </button>
             <button
               type="button"
               onClick={() => setViewMode("inspector")}
-              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] uppercase tracking-[0.14em] transition-colors ${viewMode === "inspector" ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
+              className={`flex items-center gap-1 rounded-md px-2 py-1 text-[11px] uppercase tracking-[0.1em] transition-colors whitespace-nowrap ${viewMode === "inspector" ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
             >
-              <BookOpen size={13} />
+              <BookOpen size={12} />
               Inspector
             </button>
             <button
               type="button"
               onClick={() => setViewMode("prompt")}
-              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] uppercase tracking-[0.14em] transition-colors ${viewMode === "prompt" ? "bg-[#D4A853]/15 border border-[#D4A853]/30 text-[#E6C887]" : "text-white/40 hover:text-white/60"}`}
+              className={`flex items-center gap-1 rounded-md px-2 py-1 text-[11px] uppercase tracking-[0.1em] transition-colors whitespace-nowrap ${viewMode === "prompt" ? "bg-[#D4A853]/15 border border-[#D4A853]/30 text-[#E6C887]" : "text-white/40 hover:text-white/60"}`}
             >
-              <Wand2 size={13} />
+              <Wand2 size={12} />
               Prompt Lab
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode("tracks")}
+              className={`flex items-center gap-1 rounded-md px-2 py-1 text-[11px] uppercase tracking-[0.1em] transition-colors whitespace-nowrap ${viewMode === "tracks" ? "bg-emerald-500/15 border border-emerald-500/30 text-emerald-300" : "text-white/40 hover:text-white/60"}`}
+            >
+              <Film size={12} />
+              Tracks
             </button>
           </div>
 
-          <div className="flex items-center gap-2.5 text-[12px] uppercase tracking-[0.16em] text-[#7F8590]">
+          <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.1em] text-[#7F8590] shrink-0 ml-auto">
             <span>{scenes.length} scenes</span>
-            <span className="h-3.5 w-px bg-white/8" />
+            <span className="h-3 w-px bg-white/8" />
             <span>{frames.length} frames</span>
-            <span className="h-3.5 w-px bg-white/8" />
+            <span className="h-3 w-px bg-white/8" />
             <span>{formatSummaryTime(totalShotDurationMs)}</span>
           </div>
         </div>
@@ -2548,6 +3623,13 @@ ${shotText}
               {jenkinsLoading ? <Loader2 size={14} className="animate-spin" /> : <Clapperboard size={14} />}
               Breakdown
             </button>
+            <a
+              href="/bible"
+              className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/4 px-4 py-2 text-[12px] uppercase tracking-[0.12em] text-white/50 transition-colors hover:bg-white/8 hover:text-white/70"
+            >
+              <BookOpen size={14} />
+              Bible
+            </a>
             {lucBessonProfile && (
               <button
                 type="button"
@@ -2665,6 +3747,17 @@ ${shotText}
                 selectedSceneId={selectedSceneId}
                 onSceneClick={(sceneId) => {
                   selectScene(selectedSceneId === sceneId ? null : sceneId)
+                  // Click-to-seek: find first shot of this scene and scroll timeline to it
+                  const sceneShots = shots.filter((s) => s.sceneId === sceneId).sort((a, b) => a.order - b.order)
+                  if (sceneShots[0]) {
+                    selectShot(sceneShots[0].id)
+                    // Seek timeline to shot position
+                    const shotIndex = shots.findIndex((s) => s.id === sceneShots[0].id)
+                    if (shotIndex >= 0) {
+                      const startMs = shots.slice(0, shotIndex).reduce((sum, s) => sum + s.duration, 0)
+                      useTimelineStore.getState().seekTo(startMs)
+                    }
+                  }
                 }}
                 fontSize={scriptFontSize}
               />
@@ -2697,7 +3790,7 @@ ${shotText}
                     return (
                     <Fragment key={frame.id}>
                       <div
-                        className={`group relative overflow-hidden rounded-[14px] border bg-[#111317] p-2 shadow-[0_20px_45px_rgba(0,0,0,0.28)] transition-all duration-200 ${recentInsertedFrameId === frame.id ? "storyboard-card-enter" : ""} ${selectedShotId === shot?.id ? "border-[#D4A853]/40 ring-1 ring-[#D4A853]/20" : "border-white/6"} ${dropTargetIndex === index || dropTargetIndex === index + 1 ? "border-[#D8C4A5]/40 shadow-[0_0_0_1px_rgba(216,196,165,0.18),0_20px_45px_rgba(0,0,0,0.34)]" : "hover:-translate-y-px hover:border-white/10 hover:bg-[#14171C]"}`}
+                        className={`group relative rounded-[14px] border bg-[#111317] p-2 shadow-[0_20px_45px_rgba(0,0,0,0.28)] transition-all duration-200 ${recentInsertedFrameId === frame.id ? "storyboard-card-enter" : ""} ${selectedShotId === shot?.id ? "border-[#D4A853]/40 ring-1 ring-[#D4A853]/20" : "border-white/6"} ${dropTargetIndex === index || dropTargetIndex === index + 1 ? "border-[#D8C4A5]/40 shadow-[0_0_0_1px_rgba(216,196,165,0.18),0_20px_45px_rgba(0,0,0,0.34)]" : "hover:-translate-y-px hover:border-white/10 hover:bg-[#14171C]"}`}
                         draggable
                         onDragStart={(e) => handleDragStart(frame.id, e)}
                         onDragEnd={handleDragEnd}
@@ -2724,7 +3817,7 @@ ${shotText}
                           <div
                             className="relative overflow-hidden rounded-[10px] border border-white/8 bg-[#0E1014] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
                             style={{ aspectRatio: "16 / 8.7" }}
-                            onClick={() => { if (shot) selectShot(shot.id) }}
+                            onClick={() => { if (shot) { selectShot(shot.id); if (shot.sceneId) selectScene(shot.sceneId) } }}
                             onDoubleClick={() => { if (previewSrc && shot) { setLightbox({ src: previewSrc, shotId: shot.id }); setLightboxTransform({ flipH: false, flipV: false, rotate: 0 }) } }}
                           >
                             {previewSrc ? (
@@ -2841,6 +3934,23 @@ ${shotText}
                                   <Wand2 size={13} />
                                   Edit
                                 </button>
+                                <button
+                                  type="button"
+                                  onClick={() => shot && handleBreakdownShot(shot.id)}
+                                  disabled={breakdownShotId === shot?.id}
+                                  className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/15 px-3.5 py-2 text-[12px] uppercase tracking-[0.14em] text-emerald-300 backdrop-blur-sm transition-colors hover:bg-emerald-500/25 disabled:opacity-40"
+                                >
+                                  {breakdownShotId === shot?.id ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                                  Split
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => shot && setCanvasShotId(shot.id)}
+                                  className="flex items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3.5 py-2 text-[12px] uppercase tracking-[0.14em] text-cyan-300 backdrop-blur-sm transition-colors hover:bg-cyan-500/20"
+                                >
+                                  <Grid size={13} />
+                                  Canvas
+                                </button>
                                 {shot?.thumbnailUrl && (
                                   <button
                                     type="button"
@@ -2920,8 +4030,8 @@ ${shotText}
                       const resolvedShot = editingShotField?.shotId === shot.id
                         ? { ...shot, [editingShotField.field]: editingShotDraft }
                         : shot
-                      const imagePrompt = buildImagePrompt(resolvedShot, characters, locations, projectStyle, bibleProps)
-                      const videoPrompt = buildVideoPrompt(resolvedShot, characters, locations, projectStyle, bibleProps)
+                      const imagePrompt = resolvedShot.imagePrompt || buildImagePrompt(resolvedShot, characters, locations, projectStyle, bibleProps)
+                      const videoPrompt = resolvedShot.videoPrompt || buildVideoPrompt(resolvedShot, characters, locations, projectStyle, bibleProps)
                       const refs = getReferencedBibleEntries(resolvedShot, characters, locations)
                       const previewSrc = shot.thumbnailUrl || shot.svg || null
                       const durationLabel = null // replaced by EditableDuration
@@ -3004,6 +4114,10 @@ ${shotText}
                 </div>
                 ) : viewMode === "prompt" ? (
                 <div className="-mx-4 -my-4 h-full"><PromptLab /></div>
+                ) : viewMode === "tracks" ? (
+                <div className="-mx-4 -my-4 h-full">
+                  <EmbeddedTrackView blocks={scriptBlocks} scenes={scenes} shots={sortedShots} />
+                </div>
                 ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-[11px] text-[#D7CDC1]">
@@ -3208,6 +4322,15 @@ ${shotText}
                             <Wand2 size={13} />
                             Edit
                           </button>
+                          <button
+                            type="button"
+                            onClick={() => shot && handleBreakdownShot(shot.id)}
+                            disabled={breakdownShotId === shot?.id}
+                            className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/15 px-3.5 py-2 text-[12px] uppercase tracking-[0.14em] text-emerald-300 backdrop-blur-sm transition-colors hover:bg-emerald-500/25 disabled:opacity-40"
+                          >
+                            {breakdownShotId === shot?.id ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                            Split
+                          </button>
                           {shot?.thumbnailUrl && (
                             <button
                               type="button"
@@ -3286,8 +4409,8 @@ ${shotText}
                 const resolvedShot = editingShotField?.shotId === shot.id
                   ? { ...shot, [editingShotField.field]: editingShotDraft }
                   : shot
-                const imagePrompt = buildImagePrompt(resolvedShot, characters, locations, projectStyle, bibleProps)
-                const videoPrompt = buildVideoPrompt(resolvedShot, characters, locations, projectStyle, bibleProps)
+                const imagePrompt = resolvedShot.imagePrompt || buildImagePrompt(resolvedShot, characters, locations, projectStyle, bibleProps)
+                const videoPrompt = resolvedShot.videoPrompt || buildVideoPrompt(resolvedShot, characters, locations, projectStyle, bibleProps)
                 const refs = getReferencedBibleEntries(resolvedShot, characters, locations)
                 const previewSrc = shot.thumbnailUrl || shot.svg || null
                 return (
@@ -3507,6 +4630,10 @@ ${shotText}
               })
             )}
           </div>
+          ) : viewMode === "tracks" ? (
+          <div className="-mx-5 -my-5 h-full">
+            <EmbeddedTrackView blocks={scriptBlocks} scenes={scenes} shots={sortedShots} />
+          </div>
           ) : viewMode === "prompt" ? (
           <div className="-mx-4 -my-4 h-full"><PromptLab /></div>
           ) : (
@@ -3656,6 +4783,32 @@ ${shotText}
           }}
         />
       )}
+
+      {/* Block Canvas — node graph editor per shot */}
+      {canvasShotId && (() => {
+        const canvasShot = shots.find((s) => s.id === canvasShotId)
+        if (!canvasShot) return null
+        // Find block linked to this shot
+        const blockId = canvasShot.blockRange?.[0]
+        const block = blockId ? scriptBlocks.find((b) => b.id === blockId) : null
+        const fallbackBlock = { id: canvasShotId, type: "action" as const, text: canvasShot.caption || canvasShot.label }
+        return (
+          <BlockCanvas
+            block={block || fallbackBlock}
+            shot={canvasShot}
+            onClose={() => setCanvasShotId(null)}
+            onSave={(canvasData) => {
+              // Save canvas graph to block modifier
+              if (block) {
+                useScriptStore.getState().updateBlockProduction(block.id, {
+                  modifier: { type: "canvas", templateId: null, canvasData, params: {} },
+                }, "system")
+              }
+              setCanvasShotId(null)
+            }}
+          />
+        )
+      })()}
 
     </aside>
     </>

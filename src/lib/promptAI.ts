@@ -49,7 +49,7 @@ function buildContextBlock(ctx: PromptAIContext): string {
     charList ? `Characters in scene: ${charList}` : "",
     locList ? `Location: ${locList}` : "",
     propList ? `Props: ${propList}` : "",
-    ctx.projectStyle ? `Visual style: ${ctx.projectStyle}` : "",
+    // Style is NOT passed to LLM — it's applied as a separate layer at generation time
     ctx.currentImagePrompt ? `Current prompt: ${ctx.currentImagePrompt}` : "",
   ].filter(Boolean).join("\n")
 }

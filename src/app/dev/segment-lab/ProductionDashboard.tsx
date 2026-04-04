@@ -62,7 +62,7 @@ function JobRow({ job }: { job: ProductionJob }) {
     }
     if (job.type === "lipsync") return `Lip sync ← tts + video`
     if (job.type === "assemble") return "Final assembly"
-    return job.id
+    return (job as ProductionJob).id
   }, [job])
 
   const subLabel = useMemo(() => {

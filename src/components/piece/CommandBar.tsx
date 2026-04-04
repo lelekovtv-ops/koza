@@ -2,23 +2,29 @@
 
 import { useState, useCallback, useRef, useEffect } from "react"
 import { Mic, SendHorizonal, Sparkles } from "lucide-react"
-import { parseIntent, getSlashSuggestions } from "@/lib/intentParser"
+import { getSlashSuggestions } from "@/lib/intentParser"
 import { usePanelsStore } from "@/store/panels"
 
 interface CommandBarProps {
-  onChat?: (text: string) => void
-  onRunGeneration?: () => void
-  onSmartDistribute?: () => void
+  onSubmit?: (text: string) => void
+  onSessionCommand?: (text: string) => void
+  sessionsOpen?: boolean
+  gestureMode?: boolean
+  onToggleGesture?: () => void
+  classifying?: boolean
 }
 
-export function CommandBar({ onChat, onRunGeneration, onSmartDistribute }: CommandBarProps) {
+export function CommandBar({ onSubmit, onSessionCommand, sessionsOpen, gestureMode, onToggleGesture, classifying: classifyingProp }: CommandBarProps) {
   const [input, setInput] = useState("")
   const [suggestions, setSuggestions] = useState<{ command: string; label: string }[]>([])
   const [selectedSuggestion, setSelectedSuggestion] = useState(0)
   const [lastAction, setLastAction] = useState<string | null>(null)
+  const [listening, setListening] = useState(false)
+  const [interimText, setInterimText] = useState("")
   const inputRef = useRef<HTMLInputElement>(null)
+  const recognitionRef = useRef<any>(null)
+  const submitAfterSpeechRef = useRef(false)
 
-  const { openPanel, closePanel, closeAll, togglePanel } = usePanelsStore()
   const panels = usePanelsStore((s) => s.panels)
 
   // Focus on Cmd+/
@@ -55,57 +61,108 @@ export function CommandBar({ onChat, onRunGeneration, onSmartDistribute }: Comma
     return () => clearTimeout(t)
   }, [lastAction])
 
-  const handleSubmit = useCallback(() => {
-    const trimmed = input.trim()
-    if (!trimmed) return
-
-    // If suggestion selected, use it
-    if (suggestions.length > 0 && input.startsWith("/")) {
-      const cmd = suggestions[selectedSuggestion]?.command ?? trimmed
-      const intent = parseIntent(cmd)
-      executeIntent(intent)
-      setInput("")
-      setSuggestions([])
+  // ── Voice recognition (Web Speech API) ──
+  const startListening = useCallback(() => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition
+    if (!SpeechRecognition) {
+      setLastAction("Speech not supported in this browser")
       return
     }
 
-    const intent = parseIntent(trimmed)
-    executeIntent(intent)
+    if (recognitionRef.current) {
+      recognitionRef.current.stop()
+      return
+    }
+
+    const recognition = new SpeechRecognition()
+    recognition.lang = "ru-RU"
+    recognition.interimResults = true
+    recognition.continuous = false
+    recognition.maxAlternatives = 1
+
+    recognition.onstart = () => {
+      setListening(true)
+      setInterimText("")
+    }
+
+    recognition.onresult = (event: any) => {
+      let interim = ""
+      let final = ""
+      for (let i = 0; i < event.results.length; i++) {
+        const transcript = event.results[i][0].transcript
+        if (event.results[i].isFinal) {
+          final += transcript
+        } else {
+          interim += transcript
+        }
+      }
+
+      if (final) {
+        setInput(final)
+        setInterimText("")
+        submitAfterSpeechRef.current = true
+      } else {
+        setInterimText(interim)
+      }
+    }
+
+    recognition.onend = () => {
+      setListening(false)
+      setInterimText("")
+      recognitionRef.current = null
+    }
+
+    recognition.onerror = (event: any) => {
+      if (event.error !== "no-speech" && event.error !== "aborted") {
+        setLastAction(`Mic: ${event.error}`)
+      }
+      setListening(false)
+      setInterimText("")
+      recognitionRef.current = null
+    }
+
+    recognitionRef.current = recognition
+    recognition.start()
+  }, [])
+
+  // Auto-submit after speech recognition fills input
+  useEffect(() => {
+    if (submitAfterSpeechRef.current && input.trim()) {
+      submitAfterSpeechRef.current = false
+      // Small delay so user sees what was recognized
+      const t = setTimeout(() => handleSubmit(), 300)
+      return () => clearTimeout(t)
+    }
+  }, [input]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => { recognitionRef.current?.stop() }
+  }, [])
+
+  const handleSubmit = useCallback(async () => {
+    const trimmed = input.trim()
+    if (!trimmed) return
+
     setInput("")
     setSuggestions([])
-  }, [input, suggestions, selectedSuggestion]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const executeIntent = useCallback(
-    (intent: ReturnType<typeof parseIntent>) => {
-      switch (intent.type) {
-        case "open_panel":
-          openPanel(intent.panel)
-          setLastAction(`Opened ${intent.panel}`)
-          break
-        case "close_panel":
-          closePanel(intent.panel)
-          setLastAction(`Closed ${intent.panel}`)
-          break
-        case "close_all":
-          closeAll()
-          setLastAction("Closed all panels")
-          break
-        case "run_generation":
-          onRunGeneration?.()
-          setLastAction("Running generation...")
-          break
-        case "smart_distribute":
-          onSmartDistribute?.()
-          setLastAction("Smart distributing...")
-          break
-        case "chat":
-          onChat?.(intent.text)
-          setLastAction(null)
-          break
-      }
-    },
-    [openPanel, closePanel, closeAll, onChat, onRunGeneration, onSmartDistribute],
-  )
+    // When sessions view is open — route to session commands
+    if (sessionsOpen && onSessionCommand) {
+      onSessionCommand(trimmed)
+      return
+    }
+
+    // If suggestion selected, use that command text
+    if (suggestions.length > 0 && input.startsWith("/")) {
+      const cmd = suggestions[selectedSuggestion]?.command ?? trimmed
+      onSubmit?.(cmd)
+      return
+    }
+
+    // Everything else → parent handles routing
+    onSubmit?.(trimmed)
+  }, [input, suggestions, selectedSuggestion, sessionsOpen, onSessionCommand, onSubmit])
 
   const handleKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
@@ -151,8 +208,20 @@ export function CommandBar({ onChat, onRunGeneration, onSmartDistribute }: Comma
         </div>
       )}
 
-      {/* Last action flash */}
-      {lastAction && (
+      {/* Status indicators */}
+      {listening && (
+        <div className="flex items-center gap-2 text-[12px] font-medium" style={{ color: "rgba(239,68,68,0.7)" }}>
+          <span className="inline-block h-2 w-2 rounded-full bg-red-500" style={{ animation: "micDot 0.8s ease-in-out infinite" }} />
+          Listening...
+        </div>
+      )}
+      {classifyingProp && !listening && (
+        <div className="flex items-center gap-2 text-[11px] text-[#D4A853]/40">
+          <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-[#D4A853]/50" />
+          understanding...
+        </div>
+      )}
+      {lastAction && !classifyingProp && !listening && (
         <div className="animate-pulse text-[11px] text-white/30">{lastAction}</div>
       )}
 
@@ -190,26 +259,72 @@ export function CommandBar({ onChat, onRunGeneration, onSmartDistribute }: Comma
         <input
           ref={inputRef}
           type="text"
-          value={input}
-          onChange={(e) => setInput(e.target.value)}
+          value={listening ? interimText || input : input}
+          onChange={(e) => { if (!listening) setInput(e.target.value) }}
           onKeyDown={handleKeyDown}
-          placeholder="What do you want to create?  ⌘/"
+          placeholder={listening ? "Listening..." : "What do you want to create?  ⌘/"}
           className="flex-1 bg-transparent text-[14px] text-[#2A2520] outline-none placeholder:text-[#B5AFA5]"
+          style={listening ? { color: "#B8A070", fontStyle: "italic" } : undefined}
         />
-        {input.trim() ? (
+        {/* Gesture toggle */}
+        {onToggleGesture && (
+          <button
+            type="button"
+            onClick={onToggleGesture}
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition-all hover:scale-105"
+            style={gestureMode ? {
+              background: "rgba(212,168,83,0.2)",
+              borderColor: "rgba(212,168,83,0.4)",
+              color: "#B8860B",
+              boxShadow: "0 0 12px rgba(212,168,83,0.25)",
+            } : {
+              background: "rgba(60,55,48,0.08)",
+              borderColor: "rgba(60,55,48,0.15)",
+              color: "#6B5D4D",
+            }}
+            title="Hand gestures"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <path d="M6.5 6.5a2 2 0 013 0l.5.5.5-.5a2 2 0 013 0l.5.5.5-.5a2 2 0 013 0V15a6 6 0 01-6 6h-1a6 6 0 01-6-6V8.5l.5-.5.5-.5a2 2 0 011 0z" />
+            </svg>
+          </button>
+        )}
+        {input.trim() && !listening ? (
           <button
             type="button"
             onClick={handleSubmit}
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-[#2A2520]/10 text-[#8A7A60] transition-colors hover:bg-[#2A2520]/20 hover:text-[#5A4E3E]"
+            className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition-all hover:scale-105"
+            style={{
+              background: "rgba(42,37,32,0.12)",
+              borderColor: "rgba(42,37,32,0.2)",
+              color: "#5A4E3E",
+            }}
           >
-            <SendHorizonal size={14} />
+            <SendHorizonal size={16} />
           </button>
         ) : (
           <button
             type="button"
-            className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-[#C5BDB0] transition-colors hover:bg-[#2A2520]/8 hover:text-[#8A7A60]"
+            onClick={startListening}
+            className="relative flex h-9 w-9 shrink-0 items-center justify-center rounded-full border transition-all hover:scale-105"
+            style={listening ? {
+              background: "rgba(239,68,68,0.15)",
+              borderColor: "rgba(239,68,68,0.4)",
+              color: "#DC2626",
+              boxShadow: "0 0 14px rgba(239,68,68,0.3)",
+            } : {
+              background: "rgba(60,55,48,0.08)",
+              borderColor: "rgba(60,55,48,0.15)",
+              color: "#6B5D4D",
+            }}
           >
-            <Mic size={14} />
+            {listening && (
+              <span
+                className="absolute inset-0 rounded-full"
+                style={{ border: "2px solid rgba(239,68,68,0.5)", animation: "micPulse 1.2s ease-out infinite" }}
+              />
+            )}
+            <Mic size={16} />
           </button>
         )}
       </div>

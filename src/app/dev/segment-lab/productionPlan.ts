@@ -358,8 +358,8 @@ export function buildProductionPlan(
 
   for (const section of sections) {
     const sectionSegs = segments.filter((s) => s.sectionId === section.id)
-    const secStart = section.startMs ?? 0
-    const secDur = section.actualDurationMs ?? section.durationMs
+    const secStart = sectionSegs.length > 0 ? Math.min(...sectionSegs.map((s) => s.startMs)) : 0
+    const secDur = sectionSegs.length > 0 ? Math.max(...sectionSegs.map((s) => s.startMs + s.durationMs)) - secStart : 0
 
     // ── 1. TTS: all ГОЛОС lines in section → one TTS job ──
     const voiceSegs = sectionSegs.filter((s) => s.track === "voice")

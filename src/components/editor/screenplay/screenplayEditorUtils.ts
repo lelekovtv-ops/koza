@@ -14,8 +14,9 @@ export const AUTO_CAPS_TYPES = new Set<ScreenplayElement["type"]>([
 
 export { SCENE_PREFIX_RE }
 
-const CHARACTER_SUFFIX_RE = /\s*\((V\.?O\.?|O\.?S\.?|O\.?C\.?|CONT'?D)\)\s*$/i
-const TRANSITION_RE = /^(FADE\s+(IN|OUT(\.|:)|TO\s+BLACK)|CUT\s+TO:|SMASH\s+CUT\s+TO:|MATCH\s+CUT\s+TO:|DISSOLVE\s+TO:|WIPE\s+TO:|JUMP\s+CUT\s+TO:|IRIS\s+(IN|OUT)|.+\s+TO:)$/i
+const CHARACTER_SUFFIX_RE = /\s*\((V\.?O\.?|O\.?S\.?|O\.?C\.?|CONT'?D|ПРОД\.?)\)\s*$/i
+const CHARACTER_AGE_RE = /\s*\(\d+(?:\s*(?:лет|years?|г\.?))?\)\s*$/i
+const TRANSITION_RE = /^(FADE\s+(IN:?|OUT[\.::]?|TO\s+BLACK:?)|CUT\s+TO:|SMASH\s+CUT\s+TO:|MATCH\s+CUT\s+TO:|DISSOLVE\s+TO:|WIPE\s+TO:|JUMP\s+CUT\s+TO:|IRIS\s+(IN|OUT):?|ЗАТЕМНЕНИЕ:?|ПЕРЕХОД:?|НАПЛЫВ:?|ВЫТЕСНЕНИЕ:?|СТОП-КАДР:?|.+\s+TO:)$/i
 export { findSlugSuggestion }
 
 export function getCurrentElementEntry(editor: Editor): [ScreenplayElement, number[]] | null {
@@ -117,7 +118,7 @@ export function isLikelyCharacterCue(text: string): boolean {
   const trimmed = text.trim()
   if (!trimmed || trimmed.length > 52) return false
 
-  const normalized = trimmed.replace(CHARACTER_SUFFIX_RE, "")
+  const normalized = trimmed.replace(CHARACTER_SUFFIX_RE, "").replace(CHARACTER_AGE_RE, "")
   if (!normalized || normalized.length < 2) return false
 
   if (SCENE_PREFIX_RE.test(normalized)) return false

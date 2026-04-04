@@ -59,6 +59,7 @@ export function generateDemoShots(count: number): Omit<TimelineShot, "id">[] {
       svg: "",
       blockRange: null,
       locked: false,
+      autoSynced: false,
       sourceText: "",
       generationHistory: [],
       activeHistoryIndex: null,

@@ -3,127 +3,57 @@
 import { useMemo, useState, useCallback, useRef, useEffect } from "react"
 import { textToSegments } from "@/lib/segmentEngine"
 import { usePanelsStore, type PanelId } from "@/store/panels"
+import { usePieceSessionStore, type ChatMessage } from "@/store/pieceSession"
 import { CommandBar } from "@/components/piece/CommandBar"
 import { FloatingPanel } from "@/components/piece/FloatingPanel"
 import { VerticalTimeline } from "@/components/piece/VerticalTimeline"
 import { EmotionCurves } from "@/components/piece/EmotionCurves"
 import { ImageGenerator } from "@/components/piece/ImageGenerator"
+import { SessionDrawer } from "@/components/piece/SessionDrawer"
+import { useHandTracking } from "@/hooks/useHandTracking"
+import { GestureTestOverlay } from "@/components/piece/GestureTestOverlay"
+import { PhotoSearch3D } from "@/components/piece/PhotoSearch3D"
+import { route as routeCommand, type RouteResult } from "@/lib/router/commandRouter"
+import { executeGeneration, executeScriptEdit, executeChat, type WorkerCallbacks } from "@/lib/router/workers"
 
-interface ChatMessage {
-  id: string
-  role: "user" | "assistant"
-  text: string
-}
-
-const SYSTEM_PROMPT = `You are PIECE — an AI co-director and creative producer.
-
-When a user describes a project idea, FIRST ask 3-5 short clarifying questions to understand their vision. Format questions as a numbered list. Questions should cover: tone/mood, target audience, visual style, references, constraints.
-
-Be warm but professional. Keep each question to 1 line. After questions, add a brief encouraging note.
-
-When the user answers, help them step by step.
-
-IMPORTANT: When the user asks you to write a script/scenario, respond ONLY with the script text in this format:
-[SECTION NAME — duration]
-ГОЛОС: narrator text
-ГРАФИКА: visual description
-ТИТР: title text
-МУЗЫКА: music description
-
-ALWAYS respond in the same language the user writes in. Keep responses concise.`
-
-const EDIT_SYSTEM_PROMPT = `You are PIECE script editor. You receive ONE block of a script and an edit instruction.
-
-Return ONLY the edited block text. Nothing else — no explanations, no markdown, no "here's the edit".
-Keep the same format: [SECTION — duration], ГОЛОС:, ГРАФИКА:, ТИТР:, МУЗЫКА:.
-Respond in the same language as the block.`
-
-// ─── Script block utilities ─────────────────────────────────
-
-interface ScriptBlock {
-  index: number
-  title: string
-  text: string      // full block text including [HEADER]
-  startLine: number
-}
-
-function parseScriptBlocks(script: string): ScriptBlock[] {
-  if (!script.trim()) return []
-  const lines = script.split("\n")
-  const blocks: ScriptBlock[] = []
-  let current: ScriptBlock | null = null
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i]
-    if (/^\[.+\]/.test(line.trim())) {
-      if (current) blocks.push(current)
-      current = {
-        index: blocks.length,
-        title: line.trim().replace(/^\[|\]$/g, "").replace(/\s*[—\-–]\s*\d+.*/, "").trim(),
-        text: line,
-        startLine: i,
-      }
-    } else if (current) {
-      current.text += "\n" + line
-    } else {
-      // Text before first block
-      current = { index: 0, title: "INTRO", text: line, startLine: i }
-    }
-  }
-  if (current) blocks.push(current)
-  return blocks
-}
-
-function replaceBlock(script: string, blockIndex: number, newBlockText: string): string {
-  const blocks = parseScriptBlocks(script)
-  if (blockIndex < 0 || blockIndex >= blocks.length) return script
-  const newBlocks = blocks.map((b, i) => i === blockIndex ? newBlockText.trim() : b.text)
-  return newBlocks.join("\n\n")
-}
-
-function findRelevantBlock(blocks: ScriptBlock[], userText: string): number {
-  const lower = userText.toLowerCase()
-
-  // Direct block reference: "в блоке HOOK", "секцию ОТКРЫТИЕ", "block 2"
-  for (const block of blocks) {
-    if (lower.includes(block.title.toLowerCase())) return block.index
-  }
-
-  // Number reference: "первый блок", "второй", "блок 3"
-  const numWords: Record<string, number> = {
-    "перв": 0, "втор": 1, "трет": 2, "четвёрт": 3, "четверт": 3, "пят": 4, "шест": 5,
-    "first": 0, "second": 1, "third": 2, "fourth": 3, "fifth": 4,
-  }
-  for (const [word, idx] of Object.entries(numWords)) {
-    if (lower.includes(word) && idx < blocks.length) return idx
-  }
-
-  const numMatch = lower.match(/блок\s*(\d+)|block\s*(\d+)|секци[юя]\s*(\d+)/)
-  if (numMatch) {
-    const n = parseInt(numMatch[1] || numMatch[2] || numMatch[3]) - 1
-    if (n >= 0 && n < blocks.length) return n
-  }
-
-  // Content match: check if user mentions content from a specific block
-  for (const block of blocks) {
-    const blockWords = block.text.toLowerCase().split(/\s+/).filter((w) => w.length > 4)
-    const matches = blockWords.filter((w) => lower.includes(w))
-    if (matches.length >= 2) return block.index
-  }
-
-  // Last resort: "последн" = last block, "начало/открытие" = first
-  if (/последн|last|конец|финал|cta/i.test(lower)) return blocks.length - 1
-  if (/начал|first|открыт|hook|intro/i.test(lower)) return 0
-
-  return -1 // can't determine — will edit full script
-}
+// Script block utilities (extracted to shared module)
+import { parseScriptBlocks } from "@/lib/scriptUtils"
 
 export default function PiecePage() {
-  const [scriptText, setScriptText] = useState("")
+  // ── Session store ──
+  const sessionStore = usePieceSessionStore()
+  const session = sessionStore.activeSession()
+
+  // Client mount flag (prevents hydration mismatch)
+  const [mounted, setMounted] = useState(false)
+  useEffect(() => setMounted(true), [])
+
+  // Auto-create session if none
+  useEffect(() => {
+    if (mounted && !session) sessionStore.createSession()
+  }, [mounted, session]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Session data
+  const scriptText = session?.scriptText ?? ""
+  const messages = session?.messages ?? []
+  const activePanel = session?.activePanel ?? null
+
+  const setScriptText = useCallback((text: string) => sessionStore.setScript(text), [sessionStore])
+  const addMessage = useCallback((msg: ChatMessage) => sessionStore.addMessage(msg), [sessionStore])
+
+  // Local UI state (not persisted)
+  const [drawerOpen, setDrawerOpen] = useState(false)
+  const [gestureMode, setGestureMode] = useState(false)
+  const [gestureTestOpen, setGestureTestOpen] = useState(false)
+  const [photoSearchOpen, setPhotoSearchOpen] = useState(false)
+  const [photoSearchQuery, setPhotoSearchQuery] = useState("")
+  const [scriptZoom, setScriptZoom] = useState(1)
+  const { hand, cameraReady } = useHandTracking(gestureMode)
+  const scriptScrollRef = useRef<HTMLPreElement>(null)
+  const palmZoomRef = useRef<{ active: boolean; startY: number; startScale: number }>({ active: false, startY: 0, startScale: 1 })
   const [currentTime, setCurrentTime] = useState(0)
-  const [messages, setMessages] = useState<ChatMessage[]>([])
   const [streamingText, setStreamingText] = useState("")
-  const [streamingScript, setStreamingScript] = useState("") // script goes here during stream
+  const [streamingScript, setStreamingScript] = useState("")
   const [isStreaming, setIsStreaming] = useState(false)
   const [thinking, setThinking] = useState(false)
   const [generatePrompt, setGeneratePrompt] = useState<string | null>(null)
@@ -144,16 +74,19 @@ export default function PiecePage() {
     }
   }, [streamingScript])
 
+  const MAX_DISPLAY_LINES = 6
+
   const displayLines = useMemo(() => {
     if (!displayText) return []
-    return displayText.split("\n").filter((l) => l.trim()).map((line, i) => ({
+    const all = displayText.split("\n").filter((l) => l.trim()).map((line, i) => ({
       text: line,
       isQuestion: /^\d+[\.\)]\s/.test(line.trim()) || /^[-•]\s/.test(line.trim()),
       key: i,
     }))
+    return all.slice(0, MAX_DISPLAY_LINES)
   }, [displayText])
 
-  // Visible panels in pipeline order (system-controlled)
+  // Sync open panels to session
   const allPanels = usePanelsStore((s) => s.panels)
   const visiblePanels = useMemo(() => {
     const order: PanelId[] = ["script", "generator", "timeline", "emotions", "plan"]
@@ -171,200 +104,219 @@ export default function PiecePage() {
 
   const hasLeftPanel = visiblePanels.length > 0
 
+  // Active panel navigation (arrow keys + gestures)
+  const [activePanelIdx, setActivePanelIdx] = useState(0)
+
+  // Keep activePanelIdx in bounds
+  useEffect(() => {
+    if (visiblePanels.length > 0 && activePanelIdx >= visiblePanels.length) {
+      setActivePanelIdx(visiblePanels.length - 1)
+    }
+  }, [visiblePanels.length, activePanelIdx])
+
+  // Arrow keys ← → to navigate panels
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      if (visiblePanels.length < 2) return
+      if (e.key === "ArrowLeft") {
+        e.preventDefault()
+        setActivePanelIdx(i => Math.max(0, i - 1))
+      }
+      if (e.key === "ArrowRight") {
+        e.preventDefault()
+        setActivePanelIdx(i => Math.min(visiblePanels.length - 1, i + 1))
+      }
+    }
+    window.addEventListener("keydown", h)
+    return () => window.removeEventListener("keydown", h)
+  }, [visiblePanels.length])
+
   // Script blocks (live parsed from scriptText)
   const scriptBlocks = useMemo(() => parseScriptBlocks(scriptText), [scriptText])
 
-  // Detect if user wants to edit existing script vs write new / general chat
-  const isEditRequest = useCallback((text: string): boolean => {
-    // No script → can't edit
-    if (!scriptText.trim() || scriptBlocks.length === 0) return false
-    // Explicitly asks for NEW script → not an edit
-    if (/напиши новый|новый сценарий|write new|create new|с нуля|from scratch/i.test(text)) return false
-    // If user mentions a block name → it's an edit
-    const lower = text.toLowerCase()
-    for (const block of scriptBlocks) {
-      if (lower.includes(block.title.toLowerCase())) return true
-    }
-    // If user uses edit-like words → it's an edit
-    if (/измени|поменяй|замени|перепиши|переделай|сделай|убери|добавь|удали|укороти|удлини|edit|change|replace|rewrite|remove|add|update|fix|shorten|extend/i.test(text)) return true
-    // If user references position → it's an edit
-    if (/перв|втор|трет|послед|начал|конец|блок|секци|first|second|last|block|section/i.test(text)) return true
-    return false
-  }, [scriptText, scriptBlocks])
+  // ── Worker callbacks (shared by all workers) ──
+  const workerCb: WorkerCallbacks = useMemo(() => ({
+    setStreamingText,
+    setStreamingScript,
+    setScriptText,
+    setIsStreaming,
+    setThinking,
+    addMessage,
+    openPanel,
+    setGeneratePrompt,
+    abortRef,
+  }), [setScriptText, addMessage, openPanel]) // eslint-disable-line react-hooks/exhaustive-deps
 
-  const handleChat = useCallback(async (text: string) => {
+  // ── Classifying state (for "understanding..." indicator) ──
+  const [classifying, setClassifying] = useState(false)
+
+  // ── Main command handler — routes through commandRouter ──
+  const handleSubmit = useCallback(async (text: string) => {
     if (!text.trim() || isStreaming) return
 
-    const userMsg: ChatMessage = { id: `u-${Date.now()}`, role: "user", text: text.trim() }
-    setMessages((prev) => [...prev, userMsg])
+    const trimmed = text.trim()
+
+    // Route through three-tier system
+    setClassifying(true)
+    const result = await routeCommand(trimmed, { hasScript: !!scriptText.trim() })
+    setClassifying(false)
+
+    // ── UI commands — execute instantly ──
+    if (result.category === "UI_COMMAND") {
+      const intent = result.intent
+      switch (intent.type) {
+        case "open_panel":   openPanel(intent.panel); break
+        case "close_panel":  usePanelsStore.getState().closePanel(intent.panel); break
+        case "close_all":    usePanelsStore.getState().closeAll(); break
+        case "new_session":  usePanelsStore.getState().closeAll(); sessionStore.createSession(); break
+        case "open_sessions": setDrawerOpen(true); break
+        case "gesture_test":
+          if (!gestureMode) setGestureMode(true)
+          setGestureTestOpen(true)
+          break
+        case "run_generation": break // TODO
+        case "smart_distribute": break // TODO
+      }
+      return
+    }
+
+    // ── Photo search — open 3D overlay ──
+    if (result.category === "PHOTO_SEARCH" && result.intent.type === "photo_search") {
+      setPhotoSearchQuery(result.intent.query)
+      setPhotoSearchOpen(true)
+      return
+    }
+
+    // ── Creative commands — add user message and dispatch to worker ──
+    const userMsg: ChatMessage = { id: `u-${Date.now()}`, role: "user", text: trimmed }
+    addMessage(userMsg)
     setStreamingText("")
     setThinking(true)
     setIsStreaming(true)
 
-    // ── Generate image mode: "сгенерируй первую сцену" ──
-    if (scriptBlocks.length > 0 && /сгенер|генерируй|generate|render|нарисуй|покажи кадр|visualize/i.test(text)) {
-      const blockIdx = findRelevantBlock(scriptBlocks, text)
-      const block = blockIdx >= 0 ? scriptBlocks[blockIdx] : scriptBlocks[0]
+    switch (result.category) {
+      case "GENERATION":
+        await executeGeneration({ text: trimmed, scriptText, cb: workerCb })
+        break
+      case "SCRIPT_EDIT":
+        await executeScriptEdit({ text: trimmed, scriptText, cb: workerCb })
+        break
+      case "CREATIVE_CHAT":
+        await executeChat({ text: trimmed, messages, cb: workerCb })
+        break
+    }
+  }, [isStreaming, messages, scriptText, workerCb, openPanel, sessionStore, gestureMode]) // eslint-disable-line react-hooks/exhaustive-deps
 
-      // Build visual prompt from block's ГРАФИКА line
-      const graphicLine = block.text.split("\n").find((l) => /ГРАФИКА:|GRAPHIC:/i.test(l))
-      const visualDesc = graphicLine?.replace(/^ГРАФИКА:\s*|^GRAPHIC:\s*/i, "").trim() || block.title
-      const prompt = `Cinematic frame: ${visualDesc}. Film quality, dramatic lighting, widescreen 3:2 aspect ratio.`
-
-      // Open generator panel
-      openPanel("generator")
-      setGeneratePrompt(prompt)
-      setThinking(false)
-      setIsStreaming(false)
-      setMessages((prev) => [...prev, {
-        id: `a-${Date.now()}`,
-        role: "assistant",
-        text: `Генерирую кадр для "${block.title}"...`,
-      }])
+  // ── Gesture zoom for script panel (open palm) ──
+  useEffect(() => {
+    if (!gestureMode || !hand.detected || !cameraReady || !scriptPanelVisible || gestureTestOpen || drawerOpen) {
+      palmZoomRef.current.active = false
       return
     }
-
-    // ── Block edit mode: edit one block instead of full rewrite ──
-    if (isEditRequest(text)) {
-      const blocks = parseScriptBlocks(scriptText)
-      const blockIdx = findRelevantBlock(blocks, text)
-
-      if (blockIdx >= 0 && blocks[blockIdx]) {
-        const block = blocks[blockIdx]
-        setStreamingText(`Редактирую блок "${block.title}"...`)
-
-        try {
-          abortRef.current = new AbortController()
-          const res = await fetch("/api/chat", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              messages: [{ role: "user", content: `Edit this script block:\n\n${block.text}\n\nInstruction: ${text}` }],
-              system: EDIT_SYSTEM_PROMPT,
-              modelId: "claude-sonnet-4-20250514",
-              temperature: 0.5,
-            }),
-            signal: abortRef.current.signal,
-          })
-
-          if (!res.ok) throw new Error(`HTTP ${res.status}`)
-          const reader = res.body?.getReader()
-          if (!reader) throw new Error("No reader")
-
-          const decoder = new TextDecoder()
-          let edited = ""
-          setThinking(false)
-
-          while (true) {
-            const { done, value } = await reader.read()
-            if (done) break
-            edited += decoder.decode(value, { stream: true })
-            // Live preview: replace block in real time
-            setScriptText(replaceBlock(scriptText, blockIdx, edited))
-          }
-
-          setScriptText(replaceBlock(scriptText, blockIdx, edited))
-          setStreamingText("")
-          setMessages((prev) => [...prev, { id: `a-${Date.now()}`, role: "assistant", text: `Блок "${block.title}" обновлён` }])
-        } catch (e) {
-          if ((e as Error).name !== "AbortError") {
-            setMessages((prev) => [...prev, { id: `e-${Date.now()}`, role: "assistant", text: `Ошибка: ${(e as Error).message}` }])
-          }
-        } finally {
-          setStreamingText("")
-          setStreamingScript("")
-          setIsStreaming(false)
-          setThinking(false)
-          abortRef.current = null
-        }
-        return
-      }
-      // If can't find which block — ask user
-      if (blockIdx < 0) {
-        const blockList = blocks.map((b, i) => `${i + 1}. ${b.title}`).join("\n")
-        setThinking(false)
-        setStreamingText("")
-        setMessages((prev) => [...prev, {
-          id: `a-${Date.now()}`,
-          role: "assistant",
-          text: `Какой блок изменить?\n\n${blockList}`,
-        }])
-        setIsStreaming(false)
-        return
-      }
-    }
-
-    // ── Normal chat / full script write ──
-    const chatHistory = messages.slice(-10).map((m) => ({
-      role: m.role as "user" | "assistant",
-      content: m.text,
-    }))
-    chatHistory.push({ role: "user", content: text.trim() })
-
-    try {
-      abortRef.current = new AbortController()
-      const res = await fetch("/api/chat", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          messages: chatHistory,
-          system: SYSTEM_PROMPT,
-          modelId: "claude-sonnet-4-20250514",
-          temperature: 0.7,
-        }),
-        signal: abortRef.current.signal,
-      })
-
-      if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      const reader = res.body?.getReader()
-      if (!reader) throw new Error("No reader")
-
-      const decoder = new TextDecoder()
-      let accumulated = ""
-      let isScriptMode = false
-      setThinking(false)
-
-      while (true) {
-        const { done, value } = await reader.read()
-        if (done) break
-        accumulated += decoder.decode(value, { stream: true })
-
-        const looksLikeScript = /^\[.+\]/m.test(accumulated) && /ГОЛОС:|ТИТР:|ГРАФИКА:|МУЗЫКА:|VOICE:|INT\.|EXT\./m.test(accumulated)
-
-        if (looksLikeScript && !isScriptMode) {
-          isScriptMode = true
-          openPanel("script")
-          setStreamingText("Пишу сценарий...")
-        }
-
-        if (isScriptMode) {
-          setStreamingScript(accumulated)
-        } else {
-          setStreamingText(accumulated)
-        }
-      }
-
-      if (isScriptMode) {
-        setScriptText(accumulated)
-        setMessages((prev) => [...prev, { id: `a-${Date.now()}`, role: "assistant", text: "Сценарий готов — смотри в панели Script" }])
+    const pm = palmZoomRef.current
+    if (hand.gesture === "open_palm") {
+      if (!pm.active) {
+        pm.active = true
+        pm.startY = hand.y
+        pm.startScale = scriptZoom
       } else {
-        setMessages((prev) => [...prev, { id: `a-${Date.now()}`, role: "assistant", text: accumulated }])
+        const dy = pm.startY - hand.y
+        setScriptZoom(Math.max(0.8, Math.min(1.4, pm.startScale + dy * 6)))
       }
-    } catch (e) {
-      if ((e as Error).name !== "AbortError") {
-        setMessages((prev) => [...prev, { id: `e-${Date.now()}`, role: "assistant", text: `Ошибка: ${(e as Error).message}` }])
-      }
-    } finally {
-      setStreamingText("")
-      setStreamingScript("")
-      setIsStreaming(false)
-      setThinking(false)
-      abortRef.current = null
+    } else {
+      pm.active = false
     }
-  }, [isStreaming, messages])
+    if (hand.gesture === "fist") {
+      setScriptZoom(1)
+    }
+  }, [hand, gestureMode, cameraReady, scriptPanelVisible, gestureTestOpen, drawerOpen, scriptZoom])
+
+  // ── Two fingers: vertical = scroll, horizontal = switch panels ──
+  const twoFingerRef = useRef<{ active: boolean; startX: number; startY: number; switched: boolean }>({ active: false, startX: 0, startY: 0, switched: false })
+  useEffect(() => {
+    if (!gestureMode || !hand.detected || !cameraReady || gestureTestOpen) {
+      twoFingerRef.current.active = false
+      return
+    }
+    const tf = twoFingerRef.current
+    if (hand.gesture === "two_fingers") {
+      if (!tf.active) {
+        tf.active = true
+        tf.startX = hand.x
+        tf.startY = hand.y
+        tf.switched = false
+      } else {
+        const dx = hand.x - tf.startX
+        const dy = hand.y - tf.startY
+
+        // Horizontal → switch panels (threshold 0.1)
+        if (!tf.switched && Math.abs(dx) > 0.1 && visiblePanels.length > 1) {
+          tf.switched = true
+          if (dx > 0) setActivePanelIdx(i => Math.max(0, i - 1))
+          else setActivePanelIdx(i => Math.min(visiblePanels.length - 1, i + 1))
+        }
+
+        // Vertical → scroll
+        if (!tf.switched && Math.abs(dy) > 0.008) {
+          const scrollAmount = (dy - Math.sign(dy) * 0.008) * 40
+          const target = scriptScrollRef.current || document.documentElement
+          target.scrollBy({ top: scrollAmount })
+          tf.startY = hand.y
+        }
+      }
+    } else {
+      tf.active = false
+    }
+  }, [hand, gestureMode, cameraReady, gestureTestOpen, visiblePanels.length])
+
+  // ── Arrow keys scroll script panel ──
+  useEffect(() => {
+    const h = (e: KeyboardEvent) => {
+      if (!scriptPanelVisible || !scriptScrollRef.current) return
+      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return
+      if (e.key === "ArrowDown") {
+        e.preventDefault()
+        scriptScrollRef.current.scrollBy({ top: 60, behavior: "smooth" })
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault()
+        scriptScrollRef.current.scrollBy({ top: -60, behavior: "smooth" })
+      }
+    }
+    window.addEventListener("keydown", h)
+    return () => window.removeEventListener("keydown", h)
+  }, [scriptPanelVisible])
 
   return (
     <div className="fixed inset-0 bg-[#0e0e0d]">
+      {/* Session name + active panel context */}
+      {mounted && session && (
+        <div className="absolute left-5 top-14 z-50 flex items-center gap-3">
+          <button
+            onClick={() => setDrawerOpen(true)}
+            className="group flex items-center gap-2 rounded-md px-2 py-1 -ml-2 transition-colors hover:bg-white/[0.04]"
+          >
+            <svg className="text-white/15 transition-colors group-hover:text-white/30" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5">
+              <path d="M2 4h12M2 8h12M2 12h12" />
+            </svg>
+            <span className="text-[10px] font-medium tracking-wider text-white/15 transition-colors group-hover:text-white/30">{session.name}</span>
+          </button>
+          {visiblePanels.length > 0 && (
+            <>
+              <span className="text-white/8">&middot;</span>
+              <span className="text-[10px] tracking-wider text-[#D4A853]/30">
+                {panelTitles[visiblePanels[visiblePanels.length - 1]]}
+              </span>
+            </>
+          )}
+        </div>
+      )}
+
+      {/* Session drawer */}
+      <SessionDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} gestureMode={gestureMode} onToggleGesture={() => setGestureMode(g => !g)} hand={hand} cameraReady={cameraReady} />
+
+
       {/* Ambient depth */}
       <div className="pointer-events-none absolute inset-0" style={{
         background: "radial-gradient(ellipse 70% 60% at 50% 50%, rgba(40,36,30,1) 0%, rgba(18,17,15,1) 60%, rgba(10,10,9,1) 100%)",
@@ -396,7 +348,7 @@ export default function PiecePage() {
           }}
         >
           {/* User's request */}
-          {lastUserText && (
+          {mounted && lastUserText && (
             <p
               className="text-[13px] italic text-white/20 transition-all duration-500"
               style={{ textAlign: hasLeftPanel ? "left" : "center" }}
@@ -415,7 +367,7 @@ export default function PiecePage() {
           )}
 
           {/* Assistant response */}
-          {displayLines.length > 0 && !thinking ? (
+          {mounted && displayLines.length > 0 && !thinking ? (
             <div className="space-y-5">
               {displayLines.map((line) => {
                 const cleanText = line.text.replace(/^\d+[\.\)]\s*/, "")
@@ -470,7 +422,7 @@ export default function PiecePage() {
                 )
               })}
             </div>
-          ) : !thinking && messages.length === 0 ? (
+          ) : !thinking && (!mounted || messages.length === 0) ? (
             <p
               className="text-[22px] font-light tracking-wide"
               style={{ color: "rgba(232,228,220,0.10)", textAlign: hasLeftPanel ? "left" : "center" }}
@@ -489,13 +441,28 @@ export default function PiecePage() {
           title={panelTitles[pid]}
           order={i}
           total={visiblePanels.length}
-          active={i === visiblePanels.length - 1}
+          active={i === activePanelIdx}
         >
           {pid === "script" && (
             <div className="flex h-full flex-col p-4">
-              <pre className="flex-1 overflow-auto whitespace-pre-wrap text-[13px] leading-6 text-white/70" style={{ fontFamily: "'Courier New', monospace" }}>
+              <pre
+                ref={scriptScrollRef}
+                className="flex-1 overflow-auto whitespace-pre-wrap text-white/70"
+                style={{
+                  fontFamily: "'Courier New', monospace",
+                  fontSize: `${13 * scriptZoom}px`,
+                  lineHeight: `${24 * scriptZoom}px`,
+                  transition: "font-size 0.3s, line-height 0.3s",
+                  transformOrigin: "top left",
+                }}
+              >
                 {scriptText || "Сценарий появится здесь..."}
               </pre>
+              {scriptZoom !== 1 && (
+                <div className="absolute bottom-2 right-2 rounded-md bg-black/40 px-2 py-0.5 text-[10px] text-white/30 backdrop-blur-sm">
+                  {Math.round(scriptZoom * 100)}%
+                </div>
+              )}
             </div>
           )}
           {pid === "timeline" && (
@@ -519,7 +486,39 @@ export default function PiecePage() {
       ))}
 
       {/* Command bar */}
-      <CommandBar onChat={handleChat} />
+      <CommandBar
+        onSubmit={handleSubmit}
+        sessionsOpen={drawerOpen}
+        onSessionCommand={(text) => {
+          const handler = (window as any).__sessionCommand
+          if (handler) handler(text)
+        }}
+        gestureMode={gestureMode}
+        onToggleGesture={() => setGestureMode(g => !g)}
+        classifying={classifying}
+      />
+
+      {/* Gesture test overlay */}
+      <GestureTestOverlay
+        open={gestureTestOpen}
+        onClose={() => setGestureTestOpen(false)}
+        hand={hand}
+        cameraReady={cameraReady}
+      />
+
+      {/* Minority Report photo search */}
+      <PhotoSearch3D
+        open={photoSearchOpen}
+        onClose={() => setPhotoSearchOpen(false)}
+        onSelect={(photo) => {
+          setPhotoSearchOpen(false)
+          addMessage({ id: `a-${Date.now()}`, role: "assistant", text: `Выбрано фото: ${photo.alt} (${photo.photographer})` })
+        }}
+        hand={hand}
+        cameraReady={cameraReady}
+        gestureMode={gestureMode}
+        initialQuery={photoSearchQuery}
+      />
     </div>
   )
 }

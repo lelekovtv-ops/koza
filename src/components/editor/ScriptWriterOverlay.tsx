@@ -2,6 +2,9 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Upload } from "lucide-react"
+import { ScreenplayCommandBar, CommandBarTrigger } from "@/components/editor/screenplay/ScreenplayCommandBar"
+import { useScreenplaySettings } from "@/store/screenplaySettings"
+import { AmbientFocusMode } from "@/components/editor/screenplay/AmbientFocusMode"
 import { useAutosave } from "@/hooks/useAutosave"
 import SlateScreenplayEditor from "@/components/editor/SlateScreenplayEditor"
 import {
@@ -23,7 +26,7 @@ import {
   undoSnapshot,
 } from "@/components/editor/screenplay/screenplayUndo"
 import { useScriptStore } from "@/store/script"
-import { useSceneSync } from "@/hooks/useSceneSync"
+import { useSyncOrchestrator } from "@/hooks/useSyncOrchestrator"
 
 type EditorType = "new" | "upload" | null
 type OverlayPhase = "hidden" | "opening" | "open" | "closing"
@@ -68,8 +71,8 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
   const PAGE_TOP = 60
   const PAGE_ZOOM = SCREENPLAY_OVERLAY_PAGE_ZOOM
 
-  // Sync scene headings → timeline shots
-  useSceneSync()
+  // Bidirectional sync: screenplay ↔ scenes ↔ timeline ↔ voice
+  useSyncOrchestrator()
 
   // Scaled dimensions for layout calculations
   const SCALED_PAGE_WIDTH = Math.round(PAGE_WIDTH * PAGE_ZOOM)
@@ -129,6 +132,20 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
     }
   }, [])
 
+  // Cmd+F → toggle Focus Mode (override browser find)
+  const isFocusMode = useScreenplaySettings((s) => s.focusMode)
+  const toggleFocusMode = useScreenplaySettings((s) => s.toggleFocusMode)
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === "f" && !e.shiftKey) {
+        e.preventDefault()
+        toggleFocusMode()
+      }
+    }
+    window.addEventListener("keydown", handler, true)
+    return () => window.removeEventListener("keydown", handler, true)
+  }, [toggleFocusMode])
+
   const handleUploadFile = useCallback(async (file: File) => {
     try {
       const text = await file.text()
@@ -165,18 +182,36 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
 
     try {
       const startedAt = Date.now()
-      const minVisualDurationMs = 3000
+      const isGrammarFix = payload.action === "fix_grammar"
+      const minVisualDurationMs = isGrammarFix ? 800 : 3000
       const liveScenario = useScriptStore.getState().scenario
       const liveBlocksBefore = useScriptStore.getState().blocks
 
-      const liveRange = resolveSelectionRange(
-        liveScenario,
-        payload.selectionStart,
-        payload.selectionEnd,
-        payload.selectedText
-      )
-      const rippleStart = liveRange?.start ?? Math.max(0, payload.selectionStart)
-      const rippleEnd = liveRange?.end ?? Math.max(rippleStart + 1, payload.selectionEnd)
+      // For block-mode (Shift+Enter), find the block's position in the exported scenario
+      let rippleStart: number
+      let rippleEnd: number
+
+      if (payload.targetMode === "block" && payload.blockId) {
+        // Calculate accurate position by finding the block text in the exported scenario
+        const blockText = payload.selectedText.trim()
+        const idx = liveScenario.indexOf(blockText)
+        if (idx >= 0) {
+          rippleStart = idx
+          rippleEnd = idx + blockText.length
+        } else {
+          rippleStart = Math.max(0, payload.selectionStart)
+          rippleEnd = Math.max(rippleStart + 1, payload.selectionEnd)
+        }
+      } else {
+        const liveRange = resolveSelectionRange(
+          liveScenario,
+          payload.selectionStart,
+          payload.selectionEnd,
+          payload.selectedText
+        )
+        rippleStart = liveRange?.start ?? Math.max(0, payload.selectionStart)
+        rippleEnd = liveRange?.end ?? Math.max(rippleStart + 1, payload.selectionEnd)
+      }
 
       setAiRippleRange({
         start: rippleStart,
@@ -298,7 +333,17 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
   }, [])
 
   useEffect(() => {
-    if (!active || !initialRect) return
+    if (!active) return
+
+    // No initialRect = direct open (from ProjectsScreen), skip animation
+    if (!initialRect) {
+      setPhase("open")
+      setBackdropVisible(true)
+      setOpenMotionStarted(true)
+      setFloatingFromRect(null)
+      return
+    }
+
     setPhase("opening")
     setFloatingFromRect(initialRect)
     setOpenMotionStarted(false)
@@ -448,12 +493,16 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
         pointerEvents: phase === "hidden" ? "none" : "auto",
       }}
     >
+      {/* Ambient focus mode — background layer */}
+      <AmbientFocusMode />
+
       <div
-        className="fixed inset-0 z-1 backdrop-blur-sm"
+        className={`fixed inset-0 z-1 ${isFocusMode ? "" : "backdrop-blur-sm"}`}
         style={{
-          backgroundColor: OVERLAY_BG,
+          backgroundColor: isFocusMode ? "transparent" : OVERLAY_BG,
           opacity: isBackdropVisible ? 1 : 0,
           transition: "opacity 500ms ease",
+          pointerEvents: isFocusMode ? "none" : "auto",
         }}
       />
 
@@ -486,7 +535,7 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
                   >
                     <div
                       ref={openSheetRef}
-                      className="relative rounded-[3px] border border-[#E5E0DB] bg-white shadow-[0_8px_60px_rgba(0,0,0,0.4)]"
+                      className={`relative rounded-[3px] ${isFocusMode ? "border-none bg-transparent shadow-none" : "border border-[#E5E0DB] bg-white shadow-[0_8px_60px_rgba(0,0,0,0.4)]"}`}
                       style={{
                         width: PAGE_WIDTH,
                         minHeight: PAGE_HEIGHT,
@@ -631,6 +680,7 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
 
                           <SlateScreenplayEditor
                             embedded
+                            focusMode={isFocusMode}
                             ref={screenplayEditorRef}
                             aiRippleRange={aiRippleRange}
                             onSelectionAction={handleSelectionAction}
@@ -657,6 +707,10 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
           {aiStatus}
         </div>
       )}
+
+      {!isFocusMode && <CommandBarTrigger />}
+      <ScreenplayCommandBar />
+      {!isFocusMode && <KeyboardHints />}
 
       {aiError && !aiLoading && (
         <button
@@ -693,5 +747,144 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
         />
       )}
     </div>
+  )
+}
+
+interface HintItem {
+  keys: string
+  desc: string
+  action?: () => void
+}
+
+function KeyboardHints() {
+  const [open, setOpen] = useState(false)
+  const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
+  const settings = useScreenplaySettings()
+
+  const sendKey = useCallback((key: string, opts?: { shift?: boolean; meta?: boolean }) => {
+    setOpen(false)
+    setTimeout(() => {
+      const el = document.querySelector(".slate-screenplay-editor") as HTMLElement | null
+      if (!el) return
+      el.focus()
+      el.dispatchEvent(new KeyboardEvent("keydown", {
+        key, code: `Key${key.toUpperCase()}`,
+        shiftKey: opts?.shift ?? false,
+        metaKey: opts?.meta ?? false,
+        ctrlKey: false,
+        bubbles: true, cancelable: true,
+      }))
+    }, 50)
+  }, [])
+
+  const hints: HintItem[] = useMemo(() => [
+    { keys: "Shift ↵", desc: "AI fix", action: () => sendKey("Enter", { shift: true }) },
+    { keys: "⌘ /", desc: "Commands", action: () => { settings.setCommandBarOpen(true); setOpen(false) } },
+    { keys: "Tab", desc: "Cycle type", action: () => sendKey("Tab") },
+    { keys: "⌘ B", desc: "Bold", action: () => sendKey("b", { meta: true }) },
+    { keys: "⌘ I", desc: "Italic", action: () => sendKey("i", { meta: true }) },
+    { keys: "⌘⇧ I", desc: "INT.", action: () => sendKey("i", { meta: true, shift: true }) },
+    { keys: "⌘⇧ E", desc: "EXT.", action: () => sendKey("e", { meta: true, shift: true }) },
+    { keys: "⌘⇧ C", desc: "Character", action: () => sendKey("c", { meta: true, shift: true }) },
+    { keys: "⌘⇧ T", desc: "Transition", action: () => sendKey("t", { meta: true, shift: true }) },
+    { keys: "(", desc: "Parenthetical", action: () => sendKey("(") },
+    { keys: "─", desc: "─────────" },
+    { keys: "⌘ F", desc: "Focus Mode", action: () => { settings.toggleFocusMode(); setOpen(false) } },
+    { keys: "◯", desc: settings.bibleMarkers ? "Hide markers" : "Show markers", action: () => { settings.toggleBibleMarkers(); setOpen(false) } },
+    { keys: "♪", desc: settings.typewriterSound ? "Sound off" : "Sound on", action: () => { settings.toggleTypewriterSound(); setOpen(false) } },
+  ], [settings, sendKey])
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title="Keyboard shortcuts"
+        style={{
+          position: "fixed",
+          left: 18,
+          top: 72,
+          zIndex: 200,
+          width: 32,
+          height: 32,
+          borderRadius: "50%",
+          border: open ? "1px solid rgba(212, 168, 83, 0.3)" : "1px solid rgba(255,255,255,0.08)",
+          background: open ? "rgba(212, 168, 83, 0.12)" : "rgba(255,255,255,0.05)",
+          color: open ? "#D4A853" : "rgba(255,255,255,0.35)",
+          fontSize: 15,
+          fontWeight: 700,
+          fontFamily: "system-ui, sans-serif",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          transition: "all 0.2s",
+        }}
+      >
+        ?
+      </button>
+
+      {open && (
+        <div
+          style={{
+            position: "fixed",
+            left: 14,
+            top: 114,
+            zIndex: 200,
+            userSelect: "none",
+            fontFamily: "system-ui, sans-serif",
+            display: "flex",
+            flexDirection: "column",
+            gap: 10,
+          }}
+        >
+          {hints.map(({ keys, desc, action }, i) => {
+            const isSeparator = keys === "─"
+            if (isSeparator) {
+              return <div key={i} style={{ height: 1, width: 120, background: "rgba(255,255,255,0.06)", margin: "2px 0" }} />
+            }
+            const isHovered = hoveredIdx === i
+            return (
+              <div
+                key={keys + desc}
+                onMouseEnter={() => setHoveredIdx(i)}
+                onMouseLeave={() => setHoveredIdx(null)}
+                onClick={action}
+                style={{
+                  display: "flex",
+                  alignItems: "baseline",
+                  gap: 7,
+                  cursor: action ? "pointer" : "default",
+                  padding: "2px 4px",
+                  marginLeft: -4,
+                  borderRadius: 4,
+                  background: isHovered && action ? "rgba(212, 168, 83, 0.1)" : "transparent",
+                  transition: "background 0.15s",
+                }}
+              >
+                <span style={{
+                  fontSize: 11,
+                  fontWeight: 600,
+                  color: isHovered && action ? "rgba(212, 168, 83, 0.7)" : "rgba(255,255,255,0.3)",
+                  whiteSpace: "nowrap",
+                  minWidth: 56,
+                  textAlign: "right",
+                  transition: "color 0.15s",
+                }}>
+                  {keys}
+                </span>
+                <span style={{
+                  fontSize: 11,
+                  color: isHovered && action ? "rgba(212, 168, 83, 0.5)" : "rgba(255,255,255,0.18)",
+                  transition: "color 0.15s",
+                }}>
+                  {desc}
+                </span>
+              </div>
+            )
+          })}
+        </div>
+      )}
+    </>
   )
 }

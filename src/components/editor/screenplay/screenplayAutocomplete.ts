@@ -28,6 +28,12 @@ export interface ScreenplayAutocompleteModel {
   items: string[]
 }
 
+/** External Bible data for enriched autocomplete */
+export interface BibleAutocompleteData {
+  characterNames: string[]
+  locationNames: string[]
+}
+
 function getSceneSeparator(text: string): " — " | " - " | null {
   const emIndex = text.lastIndexOf(" — ")
   const hyphenIndex = text.lastIndexOf(" - ")
@@ -36,9 +42,10 @@ function getSceneSeparator(text: string): " — " | " - " | null {
   return emIndex > hyphenIndex ? " — " : " - "
 }
 
-function getKnownCharacterNames(editor: Editor, currentIndex: number): string[] {
+function getKnownCharacterNames(editor: Editor, currentIndex: number, bible?: BibleAutocompleteData): string[] {
   const names = new Set<string>()
 
+  // From screenplay blocks
   editor.children.forEach((node, index) => {
     if (!SlateElement.isElement(node)) return
     const el = node as ScreenplayElement
@@ -48,16 +55,26 @@ function getKnownCharacterNames(editor: Editor, currentIndex: number): string[] 
       .trim()
       .toUpperCase()
       .replace(/\s*\((V\.?O\.?|O\.?S\.?|CONT'?D)\)\s*$/i, "")
+      .replace(/\s*\(\d+(?:\s*(?:лет|years?|г\.?))?\)\s*$/i, "")
 
     if (candidate.length > 1) names.add(candidate)
   })
 
+  // From Bible store
+  if (bible?.characterNames) {
+    for (const name of bible.characterNames) {
+      const upper = name.toUpperCase()
+      if (upper.length > 1) names.add(upper)
+    }
+  }
+
   return Array.from(names).sort()
 }
 
-function getKnownLocations(editor: Editor, currentIndex: number): string[] {
+function getKnownLocations(editor: Editor, currentIndex: number, bible?: BibleAutocompleteData): string[] {
   const locations = new Set<string>()
 
+  // From screenplay blocks
   editor.children.forEach((node, index) => {
     if (!SlateElement.isElement(node)) return
     const el = node as ScreenplayElement
@@ -80,10 +97,18 @@ function getKnownLocations(editor: Editor, currentIndex: number): string[] {
     if (location) locations.add(location)
   })
 
+  // From Bible store
+  if (bible?.locationNames) {
+    for (const name of bible.locationNames) {
+      const upper = name.toUpperCase()
+      if (upper.length > 1) locations.add(upper)
+    }
+  }
+
   return Array.from(locations).sort()
 }
 
-export function computeAutocompleteModel(editor: Editor): ScreenplayAutocompleteModel | null {
+export function computeAutocompleteModel(editor: Editor, bible?: BibleAutocompleteData): ScreenplayAutocompleteModel | null {
   const { selection } = editor
   if (!selection || !Range.isCollapsed(selection)) return null
 
@@ -99,7 +124,7 @@ export function computeAutocompleteModel(editor: Editor): ScreenplayAutocomplete
   if (el.type === "character") {
     const partial = text.trim()
     if (!partial) return null
-    const items = getKnownCharacterNames(editor, blockIndex).filter(
+    const items = getKnownCharacterNames(editor, blockIndex, bible).filter(
       (name) => name.startsWith(partial) && name !== partial
     )
     return items.length ? { kind: "character", items: items.slice(0, 8) } : null
@@ -124,7 +149,7 @@ export function computeAutocompleteModel(editor: Editor): ScreenplayAutocomplete
 
   const partialLocation = afterPrefix
   if (!partialLocation) return null
-  const items = getKnownLocations(editor, blockIndex).filter(
+  const items = getKnownLocations(editor, blockIndex, bible).filter(
     (location) => location.startsWith(partialLocation) && location !== partialLocation
   )
 
