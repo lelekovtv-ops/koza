@@ -330,16 +330,12 @@ export function ScriptViewer({ onSceneClick, selectedSceneId, fontSize }: Script
 
               return (
                 <div key={block.id}>
+                  {/* Scene marker — subtle left border, no duplicate text */}
                   {scene ? (
-                    <button
-                      type="button"
+                    <div
+                      className="mt-6 mb-1 cursor-pointer"
                       onClick={() => onSceneClick(scene.id)}
-                      className={`mb-3 flex w-full items-center gap-3 border-l-2 pl-3 text-left text-[0.8em] font-semibold uppercase tracking-[0.18em] text-[#D4A853] transition-colors hover:text-[#E8C98A] ${isSelectedScene ? "bg-white/5" : "bg-transparent"}`}
-                      style={{ borderLeftColor: isSelectedScene ? scene.color : "transparent" }}
-                    >
-                      <span>● SCENE {scene.index}</span>
-                      <span className="truncate text-[#E5E0DB]">{scene.title}</span>
-                    </button>
+                    />
                   ) : null}
 
                   <div

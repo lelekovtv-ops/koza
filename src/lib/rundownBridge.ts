@@ -15,7 +15,7 @@ import { getEffectiveDuration } from "./durationEngine"
  * Convert a RundownEntry to a TimelineShot-compatible object.
  * Used by StoryboardPanel, DirectorShotCard, and other legacy consumers.
  */
-export function entryToTimelineShot(entry: RundownEntry, order: number): TimelineShot {
+export function entryToTimelineShot(entry: RundownEntry, order: number, sceneId?: string | null): TimelineShot {
   return {
     id: entry.id,
     order,
@@ -27,7 +27,7 @@ export function entryToTimelineShot(entry: RundownEntry, order: number): Timelin
     originalBlobKey: entry.visual?.originalBlobKey ?? null,
     generationHistory: entry.generationHistory,
     activeHistoryIndex: entry.activeHistoryIndex,
-    sceneId: null,
+    sceneId: sceneId ?? null,
     label: entry.label,
     notes: "",
     shotSize: entry.shotSize,
@@ -85,9 +85,27 @@ export function timelinePatchToEntryPatch(
 
 /**
  * Convert RundownEntry[] to TimelineShot[] for legacy consumers.
+ * Pass scenes to resolve sceneId for each entry via parentBlockId.
  */
-export function entriesToTimelineShots(entries: RundownEntry[]): TimelineShot[] {
+export function entriesToTimelineShots(
+  entries: RundownEntry[],
+  scenes?: { id: string; blockIds: string[] }[],
+): TimelineShot[] {
+  // Build blockId → sceneId lookup
+  const blockToScene = new Map<string, string>()
+  if (scenes) {
+    for (const scene of scenes) {
+      for (const bid of scene.blockIds) {
+        blockToScene.set(bid, scene.id)
+      }
+    }
+  }
+
   return entries
     .filter((e) => e.entryType !== "heading")
-    .map((entry, index) => entryToTimelineShot(entry, index))
+    .map((entry, index) => entryToTimelineShot(
+      entry,
+      index,
+      blockToScene.get(entry.parentBlockId) ?? null,
+    ))
 }

@@ -166,6 +166,21 @@ export function StoryboardPanel({
   const bibleProps = useBibleStore((state) => state.props)
   const updateDirectorVision = useBibleStore((state) => state.updateDirectorVision)
   const [bibleBubbleSceneId, setBibleBubbleSceneId] = useState<string | null>(null)
+
+  // ── Shared: navigate to a shot (selects scene, shot, scrolls script, seeks timeline) ──
+  const navigateToShot = useCallback((shot: TimelineShot) => {
+    if (shot.sceneId) selectScene(shot.sceneId)
+    selectShot(shot.id)
+    if (shot.parentBlockId) {
+      requestScrollToBlock(shot.parentBlockId)
+    }
+    const idx = shots.findIndex((s) => s.id === shot.id)
+    if (idx >= 0) {
+      const startMs = shots.slice(0, idx).reduce((sum, s) => sum + s.duration, 0)
+      useTimelineStore.getState().seekTo(startMs)
+    }
+  }, [shots, selectScene, selectShot, requestScrollToBlock])
+
   const cardScale = 90
   // Sort shots by scene order then by shot order within scene
   const sortedShots = useMemo(() => {
@@ -1622,10 +1637,7 @@ ${shotText}
                         bibleLocs={locations.filter((l) => l.sceneIds.includes(scene.id))}
                         bibleProps={bibleProps.filter((p) => p.sceneIds.includes(scene.id))}
                         cardRef={bindDirectorShotCardRef(shot.id)}
-                        onSelect={() => {
-                          selectScene(scene.id)
-                          selectShot(shot.id)
-                        }}
+                        onSelect={() => navigateToShot(shot)}
                         onUpdate={(patch) => handleDirectorShotUpdate(shot.id, patch)}
                         onEnhance={() => void handleEnhanceDirectorShot(shot)}
                         onBuild={() => void handleBuildShotPrompt(shot)}
@@ -1942,7 +1954,7 @@ ${shotText}
                   className="grid min-h-full"
                   style={{
                     gap: cardGap,
-                    gridTemplateColumns: "minmax(0, 1fr)",
+                    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
                     alignContent: "start",
                     transition: "gap 240ms ease, grid-template-columns 240ms ease",
                   }}
@@ -1982,7 +1994,7 @@ ${shotText}
                           <div
                             className="relative overflow-hidden rounded-[10px] border border-white/8 bg-[#0E1014] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
                             style={{ aspectRatio: "16 / 8.7" }}
-                            onClick={() => { if (shot) { selectShot(shot.id); if (shot.sceneId) selectScene(shot.sceneId) } }}
+                            onClick={() => { if (shot) navigateToShot(shot) }}
                             onDoubleClick={() => { if (previewSrc && shot) { setLightbox({ src: previewSrc, shotId: shot.id }); setLightboxTransform({ flipH: false, flipV: false, rotate: 0 }) } }}
                           >
                             {previewSrc ? (
@@ -2332,6 +2344,7 @@ ${shotText}
                     <div
                       className="relative overflow-hidden rounded-[10px] border border-white/8 bg-[#0E1014] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
                       style={{ aspectRatio: "16 / 8.7" }}
+                      onClick={() => { if (shot) navigateToShot(shot) }}
                       onDoubleClick={() => { if (previewSrc && shot) { setLightbox({ src: previewSrc, shotId: shot.id }); setLightboxTransform({ flipH: false, flipV: false, rotate: 0 }) } }}
                     >
                       {previewSrc ? (

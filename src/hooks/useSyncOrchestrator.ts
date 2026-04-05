@@ -56,26 +56,16 @@ export function useSyncOrchestrator() {
     useRundownStore.getState().rebuildFromBlocks(blocks, scenes)
   }, [blocks, scenes])
 
-  // ── Project rundown entries → timeline shots (for backward compat) ──
-  // Only ADD missing shots. Never replace existing shots that may have visual data.
-  const hasInitializedRef = useRef(false)
-
+  // ── Project rundown entries → timeline shots (always merge, preserve visuals) ──
+  // Debounce on mount to let timeline store restore blob URLs from IndexedDB first
   useEffect(() => {
     if (rundownEntries.length === 0) return
 
+    const timer = window.setTimeout(() => {
+    const projectedShots = entriesToTimelineShots(rundownEntries, scenes)
     const existing = useTimelineStore.getState().shots
 
-    // On first run (page load): don't overwrite — timeline store restores blobs itself.
-    // Only sync structure: add shots for new blocks, remove for deleted blocks.
-    if (!hasInitializedRef.current) {
-      hasInitializedRef.current = true
-      // If timeline already has shots, trust them (they have restored blob URLs)
-      if (existing.length > 0) return
-    }
-
-    const projectedShots = entriesToTimelineShots(rundownEntries)
-
-    // Build lookup from existing shots by parentBlockId
+    // Build lookup from existing shots by parentBlockId AND id
     const byBlockId = new Map<string, typeof existing[0]>()
     for (const s of existing) {
       if (s.parentBlockId) byBlockId.set(s.parentBlockId, s)
@@ -89,24 +79,37 @@ export function useSyncOrchestrator() {
         ?? byBlockId.get(projected.blockRange?.[0] ?? "")
 
       if (ex) {
-        // Keep ALL visual/user data from existing shot, only update structural fields
+        // Merge: structural fields from projected, visual data from existing
         return {
-          ...ex,
-          order: projected.order,
-          label: projected.label || ex.label,
+          ...projected,
+          // Preserve visual data (blob URLs restored by timeline store)
+          thumbnailUrl: ex.thumbnailUrl || projected.thumbnailUrl,
+          originalUrl: ex.originalUrl || projected.originalUrl,
+          thumbnailBlobKey: ex.thumbnailBlobKey || projected.thumbnailBlobKey,
+          originalBlobKey: ex.originalBlobKey || projected.originalBlobKey,
+          generationHistory: ex.generationHistory.length > 0 ? ex.generationHistory : projected.generationHistory,
+          activeHistoryIndex: ex.activeHistoryIndex ?? projected.activeHistoryIndex,
+          // Preserve user-edited fields
+          imagePrompt: ex.imagePrompt || projected.imagePrompt,
+          videoPrompt: ex.videoPrompt || projected.videoPrompt,
+          directorNote: ex.directorNote || projected.directorNote,
+          cameraNote: ex.cameraNote || projected.cameraNote,
+          shotSize: ex.shotSize || projected.shotSize,
+          cameraMotion: ex.cameraMotion || projected.cameraMotion,
           caption: ex.caption || projected.caption,
-          sourceText: projected.sourceText || ex.sourceText,
-          duration: ex.duration || projected.duration,
-          blockRange: projected.blockRange,
-          parentBlockId: projected.parentBlockId,
-          autoSynced: projected.autoSynced,
+          customReferenceUrls: ex.customReferenceUrls,
+          excludedBibleIds: ex.excludedBibleIds,
+          bakedPrompt: ex.bakedPrompt,
         }
       }
       return projected
     })
 
     useTimelineStore.getState().reorderShots(merged, "screenplay")
-  }, [rundownEntries])
+    }, 500) // 500ms debounce to let blob restore finish
+
+    return () => window.clearTimeout(timer)
+  }, [rundownEntries, scenes])
 
   // ── Forward sync: blocks+scenes → bible (2s debounce) ──
   useEffect(() => {

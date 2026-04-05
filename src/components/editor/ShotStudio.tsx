@@ -1056,9 +1056,9 @@ export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onN
 
   const previewSrc = shot.thumbnailUrl
 
-  // Panel visibility class — hide everything in edit mode
+  // Panel visibility class — hide in edit mode, show on hover during playback
   const panelClass = (base: string) =>
-    `${base} transition-opacity duration-300 ${showUI && !editMode ? "opacity-100" : "opacity-0 pointer-events-none"}`
+    `${base} transition-opacity duration-300 ${editMode ? "opacity-0 pointer-events-none" : showUI ? "opacity-100" : "opacity-0 pointer-events-none hover:opacity-100 hover:pointer-events-auto"}`
 
   const hasTransform = xFlipH || xFlipV || xRotate !== 0
 
@@ -1112,6 +1112,16 @@ export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onN
             onLoad={handleImageLoad}
             onClick={samMode ? handleSAMClick : undefined}
           />
+          {/* ── Subtitles overlay — shown during playback ── */}
+          {playing && shot?.caption && (
+            <div className="absolute bottom-16 left-4 right-4 flex justify-center pointer-events-none z-20">
+              <div className="rounded-md bg-black/60 px-5 py-2 backdrop-blur-sm max-w-[75%]">
+                <p className="text-center text-[14px] leading-relaxed text-white/90 font-medium" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.8)" }}>
+                  {shot.caption}
+                </p>
+              </div>
+            </div>
+          )}
           {/* SAM mask overlay — exactly matches img because parent is inline-block and img is block */}
           {samOverlay && (
             <>
@@ -1221,7 +1231,7 @@ export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onN
                 })
               : rawRefs
             return (
-              <div className={`absolute inset-x-0 bottom-0 transition-opacity duration-300 ${showUI ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
+              <div className={`absolute inset-x-0 bottom-0 transition-opacity duration-300 ${showUI || !playing ? "opacity-100" : "opacity-0 hover:opacity-100"}`}>
                 <div className="group/prompt bg-gradient-to-t from-black/70 via-black/30 to-transparent px-8 pb-5 pt-12">
 
                   {/* ── Inline Reference Strip ── */}
@@ -1502,7 +1512,7 @@ export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onN
                     <div className="relative">
                       <p
                         onClick={() => { setPromptEditing(true); setPromptDraft(shot.imagePrompt || "") }}
-                        className="cursor-text font-[system-ui] text-[12px] leading-[1.6] tracking-wide text-white/25 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] transition-colors duration-300 group-hover/prompt:text-white/85"
+                        className="cursor-text font-[system-ui] text-[12px] leading-[1.6] tracking-wide text-white/60 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] transition-colors duration-300 group-hover/prompt:text-white/90"
                       >
                         {highlightPrompt(shot.imagePrompt || "Click to write prompt...")}
                       </p>
@@ -1559,9 +1569,9 @@ export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onN
         />
       )}
 
-      {/* ── Bottom: Player bar / Color Match bar ── */}
-      {!standalone && shotsWithImages.length > 1 && (
-        <div className={panelClass("absolute bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-xl border border-white/10 bg-black/70 px-3 py-2 backdrop-blur-xl")}>
+      {/* ── Bottom: Player bar / Color Match bar — always visible ── */}
+      {!standalone && shotsWithImages.length > 0 && (
+        <div className="absolute bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-xl border border-white/10 bg-black/70 px-3 py-2 backdrop-blur-xl transition-opacity duration-300">
           {colorMatchOpen ? (
             <>
               {/* Color match mode: neighbor thumbnails */}
