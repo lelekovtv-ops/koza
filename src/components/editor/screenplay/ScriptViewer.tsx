@@ -3,6 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useScenesStore } from "@/store/scenes"
 import { useScriptStore } from "@/store/script"
+import { useNavigationStore } from "@/store/navigation"
+import { useRundownStore } from "@/store/rundown"
+import { getEffectiveDuration } from "@/lib/durationEngine"
+import { getChildren } from "@/lib/rundownHierarchy"
 
 export type ScriptViewMode = "screenplay" | "rundown"
 
@@ -19,7 +23,26 @@ const ZOOM_DEBOUNCE_MS = 100
 
 export function ScriptViewer({ onSceneClick, selectedSceneId, fontSize }: ScriptViewerProps) {
   const blocks = useScriptStore((state) => state.blocks)
+  const scriptShots = useScriptStore((state) => state.shots)
   const scenes = useScenesStore((state) => state.scenes)
+  const rundownEntries = useRundownStore((state) => state.entries)
+
+  // Shot count per block for badges (prefer rundown entries, fallback to scriptStore shots)
+  const shotCountByBlock = useMemo(() => {
+    const counts = new Map<string, number>()
+    if (rundownEntries.length > 0) {
+      for (const entry of rundownEntries) {
+        if (entry.parentEntryId === null) {
+          counts.set(entry.parentBlockId, (counts.get(entry.parentBlockId) ?? 0) + 1)
+        }
+      }
+    } else {
+      for (const shot of scriptShots) {
+        counts.set(shot.parentBlockId, (counts.get(shot.parentBlockId) ?? 0) + 1)
+      }
+    }
+    return counts
+  }, [rundownEntries, scriptShots])
   const containerRef = useRef<HTMLDivElement>(null)
   const zoomTimerRef = useRef<number | null>(null)
   const [resolvedFontSize, setResolvedFontSize] = useState(fontSize)
@@ -37,6 +60,7 @@ export function ScriptViewer({ onSceneClick, selectedSceneId, fontSize }: Script
     }
   }, [])
 
+  // Scroll to selected scene
   useEffect(() => {
     if (!selectedSceneId) return
     const scene = scenes.find((entry) => entry.id === selectedSceneId)
@@ -45,6 +69,22 @@ export function ScriptViewer({ onSceneClick, selectedSceneId, fontSize }: Script
     const element = containerRef.current?.querySelector<HTMLElement>(`[data-block-id="${scene.headingBlockId}"]`)
     element?.scrollIntoView({ behavior: "smooth", block: "start" })
   }, [scenes, selectedSceneId])
+
+  // Scroll to specific block (from timeline playhead sync)
+  const scrollToBlockId = useNavigationStore((s) => s.scrollToBlockId)
+  const clearScrollRequest = useNavigationStore((s) => s.clearScrollRequest)
+  const [activeBlockId, setActiveBlockId] = useState<string | null>(null)
+
+  useEffect(() => {
+    if (!scrollToBlockId) return
+
+    setActiveBlockId(scrollToBlockId)
+    const el = containerRef.current?.querySelector<HTMLElement>(`[data-block-id="${scrollToBlockId}"]`)
+    if (el) {
+      el.scrollIntoView({ behavior: "smooth", block: "nearest" })
+    }
+    clearScrollRequest()
+  }, [scrollToBlockId, clearScrollRequest])
 
   const scheduleFontSize = useCallback((nextFontSize: number) => {
     if (zoomTimerRef.current !== null) {
@@ -219,7 +259,7 @@ export function ScriptViewer({ onSceneClick, selectedSceneId, fontSize }: Script
   return (
     <div className="relative h-full overflow-hidden bg-[#1A1816] text-[#E5E0DB]">
       {/* Top toolbar: mode switch + zoom */}
-      <div className="pointer-events-none absolute right-4 top-3 z-10 flex items-center gap-2">
+      <div className="pointer-events-none absolute left-4 top-3 z-10 flex items-center gap-2">
         <div className="pointer-events-auto flex items-center rounded-md border border-white/10 bg-[#1A1816]/90 backdrop-blur-sm">
           <button
             type="button"
@@ -303,9 +343,10 @@ export function ScriptViewer({ onSceneClick, selectedSceneId, fontSize }: Script
                   ) : null}
 
                   <div
-                    data-block-id={block.type === "scene_heading" ? block.id : undefined}
+                    data-block-id={block.id}
                     className={[
-                      "whitespace-pre-wrap",
+                      "whitespace-pre-wrap transition-colors duration-300",
+                      activeBlockId === block.id ? "bg-[#D4A853]/8 rounded -mx-2 px-2" : "",
                       block.type === "scene_heading" ? `${index > 0 ? "mt-6" : "mt-0"} font-bold uppercase tracking-[0.08em]` : "",
                       block.type === "action" ? "mt-2 text-[#E5E0DB]" : "",
                       block.type === "character" ? "mt-4 uppercase" : "",
@@ -326,6 +367,12 @@ export function ScriptViewer({ onSceneClick, selectedSceneId, fontSize }: Script
                     }}
                   >
                     {block.text}
+                    {/* Shot count badge */}
+                    {shotCountByBlock.has(block.id) && (
+                      <span className="ml-2 inline-flex items-center rounded-full bg-[#D4A853]/15 px-1.5 py-0 text-[8px] font-medium text-[#D4A853]/70 align-middle">
+                        {shotCountByBlock.get(block.id)} shot{(shotCountByBlock.get(block.id) ?? 0) !== 1 ? "s" : ""}
+                      </span>
+                    )}
                   </div>
                 </div>
               )
@@ -455,27 +502,62 @@ export function ScriptViewer({ onSceneClick, selectedSceneId, fontSize }: Script
                       </span>
                     </button>
 
-                    {/* Content lines — indented */}
+                    {/* Content lines — indented, with rundown entries + sub-shots */}
                     {isSelected && section.lines.length > 0 && (
                       <div className="ml-[88px] mr-[44px] mt-1 mb-2 space-y-1 border-l-2 border-white/6 pl-3">
-                        {section.lines.map((line, li) => (
-                          <div key={li} className="flex items-start gap-2 py-0.5">
-                            {line.label ? (
-                              <span
-                                className="shrink-0 mt-0.5 rounded px-1.5 py-0.5 text-[0.55em] font-bold uppercase tracking-wider"
-                                style={{
-                                  backgroundColor: `${RUNDOWN_COLORS[line.type] ?? "#888"}12`,
-                                  color: `${RUNDOWN_COLORS[line.type] ?? "#888"}99`,
-                                }}
-                              >
-                                {line.label}
-                              </span>
-                            ) : null}
-                            <span className={`text-[0.78em] leading-snug ${line.type === "action" ? "text-white/30 italic" : "text-white/50"}`}>
-                              {line.text}
-                            </span>
-                          </div>
-                        ))}
+                        {section.lines.map((line, li) => {
+                          // Find matching rundown entry for this line
+                          const matchingEntry = rundownEntries.find(
+                            (e) => e.caption === line.text && e.parentEntryId === null,
+                          )
+                          const subShots = matchingEntry
+                            ? getChildren(rundownEntries, matchingEntry.id)
+                            : []
+
+                          return (
+                            <div key={li}>
+                              <div className="flex items-start gap-2 py-0.5">
+                                {line.label ? (
+                                  <span
+                                    className="shrink-0 mt-0.5 rounded px-1.5 py-0.5 text-[0.55em] font-bold uppercase tracking-wider"
+                                    style={{
+                                      backgroundColor: `${RUNDOWN_COLORS[line.type] ?? "#888"}12`,
+                                      color: `${RUNDOWN_COLORS[line.type] ?? "#888"}99`,
+                                    }}
+                                  >
+                                    {line.label}
+                                  </span>
+                                ) : null}
+                                <span className={`text-[0.78em] leading-snug ${line.type === "action" ? "text-white/30 italic" : "text-white/50"}`}>
+                                  {line.text}
+                                </span>
+                                {matchingEntry && (
+                                  <span className="ml-auto shrink-0 font-mono text-[0.6em] text-white/15 tabular-nums">
+                                    {(getEffectiveDuration(matchingEntry) / 1000).toFixed(1)}s
+                                  </span>
+                                )}
+                              </div>
+                              {/* Sub-shots hierarchy */}
+                              {subShots.length > 0 && (
+                                <div className="ml-6 mt-0.5 mb-1 space-y-0.5 border-l border-[#D4A853]/15 pl-2">
+                                  {subShots.map((sub) => (
+                                    <div key={sub.id} className="flex items-center gap-2 py-0.5">
+                                      <span className="text-[0.55em] font-bold text-[#D4A853]/30 uppercase tracking-wider">
+                                        {sub.shotSize || `Shot ${sub.order + 1}`}
+                                      </span>
+                                      <span className="text-[0.7em] text-white/30 truncate">
+                                        {sub.caption}
+                                      </span>
+                                      <span className="ml-auto shrink-0 font-mono text-[0.6em] text-white/12 tabular-nums">
+                                        {(getEffectiveDuration(sub) / 1000).toFixed(1)}s
+                                      </span>
+                                    </div>
+                                  ))}
+                                </div>
+                              )}
+                            </div>
+                          )
+                        })}
                       </div>
                     )}
                   </div>

@@ -417,25 +417,11 @@ function DevConsoleContent() {
               Back
             </button>
             <Link
-              href="/dev/rundown"
-              className="inline-flex items-center gap-2 rounded-full border border-red-500/20 bg-red-500/8 px-3 py-2 text-sm text-red-300/70 transition hover:text-red-300"
+              href="/piece"
+              className="inline-flex items-center gap-2 rounded-full border border-violet-500/20 bg-violet-500/8 px-3 py-2 text-sm text-violet-300/70 transition hover:text-violet-300"
             >
               <Film className="h-4 w-4" />
-              Rundown
-            </Link>
-            <Link
-              href="/dev/segment-lab"
-              className="inline-flex items-center gap-2 rounded-full border border-pink-500/20 bg-pink-500/8 px-3 py-2 text-sm text-pink-300/70 transition hover:text-pink-300"
-            >
-              <Film className="h-4 w-4" />
-              Segment Lab
-            </Link>
-            <Link
-              href="/dev/track-lab"
-              className="inline-flex items-center gap-2 rounded-full border border-emerald-500/20 bg-emerald-500/8 px-3 py-2 text-sm text-emerald-300/70 transition hover:text-emerald-300"
-            >
-              <Film className="h-4 w-4" />
-              Track Lab
+              PIECE
             </Link>
             <Link
               href="/dev/breakdown-studio"

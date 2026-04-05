@@ -6,6 +6,8 @@
  */
 
 import { buildSceneTimingMap } from "./placementEngine"
+import type { Shot, ProductionVisual } from "./productionTypes"
+import type { TimelineShot } from "@/store/timeline"
 
 // ─── Types ───────────────────────────────────────────────────
 
@@ -61,29 +63,14 @@ export interface ShotRef {
   thumbnailUrl: string | null
 }
 
-// ─── Constants ───────────────────────────────────────────────
+// ─── Constants & Helpers (from unified durationEngine) ───────
 
-const DIALOGUE_WPM = 155
-const ACTION_WPM = 60
-const HEADING_MS = 2000
-const DIALOGUE_PAUSE_MS = 300
-const MIN_DURATION_MS = 500
-const MIN_ACTION_MS = 2000
-const MAX_ACTION_MS = 15000
-
-// ─── Helpers ─────────────────────────────────────────────────
-
-function wordCount(text: string): number {
-  return text.trim().split(/\s+/).filter(Boolean).length
-}
-
-function dialogueDuration(text: string): number {
-  return Math.max(MIN_DURATION_MS, Math.round((wordCount(text) / DIALOGUE_WPM) * 60_000) + DIALOGUE_PAUSE_MS)
-}
-
-function actionDuration(text: string): number {
-  return Math.max(MIN_ACTION_MS, Math.min(MAX_ACTION_MS, Math.round((wordCount(text) / ACTION_WPM) * 60_000)))
-}
+import {
+  HEADING_MS,
+  dialogueDurationMs as dialogueDuration,
+  actionDurationMs as actionDuration,
+  wordCount,
+} from "@/lib/durationEngine"
 
 /** Fast FNV-1a hash for text comparison */
 export function simpleHash(str: string): number {
@@ -157,21 +144,9 @@ export function buildAutoShotUnits(blocks: BlockInput[], scenes: SceneInput[]): 
 
     switch (block.type) {
       case "scene_heading": {
-        // Flush any pending dialogue first
+        // scene_heading is metadata (location + time), not a visual action.
+        // No shot created — the first action block in the scene becomes the establishing shot.
         flushDialogueGroup(sceneId)
-
-        const counter = (sceneShotCounters.get(sceneId) ?? 0) + 1
-        sceneShotCounters.set(sceneId, counter)
-
-        units.push({
-          blockIds: [block.id],
-          primaryBlockId: block.id,
-          type: "establishing",
-          sceneId,
-          label: text.slice(0, 40),
-          caption: text,
-          durationMs: HEADING_MS,
-        })
         break
       }
 
@@ -181,12 +156,15 @@ export function buildAutoShotUnits(blocks: BlockInput[], scenes: SceneInput[]): 
         const counter = (sceneShotCounters.get(sceneId) ?? 0) + 1
         sceneShotCounters.set(sceneId, counter)
 
+        // First action in a scene = establishing shot
+        const isFirstInScene = counter === 1
+
         units.push({
           blockIds: [block.id],
           primaryBlockId: block.id,
-          type: "action",
+          type: isFirstInScene ? "establishing" : "action",
           sceneId,
-          label: `Shot ${counter}`,
+          label: isFirstInScene ? text.slice(0, 40) : `Shot ${counter}`,
           caption: text,
           durationMs: actionDuration(text),
         })
@@ -439,4 +417,96 @@ export function updateShotTextsOnly(
       duration: durationMs,
     })
   }
+}
+
+// ─── Shot Model Adapters ────────────────────────────────────
+
+let shotCounter = 0
+
+/** Convert AutoShotUnit[] to Shot[] (new parent-child model) */
+export function autoShotUnitsToShots(units: AutoShotUnit[]): Shot[] {
+  const blockShotCounters = new Map<string, number>()
+
+  return units.map((unit) => {
+    const parentBlockId = unit.primaryBlockId
+    const order = blockShotCounters.get(parentBlockId) ?? 0
+    blockShotCounters.set(parentBlockId, order + 1)
+
+    return {
+      id: `shot_${Date.now()}_${++shotCounter}`,
+      parentBlockId,
+      order,
+      label: unit.label,
+      caption: unit.caption,
+      sourceText: unit.caption,
+      shotSize: "",
+      cameraMotion: "",
+      directorNote: "",
+      cameraNote: "",
+      imagePrompt: "",
+      videoPrompt: "",
+      visualDescription: "",
+      durationMs: unit.durationMs,
+      visual: null,
+      locked: false,
+      autoSynced: true,
+      speaker: unit.speaker ?? null,
+      type: unit.type === "establishing" ? "establishing" as const
+        : unit.type === "dialogue" ? "dialogue" as const
+        : "action" as const,
+    }
+  })
+}
+
+/** Build Shot[] directly from blocks and scenes */
+export function buildShotsFromBlocks(blocks: BlockInput[], scenes: SceneInput[]): Shot[] {
+  const units = buildAutoShotUnits(blocks, scenes)
+  return autoShotUnitsToShots(units)
+}
+
+/** Project scriptStore shots → timelineStore TimelineShots */
+export function projectShotsToTimeline(
+  shots: Shot[],
+  blocks: BlockInput[],
+): Partial<TimelineShot>[] {
+  // Sort shots: by block order in screenplay, then by shot order within block
+  const blockOrderMap = new Map(blocks.map((b, i) => [b.id, i]))
+
+  const sorted = [...shots].sort((a, b) => {
+    const blockOrderA = blockOrderMap.get(a.parentBlockId) ?? 0
+    const blockOrderB = blockOrderMap.get(b.parentBlockId) ?? 0
+    if (blockOrderA !== blockOrderB) return blockOrderA - blockOrderB
+    return a.order - b.order
+  })
+
+  return sorted.map((shot, index) => ({
+    id: shot.id, // use same ID for easy mapping
+    order: index,
+    duration: shot.durationMs,
+    type: "image" as const,
+    thumbnailUrl: shot.visual?.thumbnailUrl ?? null,
+    originalUrl: shot.visual?.originalUrl ?? null,
+    thumbnailBlobKey: shot.visual?.thumbnailBlobKey ?? null,
+    originalBlobKey: shot.visual?.originalBlobKey ?? null,
+    generationHistory: shot.visual?.generationHistory ?? [],
+    activeHistoryIndex: shot.visual?.activeHistoryIndex ?? null,
+    sceneId: null,
+    label: shot.label,
+    notes: "",
+    shotSize: shot.shotSize,
+    cameraMotion: shot.cameraMotion,
+    caption: shot.caption,
+    directorNote: shot.directorNote,
+    cameraNote: shot.cameraNote,
+    videoPrompt: shot.videoPrompt,
+    imagePrompt: shot.imagePrompt,
+    visualDescription: shot.visualDescription,
+    svg: "",
+    blockRange: [shot.parentBlockId, shot.parentBlockId] as [string, string],
+    parentBlockId: shot.parentBlockId,
+    shotId: shot.id,
+    locked: shot.locked,
+    autoSynced: shot.autoSynced,
+    sourceText: shot.sourceText,
+  }))
 }

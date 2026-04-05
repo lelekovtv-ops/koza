@@ -19,11 +19,15 @@ import {
   diffBlockSnapshots,
   reconcileShots,
   updateShotTextsOnly,
+  buildShotsFromBlocks,
+  projectShotsToTimeline,
   type BlockSnapshot,
 } from "@/lib/shotSyncEngine"
 import { syncBus } from "@/lib/syncBus"
 import type { SyncEvent } from "@/lib/productionTypes"
 import { useVoiceTrackStore, generateVoiceClipsFromDialogue } from "@/store/voiceTrack"
+import { useRundownStore } from "@/store/rundown"
+import { entriesToTimelineShots } from "@/lib/rundownBridge"
 
 /**
  * Mount this hook at the workspace/studio level.
@@ -43,6 +47,66 @@ export function useSyncOrchestrator() {
   useEffect(() => {
     updateScenes(blocks)
   }, [blocks, updateScenes])
+
+  // ── Forward sync: blocks+scenes → rundown → timeline (immediate) ──
+  const rundownEntries = useRundownStore((s) => s.entries)
+
+  useEffect(() => {
+    if (blocks.length === 0) return
+    useRundownStore.getState().rebuildFromBlocks(blocks, scenes)
+  }, [blocks, scenes])
+
+  // ── Project rundown entries → timeline shots (for backward compat) ──
+  // Only ADD missing shots. Never replace existing shots that may have visual data.
+  const hasInitializedRef = useRef(false)
+
+  useEffect(() => {
+    if (rundownEntries.length === 0) return
+
+    const existing = useTimelineStore.getState().shots
+
+    // On first run (page load): don't overwrite — timeline store restores blobs itself.
+    // Only sync structure: add shots for new blocks, remove for deleted blocks.
+    if (!hasInitializedRef.current) {
+      hasInitializedRef.current = true
+      // If timeline already has shots, trust them (they have restored blob URLs)
+      if (existing.length > 0) return
+    }
+
+    const projectedShots = entriesToTimelineShots(rundownEntries)
+
+    // Build lookup from existing shots by parentBlockId
+    const byBlockId = new Map<string, typeof existing[0]>()
+    for (const s of existing) {
+      if (s.parentBlockId) byBlockId.set(s.parentBlockId, s)
+      if (s.blockRange?.[0]) byBlockId.set(s.blockRange[0], s)
+    }
+    const byId = new Map(existing.map((s) => [s.id, s]))
+
+    const merged = projectedShots.map((projected) => {
+      const ex = byId.get(projected.id)
+        ?? byBlockId.get(projected.parentBlockId ?? "")
+        ?? byBlockId.get(projected.blockRange?.[0] ?? "")
+
+      if (ex) {
+        // Keep ALL visual/user data from existing shot, only update structural fields
+        return {
+          ...ex,
+          order: projected.order,
+          label: projected.label || ex.label,
+          caption: ex.caption || projected.caption,
+          sourceText: projected.sourceText || ex.sourceText,
+          duration: ex.duration || projected.duration,
+          blockRange: projected.blockRange,
+          parentBlockId: projected.parentBlockId,
+          autoSynced: projected.autoSynced,
+        }
+      }
+      return projected
+    })
+
+    useTimelineStore.getState().reorderShots(merged, "screenplay")
+  }, [rundownEntries])
 
   // ── Forward sync: blocks+scenes → bible (2s debounce) ──
   useEffect(() => {
@@ -76,7 +140,7 @@ export function useSyncOrchestrator() {
     return () => window.clearTimeout(timer)
   }, [blocks, scenes, characters, setDialogueLines])
 
-  // ── Forward sync: blocks+scenes → timeline shots (300ms debounce) ──
+  // ── Forward sync: blocks+scenes → scriptStore.shots + timeline shots (300ms debounce) ──
   // Skip if the block change came from timeline (reverse sync)
   useEffect(() => {
     if (scenes.length === 0 && blocks.length > 0) return
@@ -87,6 +151,16 @@ export function useSyncOrchestrator() {
       const diff = diffBlockSnapshots(prevSnapshotRef.current, nextSnapshot)
 
       if (diff.hasStructuralChanges) {
+        // 1. Rebuild Shot[] in scriptStore (source of truth)
+        const currentScriptShots = useScriptStore.getState().shots
+        const newAutoShots = buildShotsFromBlocks(blocks, scenes)
+
+        // Preserve locked/manual shots, reconcile auto-synced
+        const manualShots = currentScriptShots.filter((s) => !s.autoSynced || s.locked)
+        const mergedShots = [...manualShots, ...newAutoShots]
+        useScriptStore.getState().setShots(mergedShots)
+
+        // 2. Project to timeline (legacy compat — keeps existing reconcile flow too)
         const currentShots = useTimelineStore.getState().shots
         const { addShot, removeShot, updateShot, reorderShots } =
           useTimelineStore.getState()
@@ -153,7 +227,7 @@ export function useSyncOrchestrator() {
     return () => window.clearTimeout(timer)
   }, [blocks, scenes, scriptLastOrigin])
 
-  // ── Reverse sync: listen to SyncBus for timeline/voice → blocks ──
+  // ── Reverse sync: listen to SyncBus for timeline/voice → blocks + rundown ──
   useEffect(() => {
     const unsub = syncBus.on((event: SyncEvent) => {
       // Only handle events from other origins
@@ -161,7 +235,7 @@ export function useSyncOrchestrator() {
 
       switch (event.type) {
         case "duration-change": {
-          // Timeline changed duration → update block
+          // Timeline changed duration → update block + rundown
           const { blockId } = event
           const { durationMs } = event.payload as { durationMs: number }
           if (blockId && typeof durationMs === "number") {
@@ -172,6 +246,13 @@ export function useSyncOrchestrator() {
                 { durationMs, durationSource: "manual" },
                 "timeline",
               )
+            // Also update rundown entry
+            const entry = useRundownStore.getState().entries.find(
+              (e) => e.parentBlockId === blockId,
+            )
+            if (entry) {
+              useRundownStore.getState().setManualDuration(entry.id, durationMs)
+            }
           }
           break
         }
@@ -187,7 +268,7 @@ export function useSyncOrchestrator() {
         }
 
         case "voice-duration": {
-          // TTS returned real duration → update block
+          // TTS returned real duration → update block + rundown
           const { blockId } = event
           const { durationMs } = event.payload as { durationMs: number }
           if (blockId && typeof durationMs === "number") {
@@ -198,6 +279,40 @@ export function useSyncOrchestrator() {
                 { durationMs, durationSource: "media" },
                 "voice",
               )
+            // Also update rundown entry
+            const entry = useRundownStore.getState().entries.find(
+              (e) => e.parentBlockId === blockId,
+            )
+            if (entry) {
+              useRundownStore.getState().setMediaDuration(entry.id, durationMs)
+            }
+          }
+          break
+        }
+
+        case "shot-child-remove": {
+          // Timeline/storyboard requested shot removal → scriptStore + rundown
+          const { shotId } = event.payload as { shotId: string }
+          if (shotId) {
+            useScriptStore.getState().removeShotFromBlock(shotId)
+            // Also remove from rundown
+            const entry = useRundownStore.getState().entries.find(
+              (e) => e.id === shotId,
+            )
+            if (entry) {
+              useRundownStore.getState().deleteEntry(entry.id)
+            }
+          }
+          break
+        }
+
+        case "shot-child-reorder": {
+          // Timeline/storyboard requested shot reorder within block
+          const { shotId, newOrder } = event.payload as { shotId: string; newOrder: number }
+          if (shotId && typeof newOrder === "number") {
+            useScriptStore.getState().reorderShotInBlock(shotId, newOrder)
+            // Also reorder in rundown
+            useRundownStore.getState().reorderEntry(shotId, newOrder)
           }
           break
         }
@@ -205,5 +320,69 @@ export function useSyncOrchestrator() {
     })
 
     return unsub
+  }, [])
+
+  // ── Reverse sync: timeline updateShot → rundown entry ──
+  // When StoryboardPanel or other components update a shot in timeline store,
+  // propagate the visual/prompt data back to rundown (persisted)
+  useEffect(() => {
+    return useTimelineStore.subscribe((state, prev) => {
+      if (state._lastOrigin === "screenplay") return
+      if (state.shots === prev.shots) return
+
+      const prevMap = new Map(prev.shots.map((s) => [s.id, s]))
+      const entries = useRundownStore.getState().entries
+
+      // Build blockId→entryId lookup for matching
+      const entryByBlockId = new Map(entries.map((e) => [e.parentBlockId, e]))
+
+      for (const shot of state.shots) {
+        const prevShot = prevMap.get(shot.id)
+        if (!prevShot) continue
+
+        const visualChanged = shot.thumbnailUrl !== prevShot.thumbnailUrl ||
+          shot.originalUrl !== prevShot.originalUrl ||
+          shot.imagePrompt !== prevShot.imagePrompt ||
+          shot.videoPrompt !== prevShot.videoPrompt ||
+          shot.directorNote !== prevShot.directorNote ||
+          shot.cameraNote !== prevShot.cameraNote ||
+          shot.shotSize !== prevShot.shotSize ||
+          shot.cameraMotion !== prevShot.cameraMotion ||
+          shot.caption !== prevShot.caption
+
+        if (!visualChanged) continue
+
+        // Find matching rundown entry by parentBlockId or blockRange
+        const entry = entryByBlockId.get(shot.parentBlockId ?? "")
+          ?? entryByBlockId.get(shot.blockRange?.[0] ?? "")
+          ?? entries.find((e) => e.id === shot.id)
+
+        if (!entry) continue
+
+        useRundownStore.getState().updateEntry(entry.id, {
+          caption: shot.caption,
+          directorNote: shot.directorNote,
+          cameraNote: shot.cameraNote,
+          shotSize: shot.shotSize,
+          cameraMotion: shot.cameraMotion,
+          imagePrompt: shot.imagePrompt,
+          videoPrompt: shot.videoPrompt,
+          visualDescription: shot.visualDescription,
+          visual: shot.thumbnailUrl || shot.originalUrl ? {
+            thumbnailUrl: shot.thumbnailUrl,
+            thumbnailBlobKey: shot.thumbnailBlobKey,
+            originalUrl: shot.originalUrl,
+            originalBlobKey: shot.originalBlobKey,
+            imagePrompt: shot.imagePrompt,
+            videoPrompt: shot.videoPrompt,
+            shotSize: shot.shotSize,
+            cameraMotion: shot.cameraMotion,
+            generationHistory: shot.generationHistory,
+            activeHistoryIndex: shot.activeHistoryIndex,
+            type: "image",
+          } : entry.visual,
+        })
+      }
+    })
   }, [])
 }

@@ -1,5 +1,6 @@
 import type { Block } from "@/lib/screenplayFormat"
 import type { TimelineShot } from "@/store/timeline"
+import { estimateBlockDurationMs, MIN_SCENE_MS } from "@/lib/durationEngine"
 
 // ── Scene interface ──────────────────────────────────────────
 
@@ -20,47 +21,14 @@ export const SCENE_COLORS = [
 
 // ── Duration estimation ──────────────────────────────────────
 
-const DIALOGUE_WPM = 150
-const ACTION_WPM = 100 // action/description reads slower visually
-const SCENE_HEADING_MS = 2000 // establishing shot buffer
-const MIN_SCENE_MS = 3000
-
 /**
- * Estimate scene duration from its blocks.
- * Dialogue = spoken at ~150wpm. Action = visual pacing ~100wpm.
- * Scene heading = 2s establishing shot.
+ * Estimate scene duration from its blocks using the unified durationEngine.
  */
 function estimateSceneDurationMs(sceneBlocks: Block[]): number {
   let totalMs = 0
-
   for (const block of sceneBlocks) {
-    const words = block.text.trim().split(/\s+/).filter(Boolean).length
-    if (words === 0) continue
-
-    switch (block.type) {
-      case "scene_heading":
-        totalMs += SCENE_HEADING_MS
-        break
-      case "dialogue":
-        totalMs += (words / DIALOGUE_WPM) * 60_000 + 300 // 300ms pause per line
-        break
-      case "parenthetical":
-        totalMs += 500
-        break
-      case "character":
-        // small beat before character speaks
-        totalMs += 200
-        break
-      case "transition":
-        totalMs += 1500
-        break
-      case "action":
-      default:
-        totalMs += (words / ACTION_WPM) * 60_000
-        break
-    }
+    totalMs += estimateBlockDurationMs(block.type, block.text)
   }
-
   return Math.max(MIN_SCENE_MS, Math.round(totalMs))
 }
 
@@ -174,6 +142,8 @@ export function parseScenesToShots(blocks: Block[]): TimelineShot[] {
       visualDescription: "",
       svg: "",
       blockRange: null,
+      parentBlockId: null,
+      shotId: null,
       locked: false,
       autoSynced: false,
       sourceText: "",

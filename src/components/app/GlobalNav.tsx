@@ -9,8 +9,7 @@ const NAV_ITEMS = [
   { id: "media", href: "/library", label: "MEDIA" },
   { id: "board", href: "/board", label: "DESKTOP" },
   { id: "script", href: "/", label: "SCRIPTWRITER" },
-  { id: "workspace", href: "/workspace", label: "STORYBOARD" },
-  { id: "timeline", href: "/timeline", label: "TIMELINE" },
+  { id: "workspace", href: "/workspace", label: "BREAKDOWN STUDIO" },
   { id: "export", href: "/export", label: "EXPORT" },
 ]
 

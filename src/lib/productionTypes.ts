@@ -53,8 +53,34 @@ export interface BlockModifier {
   params: Record<string, unknown>
 }
 
-// ─── Shot Group ──────────────────────────────────────────────
+// ─── Shot (DEPRECATED — use RundownEntry from rundownTypes.ts) ────
+/** @deprecated Use RundownEntry from @/lib/rundownTypes instead */
 
+export interface Shot {
+  id: string
+  parentBlockId: string       // REQUIRED — always belongs to a screenplay block
+  order: number               // position within parent block (0-based)
+  label: string
+  caption: string
+  sourceText: string
+  shotSize: string
+  cameraMotion: string
+  directorNote: string
+  cameraNote: string
+  imagePrompt: string
+  videoPrompt: string
+  visualDescription: string
+  durationMs: number
+  visual: ProductionVisual | null
+  locked: boolean
+  autoSynced: boolean
+  speaker: string | null
+  type: "establishing" | "action" | "dialogue" | "transition"
+}
+
+// ─── Shot Group (DEPRECATED — use Shot with parentBlockId) ───
+
+/** @deprecated Use Shot with parentBlockId instead */
 export interface ShotGroup {
   id: string
   sceneId: string
@@ -79,7 +105,8 @@ export interface SfxHint {
   suggestedDurationMs: number
 }
 
-// ──�� Sync Event (for SyncBus) ────────────────────────────────
+// ─── Sync Event (DEPRECATED — rundown store uses direct mutations) ────
+/** @deprecated SyncBus will be removed. Use rundown store direct calls. */
 
 export type SyncEventType =
   | "block-text"
@@ -91,6 +118,10 @@ export type SyncEventType =
   | "shot-add"
   | "shot-remove"
   | "shot-reorder"
+  | "shot-child-add"
+  | "shot-child-remove"
+  | "shot-child-reorder"
+  | "block-clear"
   | "voice-text"
   | "voice-duration"
 
@@ -98,6 +129,7 @@ export interface SyncEvent {
   origin: ChangeOrigin
   type: SyncEventType
   blockId?: string
+  shotId?: string
   shotGroupId?: string
   payload: Record<string, unknown>
   timestamp: number

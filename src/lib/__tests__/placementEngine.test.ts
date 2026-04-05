@@ -414,6 +414,6 @@ describe("Edge cases", () => {
 
     expect(map.sceneStartMs).toBe(offset)
     expect(map.blocks[0].startMs).toBe(offset)
-    expect(map.blocks[1].startMs).toBe(offset + 2000) // heading is 2000ms
+    expect(map.blocks[1].startMs).toBe(offset + 1500) // heading is 1500ms
   })
 })

@@ -42,12 +42,13 @@ class SyncBusImpl {
     origin: ChangeOrigin,
     type: SyncEventType,
     payload: Record<string, unknown> = {},
-    ids?: { blockId?: string; shotGroupId?: string }
+    ids?: { blockId?: string; shotId?: string; shotGroupId?: string }
   ): void {
     this.emit({
       origin,
       type,
       blockId: ids?.blockId,
+      shotId: ids?.shotId,
       shotGroupId: ids?.shotGroupId,
       payload,
       timestamp: Date.now(),

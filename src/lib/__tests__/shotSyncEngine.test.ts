@@ -37,18 +37,15 @@ function shotRef(id: string, blockRange: [string, string] | null, opts: Partial<
 // ─── buildAutoShotUnits ──────────────────────────────────────
 
 describe("buildAutoShotUnits", () => {
-  it("creates establishing shot from scene heading", () => {
+  it("does NOT create shot from scene heading alone", () => {
     const blocks = [block("b1", "scene_heading", "INT. КУХНЯ - УТРО")]
     const scenes = [scene("s1", ["b1"])]
     const units = buildAutoShotUnits(blocks, scenes)
 
-    expect(units).toHaveLength(1)
-    expect(units[0].type).toBe("establishing")
-    expect(units[0].primaryBlockId).toBe("b1")
-    expect(units[0].caption).toBe("INT. КУХНЯ - УТРО")
+    expect(units).toHaveLength(0)
   })
 
-  it("creates action shot from action block", () => {
+  it("first action in scene becomes establishing shot", () => {
     const blocks = [
       block("b1", "scene_heading", "INT. КУХНЯ"),
       block("b2", "action", "Марина стоит у окна."),
@@ -56,10 +53,10 @@ describe("buildAutoShotUnits", () => {
     const scenes = [scene("s1", ["b1", "b2"])]
     const units = buildAutoShotUnits(blocks, scenes)
 
-    expect(units).toHaveLength(2)
+    expect(units).toHaveLength(1)
     expect(units[0].type).toBe("establishing")
-    expect(units[1].type).toBe("action")
-    expect(units[1].caption).toBe("Марина стоит у окна.")
+    expect(units[0].primaryBlockId).toBe("b2")
+    expect(units[0].caption).toBe("Марина стоит у окна.")
   })
 
   it("creates dialogue shot from character + dialogue", () => {
@@ -71,12 +68,12 @@ describe("buildAutoShotUnits", () => {
     const scenes = [scene("s1", ["b1", "b2", "b3"])]
     const units = buildAutoShotUnits(blocks, scenes)
 
-    expect(units).toHaveLength(2) // establishing + dialogue
-    expect(units[1].type).toBe("dialogue")
-    expect(units[1].speaker).toBe("МАРИНА")
-    expect(units[1].caption).toBe("Доброе утро.")
-    expect(units[1].blockIds).toEqual(["b2", "b3"])
-    expect(units[1].primaryBlockId).toBe("b3") // dialogue block is primary
+    expect(units).toHaveLength(1) // dialogue only, no heading shot
+    expect(units[0].type).toBe("dialogue")
+    expect(units[0].speaker).toBe("МАРИНА")
+    expect(units[0].caption).toBe("Доброе утро.")
+    expect(units[0].blockIds).toEqual(["b2", "b3"])
+    expect(units[0].primaryBlockId).toBe("b3") // dialogue block is primary
   })
 
   it("includes parenthetical in dialogue group", () => {
@@ -89,8 +86,8 @@ describe("buildAutoShotUnits", () => {
     const scenes = [scene("s1", ["b1", "b2", "b3", "b4"])]
     const units = buildAutoShotUnits(blocks, scenes)
 
-    expect(units).toHaveLength(2)
-    expect(units[1].blockIds).toEqual(["b2", "b3", "b4"])
+    expect(units).toHaveLength(1) // dialogue only
+    expect(units[0].blockIds).toEqual(["b2", "b3", "b4"])
   })
 
   it("skips transition blocks", () => {
@@ -102,7 +99,8 @@ describe("buildAutoShotUnits", () => {
     const scenes = [scene("s1", ["b1", "b2", "b3"])]
     const units = buildAutoShotUnits(blocks, scenes)
 
-    expect(units).toHaveLength(2) // heading + action, no transition
+    expect(units).toHaveLength(1) // action only, no heading, no transition
+    expect(units[0].type).toBe("establishing") // first action = establishing
   })
 
   it("handles mixed scene correctly", () => {
@@ -118,16 +116,15 @@ describe("buildAutoShotUnits", () => {
     const scenes = [scene("s1", ["b1", "b2", "b3", "b4", "b5", "b6", "b7"])]
     const units = buildAutoShotUnits(blocks, scenes)
 
-    expect(units).toHaveLength(5)
+    expect(units).toHaveLength(4) // establishing(action) + dialogue + action + dialogue
     expect(units[0].type).toBe("establishing")
-    expect(units[1].type).toBe("action")
-    expect(units[1].caption).toBe("Марина стоит на краю моста.")
-    expect(units[2].type).toBe("dialogue")
-    expect(units[2].speaker).toBe("ЛЕОН")
-    expect(units[3].type).toBe("action")
-    expect(units[3].caption).toBe("Марина оборачивается.")
-    expect(units[4].type).toBe("dialogue")
-    expect(units[4].speaker).toBe("МАРИНА")
+    expect(units[0].caption).toBe("Марина стоит на краю моста.")
+    expect(units[1].type).toBe("dialogue")
+    expect(units[1].speaker).toBe("ЛЕОН")
+    expect(units[2].type).toBe("action")
+    expect(units[2].caption).toBe("Марина оборачивается.")
+    expect(units[3].type).toBe("dialogue")
+    expect(units[3].speaker).toBe("МАРИНА")
   })
 
   it("handles multiple scenes", () => {
@@ -143,11 +140,11 @@ describe("buildAutoShotUnits", () => {
     ]
     const units = buildAutoShotUnits(blocks, scenes)
 
-    expect(units).toHaveLength(4)
+    expect(units).toHaveLength(2) // 1 per scene (first action = establishing)
     expect(units[0].sceneId).toBe("s1")
-    expect(units[1].sceneId).toBe("s1")
-    expect(units[2].sceneId).toBe("s2")
-    expect(units[3].sceneId).toBe("s2")
+    expect(units[0].type).toBe("establishing")
+    expect(units[1].sceneId).toBe("s2")
+    expect(units[1].type).toBe("establishing")
   })
 
   it("strips V.O. from character name", () => {
@@ -159,7 +156,7 @@ describe("buildAutoShotUnits", () => {
     const scenes = [scene("s1", ["b1", "b2", "b3"])]
     const units = buildAutoShotUnits(blocks, scenes)
 
-    expect(units[1].speaker).toBe("МАРИНА")
+    expect(units[0].speaker).toBe("МАРИНА")
   })
 
   it("returns empty array for empty blocks", () => {
@@ -238,15 +235,11 @@ describe("reconcileShots", () => {
 
     reconcileShots(blocks, scenes, [], { addShot, removeShot, updateShot, reorderShots })
 
-    expect(addShot).toHaveBeenCalledTimes(2) // establishing + action
+    expect(addShot).toHaveBeenCalledTimes(1) // action only, no heading
     expect(addShot.mock.calls[0][0]).toMatchObject({
-      caption: "INT. КУХНЯ",
-      autoSynced: true,
-      sceneId: "s1",
-    })
-    expect(addShot.mock.calls[1][0]).toMatchObject({
       caption: "Действие.",
       autoSynced: true,
+      sceneId: "s1",
     })
   })
 
@@ -275,7 +268,6 @@ describe("reconcileShots", () => {
     ]
     const scenes = [scene("s1", ["b1", "b2"])]
     const existingShots: ShotRef[] = [
-      shotRef("shot-1", ["b1", "b1"], { autoSynced: true, caption: "INT. КУХНЯ" }),
       shotRef("shot-2", ["b2", "b2"], { autoSynced: true, caption: "Старый текст." }),
     ]
     const updateShot = vi.fn()
@@ -287,7 +279,6 @@ describe("reconcileShots", () => {
       reorderShots: vi.fn(),
     })
 
-    // shot-1 unchanged, shot-2 updated
     expect(updateShot).toHaveBeenCalledTimes(1)
     expect(updateShot).toHaveBeenCalledWith("shot-2", expect.objectContaining({
       caption: "Новый текст действия.",

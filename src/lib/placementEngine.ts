@@ -67,32 +67,16 @@ export interface TrackBlock {
   durationMs: number
 }
 
-// ─── Constants ───────────────────────────────────────────────
+// ─── Constants & Helpers (from unified durationEngine) ───────
 
-const DIALOGUE_WPM = 155
-const ACTION_WPM = 60
-const HEADING_MS = 2000
-const TRANSITION_MS = 1200
-const DIALOGUE_PAUSE_MS = 300
-const MIN_BLOCK_MS = 500
-const MIN_ACTION_MS = 2000
-const MAX_ACTION_MS = 15000
-
-// ─── Helpers ─────────────────────────────────────────────────
-
-function wordCount(text: string): number {
-  return text.trim().split(/\s+/).filter(Boolean).length
-}
-
-function dialogueDurationMs(text: string): number {
-  const words = wordCount(text)
-  return Math.max(MIN_BLOCK_MS, Math.round((words / DIALOGUE_WPM) * 60_000) + DIALOGUE_PAUSE_MS)
-}
-
-function actionDurationMs(text: string): number {
-  const words = wordCount(text)
-  return Math.max(MIN_ACTION_MS, Math.min(MAX_ACTION_MS, Math.round((words / ACTION_WPM) * 60_000)))
-}
+import {
+  HEADING_MS,
+  TRANSITION_MS,
+  MIN_BLOCK_MS,
+  dialogueDurationMs,
+  actionDurationMs,
+  wordCount,
+} from "@/lib/durationEngine"
 
 // ─── Stage 1: Build timing map from blocks ───────────────────
 

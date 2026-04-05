@@ -12,7 +12,7 @@
 
 import type { Block } from "@/lib/screenplayFormat"
 import type { JenkinsShot } from "@/lib/breakdownTypes"
-import type { ShotGroup, ProductionVisual } from "@/lib/productionTypes"
+import type { Shot, ShotGroup, ProductionVisual } from "@/lib/productionTypes"
 import { buildSceneTimingMap, mapShotsToBlocks, placeShotsOnTimeline } from "@/lib/placementEngine"
 
 interface EnrichInput {
@@ -25,7 +25,9 @@ interface EnrichInput {
 interface EnrichResult {
   /** Blocks with production fields filled in */
   enrichedBlocks: Block[]
-  /** Shot groups for this scene */
+  /** Child shots (new parent-child model) */
+  shots: Shot[]
+  /** @deprecated Shot groups for this scene */
   shotGroups: ShotGroup[]
   /** Also returns TimelineShot-compatible data for backward compat */
   timelineShots: {
@@ -61,7 +63,7 @@ export function enrichBlocksFromBreakdown(input: EnrichInput): EnrichResult {
   const { sceneId, sceneBlocks, shots, sceneStartMs = 0 } = input
 
   if (sceneBlocks.length === 0 || shots.length === 0) {
-    return { enrichedBlocks: sceneBlocks, shotGroups: [], timelineShots: [] }
+    return { enrichedBlocks: sceneBlocks, shots: [], shotGroups: [], timelineShots: [] }
   }
 
   // Build timing map for this scene
@@ -80,6 +82,7 @@ export function enrichBlocksFromBreakdown(input: EnrichInput): EnrichResult {
 
   // Build a map: blockId → which shot covers it
   const blockToShot = new Map<string, { shot: JenkinsShot; groupId: string; placed: typeof placed[number] }>()
+  const childShots: Shot[] = []
   const shotGroups: ShotGroup[] = []
   const timelineShots: EnrichResult["timelineShots"] = []
 
@@ -146,6 +149,41 @@ export function enrichBlocksFromBreakdown(input: EnrichInput): EnrichResult {
       autoSynced: true,
     })
 
+    // Child shot (new parent-child model)
+    childShots.push({
+      id: `shot_${Date.now()}_${i}_${createId().slice(0, 4)}`,
+      parentBlockId: primaryBlockId,
+      order: childShots.filter((s) => s.parentBlockId === primaryBlockId).length,
+      label: shot.label,
+      caption: shot.caption,
+      sourceText: shot.caption,
+      shotSize: shot.shotSize,
+      cameraMotion: shot.cameraMotion,
+      directorNote: shot.directorNote,
+      cameraNote: shot.cameraNote,
+      imagePrompt: shot.imagePrompt,
+      videoPrompt: shot.videoPrompt,
+      visualDescription: shot.visualDescription,
+      durationMs: p.durationMs,
+      visual: {
+        thumbnailUrl: null,
+        thumbnailBlobKey: null,
+        originalUrl: null,
+        originalBlobKey: null,
+        imagePrompt: shot.imagePrompt,
+        videoPrompt: shot.videoPrompt,
+        shotSize: shot.shotSize,
+        cameraMotion: shot.cameraMotion,
+        generationHistory: [],
+        activeHistoryIndex: null,
+        type: "image",
+      },
+      locked: false,
+      autoSynced: true,
+      speaker,
+      type: groupType,
+    })
+
     // Backward compat timeline shot data
     timelineShots.push({
       label: shot.label,
@@ -199,7 +237,7 @@ export function enrichBlocksFromBreakdown(input: EnrichInput): EnrichResult {
     }
   })
 
-  return { enrichedBlocks, shotGroups, timelineShots }
+  return { enrichedBlocks, shots: childShots, shotGroups, timelineShots }
 }
 
 /** Find speaker name for a dialogue block by looking at preceding character block */

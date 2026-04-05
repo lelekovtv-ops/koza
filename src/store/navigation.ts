@@ -1,6 +1,6 @@
 import { create } from "zustand"
 
-export type StoryboardViewMode = "scenes" | "board" | "list" | "inspector" | "director" | "prompt" | "tracks"
+export type StoryboardViewMode = "scenes" | "board" | "list" | "inspector" | "director" | "tracks" | "pieces"
 export type BibleTab = "characters" | "locations" | "props" | "director"
 export type ProductionRole = "all" | "operator" | "art" | "actors" | "producer"
 
