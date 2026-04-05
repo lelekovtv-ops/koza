@@ -127,9 +127,9 @@ export const useRundownStore = create<RundownState>()(
           const entry = state.entries.find((e) => e.id === entryId)
           if (!entry) return state
 
-          // Reorder among siblings (same parentEntryId)
+          // Reorder among siblings (same parentEntryId level)
           const siblings = state.entries
-            .filter((e) => e.parentEntryId === entry.parentEntryId && e.parentBlockId === entry.parentBlockId)
+            .filter((e) => e.parentEntryId === entry.parentEntryId)
             .sort((a, b) => a.order - b.order)
 
           const oldIndex = siblings.findIndex((e) => e.id === entryId)

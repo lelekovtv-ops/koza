@@ -150,6 +150,11 @@ export function EmbeddedTrackView({
   // Drag move state: blockId → pixel offset while dragging
   const [dragMove, setDragMove] = useState<{ blockId: string; offsetPx: number } | null>(null)
   const playRef = useRef<number | null>(null)
+  // Cleanup drag listeners on unmount
+  const dragAbortRef = useRef<AbortController | null>(null)
+  useEffect(() => {
+    return () => { dragAbortRef.current?.abort() }
+  }, [])
   const lastFrameRef = useRef(0)
   const speech = useSpeech({})
   const spokenBlockIdRef = useRef<string | null>(null)
@@ -492,17 +497,17 @@ export function EmbeddedTrackView({
           onMouseDown={(e) => {
             if (editMode !== "move" || trackId !== "visual") return
             e.preventDefault(); e.stopPropagation()
+            dragAbortRef.current?.abort()
+            const ac = new AbortController()
+            dragAbortRef.current = ac
             const startX = e.clientX
-            const onMoveEv = (ev: MouseEvent) => {
+            document.addEventListener("mousemove", (ev) => {
               setDragMove({ blockId: block.id, offsetPx: ev.clientX - startX })
-            }
-            const onUp = () => {
-              document.removeEventListener("mousemove", onMoveEv)
-              document.removeEventListener("mouseup", onUp)
+            }, { signal: ac.signal })
+            document.addEventListener("mouseup", () => {
+              ac.abort()
               setDragMove(null)
-            }
-            document.addEventListener("mousemove", onMoveEv)
-            document.addEventListener("mouseup", onUp)
+            }, { signal: ac.signal })
           }}
         >
           {(() => {
@@ -541,50 +546,38 @@ export function EmbeddedTrackView({
             className="absolute top-0 bottom-0 right-0 w-2 cursor-ew-resize hover:bg-white/20 z-10"
             onMouseDown={(e) => {
               e.preventDefault(); e.stopPropagation()
+              dragAbortRef.current?.abort()
+              const ac = new AbortController()
+              dragAbortRef.current = ac
               const startX = e.clientX
               const startDur = effectiveDur
               const bid = block.parentBlockId ?? block.id
 
-              // Find neighbor block (next visual block)
               const visualBlocks = trackBlocks.filter((b) => b.track === "visual")
               const myIdx = visualBlocks.findIndex((b) => b.id === block.id)
               const nextBlock = myIdx >= 0 && myIdx < visualBlocks.length - 1 ? visualBlocks[myIdx + 1] : null
               const nextStartDur = nextBlock ? nextBlock.durationMs : 0
 
-              const onMoveEv = (ev: MouseEvent) => {
-                const deltaPx = ev.clientX - startX
-                const deltaMs = (deltaPx / zoom) * 1000
-                const newDur = Math.max(500, Math.round(startDur + deltaMs))
-                setDragResize({ blockId: block.id, durationMs: newDur })
+              document.addEventListener("mousemove", (ev) => {
+                const deltaMs = ((ev.clientX - startX) / zoom) * 1000
+                setDragResize({ blockId: block.id, durationMs: Math.max(500, Math.round(startDur + deltaMs)) })
+              }, { signal: ac.signal })
 
-                // Roll mode: shrink/grow neighbor in real-time
-                if (editMode === "roll" && nextBlock) {
-                  const neighborDur = Math.max(500, Math.round(nextStartDur - deltaMs))
-                  // We track neighbor via a second drag entry — use the same state trick
-                  nextBlock.durationMs = neighborDur
-                }
-              }
-              const onUp = (ev: MouseEvent) => {
-                document.removeEventListener("mousemove", onMoveEv)
-                document.removeEventListener("mouseup", onUp)
-                const deltaPx = ev.clientX - startX
-                const deltaMs = (deltaPx / zoom) * 1000
+              document.addEventListener("mouseup", (ev) => {
+                ac.abort()
+                const deltaMs = ((ev.clientX - startX) / zoom) * 1000
                 const finalDur = Math.max(500, Math.round(startDur + deltaMs))
                 setDragResize(null)
 
-                // Dispatch based on mode
                 if (editMode === "roll" && nextBlock) {
                   const neighborDur = Math.max(500, Math.round(nextStartDur - deltaMs))
                   const neighborBid = nextBlock.parentBlockId ?? nextBlock.id
                   syncBus.dispatch("timeline", "duration-change", { durationMs: finalDur }, { blockId: bid })
                   syncBus.dispatch("timeline", "duration-change", { durationMs: neighborDur }, { blockId: neighborBid })
                 } else {
-                  // Ripple or Select: just change this block (timeline shifts)
                   syncBus.dispatch("timeline", "duration-change", { durationMs: finalDur }, { blockId: bid })
                 }
-              }
-              document.addEventListener("mousemove", onMoveEv)
-              document.addEventListener("mouseup", onUp)
+              }, { signal: ac.signal })
             }}
           />
         </div>

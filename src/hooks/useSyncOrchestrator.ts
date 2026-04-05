@@ -14,15 +14,6 @@ import { useScenesStore } from "@/store/scenes"
 import { useTimelineStore } from "@/store/timeline"
 import { useBibleStore } from "@/store/bible"
 import { useDialogueStore, extractDialogueLines } from "@/store/dialogue"
-import {
-  snapshotBlocks,
-  diffBlockSnapshots,
-  reconcileShots,
-  updateShotTextsOnly,
-  buildShotsFromBlocks,
-  projectShotsToTimeline,
-  type BlockSnapshot,
-} from "@/lib/shotSyncEngine"
 import { syncBus } from "@/lib/syncBus"
 import type { SyncEvent } from "@/lib/productionTypes"
 import { useVoiceTrackStore, generateVoiceClipsFromDialogue } from "@/store/voiceTrack"
@@ -35,13 +26,11 @@ import { entriesToTimelineShots } from "@/lib/rundownBridge"
  */
 export function useSyncOrchestrator() {
   const blocks = useScriptStore((s) => s.blocks)
-  const scriptLastOrigin = useScriptStore((s) => s._lastOrigin)
   const updateScenes = useScenesStore((s) => s.updateScenes)
   const scenes = useScenesStore((s) => s.scenes)
   const updateFromScreenplay = useBibleStore((s) => s.updateFromScreenplay)
   const characters = useBibleStore((s) => s.characters)
   const setDialogueLines = useDialogueStore((s) => s.setLines)
-  const prevSnapshotRef = useRef<BlockSnapshot[]>([])
 
   // ── Forward sync: blocks → scenes (immediate) ──
   useEffect(() => {
@@ -143,92 +132,7 @@ export function useSyncOrchestrator() {
     return () => window.clearTimeout(timer)
   }, [blocks, scenes, characters, setDialogueLines])
 
-  // ── Forward sync: blocks+scenes → scriptStore.shots + timeline shots (300ms debounce) ──
-  // Skip if the block change came from timeline (reverse sync)
-  useEffect(() => {
-    if (scenes.length === 0 && blocks.length > 0) return
-    if (scriptLastOrigin === "timeline") return
-
-    const timer = window.setTimeout(() => {
-      const nextSnapshot = snapshotBlocks(blocks)
-      const diff = diffBlockSnapshots(prevSnapshotRef.current, nextSnapshot)
-
-      if (diff.hasStructuralChanges) {
-        // 1. Rebuild Shot[] in scriptStore (source of truth)
-        const currentScriptShots = useScriptStore.getState().shots
-        const newAutoShots = buildShotsFromBlocks(blocks, scenes)
-
-        // Preserve locked/manual shots, reconcile auto-synced
-        const manualShots = currentScriptShots.filter((s) => !s.autoSynced || s.locked)
-        const mergedShots = [...manualShots, ...newAutoShots]
-        useScriptStore.getState().setShots(mergedShots)
-
-        // 2. Project to timeline (legacy compat — keeps existing reconcile flow too)
-        const currentShots = useTimelineStore.getState().shots
-        const { addShot, removeShot, updateShot, reorderShots } =
-          useTimelineStore.getState()
-
-        reconcileShots(
-          blocks,
-          scenes,
-          currentShots.map((s) => ({
-            id: s.id,
-            sceneId: s.sceneId,
-            blockRange: s.blockRange,
-            autoSynced: s.autoSynced,
-            locked: s.locked,
-            caption: s.caption,
-            imagePrompt: s.imagePrompt,
-            thumbnailUrl: s.thumbnailUrl,
-          })),
-          {
-            addShot: (partial) =>
-              addShot(partial as Parameters<typeof addShot>[0], "screenplay"),
-            removeShot: (id) => removeShot(id, "screenplay"),
-            updateShot: (id, patch) =>
-              updateShot(
-                id,
-                patch as Parameters<typeof updateShot>[1],
-                "screenplay",
-              ),
-            reorderShots: ((shots: unknown[]) =>
-              reorderShots(
-                shots as Parameters<typeof reorderShots>[0],
-                "screenplay",
-              )) as (shots: unknown[]) => void,
-          },
-        )
-      } else if (diff.textChangedBlockIds.length > 0) {
-        const currentShots = useTimelineStore.getState().shots
-        const { updateShot } = useTimelineStore.getState()
-
-        updateShotTextsOnly(
-          diff.textChangedBlockIds,
-          blocks,
-          currentShots.map((s) => ({
-            id: s.id,
-            sceneId: s.sceneId,
-            blockRange: s.blockRange,
-            autoSynced: s.autoSynced,
-            locked: s.locked,
-            caption: s.caption,
-            imagePrompt: s.imagePrompt,
-            thumbnailUrl: s.thumbnailUrl,
-          })),
-          (id, patch) =>
-            updateShot(
-              id,
-              patch as Parameters<typeof updateShot>[1],
-              "screenplay",
-            ),
-        )
-      }
-
-      prevSnapshotRef.current = nextSnapshot
-    }, 300)
-
-    return () => window.clearTimeout(timer)
-  }, [blocks, scenes, scriptLastOrigin])
+  // Old shotSyncEngine path removed — rundown handles all blocks→timeline sync now
 
   // ── Reverse sync: listen to SyncBus for timeline/voice → blocks + rundown ──
   useEffect(() => {
@@ -314,8 +218,9 @@ export function useSyncOrchestrator() {
           const { shotId, newOrder } = event.payload as { shotId: string; newOrder: number }
           if (shotId && typeof newOrder === "number") {
             useScriptStore.getState().reorderShotInBlock(shotId, newOrder)
-            // Also reorder in rundown
-            useRundownStore.getState().reorderEntry(shotId, newOrder)
+            // Also reorder in rundown (if entry exists)
+            const entry = useRundownStore.getState().entries.find((e) => e.id === shotId)
+            if (entry) useRundownStore.getState().reorderEntry(shotId, newOrder)
           }
           break
         }
@@ -336,8 +241,15 @@ export function useSyncOrchestrator() {
       const prevMap = new Map(prev.shots.map((s) => [s.id, s]))
       const entries = useRundownStore.getState().entries
 
-      // Build blockId→entryId lookup for matching
-      const entryByBlockId = new Map(entries.map((e) => [e.parentBlockId, e]))
+      // Build blockId→entries[] lookup (multiple entries can share same parentBlockId via sub-shots)
+      const entriesByBlockId = new Map<string, typeof entries>()
+      for (const e of entries) {
+        const key = e.parentBlockId
+        const arr = entriesByBlockId.get(key)
+        if (arr) arr.push(e)
+        else entriesByBlockId.set(key, [e])
+      }
+      const entryById = new Map(entries.map((e) => [e.id, e]))
 
       for (const shot of state.shots) {
         const prevShot = prevMap.get(shot.id)
@@ -355,10 +267,10 @@ export function useSyncOrchestrator() {
 
         if (!visualChanged) continue
 
-        // Find matching rundown entry by parentBlockId or blockRange
-        const entry = entryByBlockId.get(shot.parentBlockId ?? "")
-          ?? entryByBlockId.get(shot.blockRange?.[0] ?? "")
-          ?? entries.find((e) => e.id === shot.id)
+        // Find matching rundown entry: by id first, then by parentBlockId (first match)
+        const entry = entryById.get(shot.id)
+          ?? (entriesByBlockId.get(shot.parentBlockId ?? "")?.[0])
+          ?? (entriesByBlockId.get(shot.blockRange?.[0] ?? "")?.[0])
 
         if (!entry) continue
 
