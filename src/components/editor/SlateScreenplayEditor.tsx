@@ -332,9 +332,34 @@ interface SpreadPreviewProps {
   focusMode: boolean
 }
 
-function SpreadPreview({ blocks, visualPageCount, colors, isDark, appTheme, focusMode }: SpreadPreviewProps) {
+function SpreadPreview({ blocks, visualPageCount: externalPageCount, colors, isDark, appTheme, focusMode }: SpreadPreviewProps) {
+  // Calculate page count from blocks if external count is unreliable (embedded mode)
+  const estimatedPageCount = useMemo(() => {
+    if (externalPageCount > 1) return externalPageCount
+    // Estimate from blocks content
+    const textAreaH = SCREENPLAY_PAGE_HEIGHT_PX - SCREENPLAY_PAGE_PADDING_TOP_PX - 96 // ~96px bottom padding
+    let totalH = 0
+    for (let i = 0; i < blocks.length; i++) {
+      const b = blocks[i]
+      // Estimate content width for wrapping
+      const contentW = b.type === "dialogue"
+        ? SCREENPLAY_PAGE_WIDTH_PX - SCREENPLAY_PAGE_PADDING_LEFT_PX - SCREENPLAY_PAGE_PADDING_RIGHT_PX - SCREENPLAY_DIALOGUE_INDENT_LEFT_CH * 8 - SCREENPLAY_DIALOGUE_INDENT_RIGHT_CH * 8
+        : SCREENPLAY_PAGE_WIDTH_PX - SCREENPLAY_PAGE_PADDING_LEFT_PX - SCREENPLAY_PAGE_PADDING_RIGHT_PX
+      const charsPerLine = Math.max(20, Math.floor(contentW / (SCREENPLAY_FONT_SIZE_PX * 0.6)))
+      const lines = Math.max(1, Math.ceil(b.text.length / charsPerLine))
+      const lineH = lines * SCREENPLAY_LINE_HEIGHT_PX
+      // Add margins
+      if (b.type === "scene_heading") totalH += (i === 0 ? SCREENPLAY_PAGE_PADDING_TOP_PX : SCREENPLAY_SCENE_HEADING_MARGIN_TOP_PX)
+      else if (b.type === "character") totalH += SCREENPLAY_CHARACTER_MARGIN_TOP_PX
+      else if (b.type === "transition") totalH += SCREENPLAY_TRANSITION_MARGIN_TOP_PX
+      else totalH += (i === 0 ? SCREENPLAY_PAGE_PADDING_TOP_PX : SCREENPLAY_ACTION_AFTER_ACTION_MARGIN_TOP_PX)
+      totalH += lineH
+    }
+    return Math.max(1, Math.ceil(totalH / textAreaH))
+  }, [blocks, externalPageCount])
+
   const [spreadIdx, setSpreadIdx] = useState(0) // index of left page (always even)
-  const pairCount = Math.ceil(visualPageCount / 2)
+  const pairCount = Math.ceil(estimatedPageCount / 2)
   const containerRef = useRef<HTMLDivElement>(null)
 
   // Keyboard navigation
@@ -399,7 +424,7 @@ function SpreadPreview({ blocks, visualPageCount, colors, isDark, appTheme, focu
   }, [colors])
 
   const renderPage = useCallback((pageIdx: number, previewScale: number) => {
-    if (pageIdx >= visualPageCount) {
+    if (pageIdx >= estimatedPageCount) {
       return <div style={{ width: SCREENPLAY_PAGE_WIDTH_PX * previewScale, height: SCREENPLAY_PAGE_HEIGHT_PX * previewScale }} />
     }
     const sourceTop = pageIdx * (SCREENPLAY_PAGE_HEIGHT_PX + SCREENPLAY_PAGE_GAP_PX)
@@ -418,7 +443,7 @@ function SpreadPreview({ blocks, visualPageCount, colors, isDark, appTheme, focu
         </div>
       </div>
     )
-  }, [blocks, visualPageCount, colors, renderBlock])
+  }, [blocks, estimatedPageCount, colors, renderBlock])
 
   const leftIdx = spreadIdx
   const rightIdx = spreadIdx + 1
@@ -508,7 +533,7 @@ function SpreadPreview({ blocks, visualPageCount, colors, isDark, appTheme, focu
           ›
         </button>
 
-        <span style={{ marginLeft: 4 }}>{leftIdx + 1}–{Math.min(rightIdx + 1, visualPageCount)} / {visualPageCount}</span>
+        <span style={{ marginLeft: 4 }}>{leftIdx + 1}–{Math.min(rightIdx + 1, estimatedPageCount)} / {estimatedPageCount}</span>
       </div>
     </div>
   )
