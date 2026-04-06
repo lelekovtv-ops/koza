@@ -112,130 +112,130 @@ function updateCurrentProjectScript(
 }
 
 export const DEMO_SCRIPTS: Record<string, string> = {
-  "signal": `FADE IN:
+  "signal": `НАЧ.
 
-INT. DEEP SPACE MONITORING STATION — NIGHT
+INT. СТАНЦИЯ МОНИТОРИНГА ГЛУБОКОГО КОСМОСА — НОЧЬ
 
-A windowless room buried under a mountain. Banks of monitors cast blue light on bare concrete walls. Coffee cups and energy bar wrappers everywhere. The hum of servers.
+Комната без окон под горой. Ряды мониторов заливают голубым светом голые бетонные стены. Стаканчики из-под кофе, обёртки от батончиков. Гул серверов.
 
-ELENA VASQUEZ (34, sharp eyes, rumpled NASA polo) sits alone at a workstation. Headphones on. She's been here for hours.
+ЕЛЕНА ВАСКЕС (34, острый взгляд, мятое поло с логотипом NASA) сидит одна за рабочей станцией. Наушники на голове. Она здесь уже несколько часов.
 
-On her screen: the SETI signal analyzer. Flat lines. Static. Nothing. Like every night for the past three years.
+На экране — анализатор сигналов SETI. Плоские линии. Статика. Ничего. Как каждую ночь последние три года.
 
-She reaches for her coffee. Empty. She sighs, pulls off her headphones—
+Тянется к кофе. Пусто. Вздыхает, снимает наушники—
 
-A PING.
+СИГНАЛ.
 
-Elena freezes. Looks at the screen. A spike in the waveform. Then another. Then a pattern.
+Елена замирает. Смотрит на экран. Всплеск на осциллограмме. Потом ещё один. Потом — паттерн.
 
-ELENA
-(whisper)
-No way.
+ЕЛЕНА
+(шёпотом)
+Не может быть.
 
-She puts the headphones back on. The signal is clear. Rhythmic. Unmistakably artificial.
+Надевает наушники обратно. Сигнал чистый. Ритмичный. Безошибочно искусственный.
 
-She picks up the red phone.
+Берёт красный телефон.
 
-ELENA (CONT'D)
-This is Vasquez at Goldstone. I need Director Chen. Now.
+ЕЛЕНА
+Это Васкес, станция Голдстоун. Мне нужен директор Чен. Сейчас.
 
-(beat)
+(пауза)
 
-Yes, I know what time it is. Tell him we have a Signal.
+Да, я знаю который час. Скажите ему — у нас Сигнал.
 
-SMASH CUT TO:
+РЕЗКАЯ СКЛЕЙКА:
 
-INT. NASA HEADQUARTERS — DIRECTOR'S OFFICE — NIGHT
+INT. ШТАБ-КВАРТИРА NASA — КАБИНЕТ ДИРЕКТОРА — НОЧЬ
 
-JAMES CHEN (58, silver hair, reading glasses) stares at a laptop screen. His hand trembles slightly. Behind him, through floor-to-ceiling windows, the Washington Monument glows.
+ДЖЕЙМС ЧЕН (58, седые волосы, очки для чтения) смотрит в экран ноутбука. Руки слегка дрожат. За ним, через панорамные окна, светится монумент Вашингтона.
 
-Elena is on video call, her face pixelated but intense.
+Елена на видеозвонке, лицо в пикселях, но взгляд — горящий.
 
-ELENA (ON SCREEN)
-It's repeating every 47 seconds. Prime number interval. Hydrogen line frequency. This isn't a pulsar, James.
+ЕЛЕНА
+Повторяется каждые 47 секунд. Интервал — простое число. Частота водородной линии. Это не пульсар, Джеймс.
 
-CHEN
-Where's it coming from?
+ЧЕН
+Откуда идёт?
 
-ELENA (ON SCREEN)
-That's the thing. It's not coming from space.
+ЕЛЕНА
+В том-то и дело. Не из космоса.
 
-A long silence.
+Долгая тишина.
 
-CHEN
-What do you mean?
+ЧЕН
+Что значит — не из космоса?
 
-ELENA (ON SCREEN)
-The signal is coming from beneath the ocean floor. Pacific basin. 4,000 meters down.
+ЕЛЕНА
+Сигнал идёт из-под дна океана. Тихоокеанская впадина. Глубина четыре тысячи метров.
 
-Chen takes off his glasses. Rubs his eyes. Puts them back on.
+Чен снимает очки. Трёт глаза. Надевает обратно.
 
-CHEN
-I'm calling the President.
+ЧЕН
+Я звоню президенту.
 
-CUT TO:
+ПЕРЕХОД:
 
-EXT. PACIFIC OCEAN — DAY
+EXT. ТИХИЙ ОКЕАН — ДЕНЬ
 
-AERIAL SHOT. Endless blue water. A single research vessel, the MERIDIAN, cuts through gentle swells.
+С ВЫСОТЫ. Бесконечная синяя вода. Одинокое исследовательское судно «МЕРИДИАН» режет пологую волну.
 
-SUPER: "72 HOURS LATER"
+ТИТР: "72 ЧАСА СПУСТЯ"
 
-INT. MERIDIAN — RESEARCH LAB — CONTINUOUS
+INT. «МЕРИДИАН» — ЛАБОРАТОРИЯ — ПРОДОЛЖЕНИЕ
 
-Cramped, packed with equipment. Elena works alongside DR. KOFI ASANTE (45, marine geologist, calm presence). Screens show sonar maps of the ocean floor.
+Тесная, забитая оборудованием. Елена работает рядом с ДОКТОРОМ КОФИ АСАНТЕ (45, морской геолог, спокойная уверенность). На экранах — сонарные карты дна.
 
-KOFI
-You understand this changes everything, right? If there's something manufactured at that depth — it predates any known civilization. We're talking millions of years.
+КОФИ
+Ты понимаешь, что это меняет всё? Если там что-то рукотворное на такой глубине — оно старше любой известной цивилизации. Мы говорим о миллионах лет.
 
-ELENA
-I know what we're talking about.
+ЕЛЕНА
+Я знаю, о чём мы говорим.
 
-KOFI
-Do you? Because the last three people I told this to thought I was having a breakdown.
+КОФИ
+Правда? Потому что последние трое, кому я это рассказал, решили, что у меня нервный срыв.
 
-Elena smiles for the first time. It transforms her face.
+Елена впервые улыбается. Улыбка меняет её лицо.
 
-ELENA
-Kofi. I've spent three years listening to static, hoping for exactly this. I'm the last person who'll think you're crazy.
+ЕЛЕНА
+Кофи. Я три года слушала статику, надеясь именно на это. Я — последний человек, который решит, что ты сошёл с ума.
 
-EXT. PACIFIC OCEAN — LATER
+EXT. ТИХИЙ ОКЕАН — ПОЗЖЕ
 
-The Meridian has stopped. Equipment cranes lower a deep-sea ROV — ORPHEUS — into the water. Its lights pierce the darkness as it descends.
+«Меридиан» остановился. Краны опускают глубоководный аппарат «ОРФЕЙ» в воду. Его прожекторы прорезают темноту.
 
-INT. MERIDIAN — ROV CONTROL ROOM — CONTINUOUS
+INT. «МЕРИДИАН» — ПУЛЬТ УПРАВЛЕНИЯ — ПРОДОЛЖЕНИЕ
 
-Elena and Kofi watch the monitors. The ROV's cameras show the descent: blue fading to black. Fish scatter in the lights.
+Елена и Кофи смотрят в мониторы. Камеры аппарата показывают погружение: синий переходит в чёрный. Рыбы разбегаются от света.
 
-DEPTH COUNTER: 1,000m... 2,000m... 3,000m...
+СЧЁТЧИК ГЛУБИНЫ: 1 000 м... 2 000 м... 3 000 м...
 
-KOFI
-Signal's getting stronger.
+КОФИ
+Сигнал усиливается.
 
-3,800m. The ocean floor appears. Mud. Rocks. Ancient sediment undisturbed for millennia.
+3 800 м. Дно океана. Ил. Камни. Древний осадок, не тронутый тысячелетиями.
 
-Then — something else.
+А потом — что-то другое.
 
-ELENA
-Oh my God.
+ЕЛЕНА
+Боже мой.
 
-On the screen: a perfect geometric structure embedded in the seabed. Black. Smooth. The size of a football field. Not natural. Not possible.
+На экране: идеальная геометрическая структура, вросшая в морское дно. Чёрная. Гладкая. Размером с футбольное поле. Не природная. Не возможная.
 
-It's pulsing with faint light. The same rhythm as the signal.
+Она пульсирует слабым светом. Тот же ритм, что и сигнал.
 
-KOFI
-(barely audible)
-It's been waiting.
+КОФИ
+(едва слышно)
+Оно ждало.
 
-The structure's light intensifies. On every screen in the room, the same message appears — not in any human language, but somehow, impossibly, understood:
+Свет структуры усиливается. На каждом экране в комнате появляется одно и то же сообщение — не на одном из человеческих языков, но каким-то образом, невозможным образом, понятное:
 
-WE HEARD YOU WERE LOOKING FOR US.
+МЫ СЛЫШАЛИ, ЧТО ВЫ НАС ИЩЕТЕ.
 
-SMASH CUT TO BLACK.
+РЕЗКАЯ СКЛЕЙКА В ЧЁРНЫЙ.
 
-TITLE CARD: "SIGNAL"
+ТИТР: «СИГНАЛ»
 
-FADE OUT.`,
+КОН.`,
 
   "slonik": `INT. СЛОНОВЬЯ ФЕРМА — УТРО
 
@@ -371,7 +371,7 @@ FADE OUT.`,
 }
 
 export const DEMO_SCRIPT_LIST: { id: string; label: string }[] = [
-  { id: "signal", label: "Signal (Sci-Fi Short)" },
+  { id: "signal", label: "Сигнал (Sci-Fi)" },
   { id: "slonik", label: "Слоник ищет маму" },
 ]
 
