@@ -107,13 +107,17 @@ function DirectorSection() {
 function BibleContextPanel({
   storyHistory,
   directorVision,
+  ambientPrompt,
   onStoryHistorySave,
   onDirectorVisionSave,
+  onAmbientPromptSave,
 }: {
   storyHistory: string
   directorVision: string
+  ambientPrompt: string
   onStoryHistorySave: (value: string) => void
   onDirectorVisionSave: (value: string) => void
+  onAmbientPromptSave: (value: string) => void
 }) {
   return (
     <section className="mb-6 grid gap-4 lg:grid-cols-2">
@@ -140,6 +144,20 @@ function BibleContextPanel({
           placeholder="Опиши философию фильма, режиссёрский взгляд, эмоциональную оптику, этику кадра и правила выбора решений..."
           rows={8}
           onSave={onDirectorVisionSave}
+        />
+      </article>
+
+      <article className="rounded-2xl border border-white/8 bg-white/3 p-4 lg:col-span-2">
+        <div className="mb-3">
+          <p className="text-[10px] uppercase tracking-[0.22em] text-white/35">Ambient Focus Mode</p>
+          <h2 className="mt-1 text-sm font-semibold uppercase tracking-[0.14em] text-white">Стиль фона при написании</h2>
+          <p className="mt-1 text-[11px] text-white/30">Промпт для генерации фоновых иллюстраций в полноэкранном режиме. Оставь пустым для стиля по умолчанию (comic book).</p>
+        </div>
+        <EditableTextArea
+          value={ambientPrompt}
+          placeholder="Comic book panel, graphic novel style, bold black ink outlines, halftone dots, dramatic camera angles, high contrast chiaroscuro lighting, 16:9 widescreen frame..."
+          rows={4}
+          onSave={onAmbientPromptSave}
         />
       </article>
     </section>
@@ -1201,6 +1219,8 @@ export default function BiblePage() {
   const removeUnusedEntries = useBibleStore((state) => state.removeUnusedEntries)
   const updateStoryHistory = useBibleStore((state) => state.updateStoryHistory)
   const updateDirectorVision = useBibleStore((state) => state.updateDirectorVision)
+  const ambientPrompt = useBibleStore((state) => state.ambientPrompt)
+  const updateAmbientPrompt = useBibleStore((state) => state.updateAmbientPrompt)
   const selectedImageGenModel = useBoardStore((state) => state.selectedImageGenModel)
   const setSelectedImageGenModel = useBoardStore((state) => state.setSelectedImageGenModel)
   const projectStyle = useBoardStore((state) => state.projectStyle)
@@ -1703,8 +1723,10 @@ export default function BiblePage() {
         <BibleContextPanel
           storyHistory={storyHistory}
           directorVision={directorVision}
+          ambientPrompt={ambientPrompt ?? ""}
           onStoryHistorySave={updateStoryHistory}
           onDirectorVisionSave={updateDirectorVision}
+          onAmbientPromptSave={updateAmbientPrompt}
         />
 
         {/* ─── Universal Smart Scan + Cleanup ─── */}

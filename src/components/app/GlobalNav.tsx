@@ -4,6 +4,7 @@ import { Suspense, Fragment } from "react"
 import Link from "next/link"
 import { usePathname } from "next/navigation"
 import { useThemeStore } from "@/store/theme"
+import { useScreenplaySettings } from "@/store/screenplaySettings"
 
 const NAV_ITEMS = [
   { id: "media", href: "/library", label: "MEDIA" },
@@ -142,7 +143,10 @@ function ThemeToggle() {
 function GlobalNavInner() {
   const pathname = usePathname()
   const theme = useThemeStore((s) => s.theme)
+  const focusMode = useScreenplaySettings((s) => s.focusMode)
   const s = THEME_STYLES[theme]
+
+  if (focusMode) return null
 
   return (
     <nav

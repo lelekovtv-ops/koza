@@ -2,16 +2,11 @@
 
 ## CRITICAL (data loss risk)
 
-### BUG-001: entryByBlockId Map loses sub-shots
-- **File**: `src/hooks/useSyncOrchestrator.ts:340`
-- **Problem**: `new Map(entries.map(e => [e.parentBlockId, e]))` — when multiple entries share same parentBlockId (sub-shots), only last entry is kept in map
-- **Impact**: Visual edits to sub-shots silently lost in reverse sync
-- **Fix**: Use `Map<string, RundownEntry[]>` with array per blockId
+### ~~BUG-001: entryByBlockId Map loses sub-shots~~ ✅ FIXED (8ce0f51)
+- **Fix applied**: `Map<string, RundownEntry[]>` with array per blockId
 
-### BUG-002: reorderEntry() wrong sibling filter
-- **File**: `src/store/rundown.ts:131-132`
-- **Problem**: Filters by `parentBlockId === entry.parentBlockId` — each entry has unique parentBlockId, so top-level reorder finds 0 siblings
-- **Fix**: Remove parentBlockId from filter, keep only `parentEntryId === entry.parentEntryId`
+### ~~BUG-002: reorderEntry() wrong sibling filter~~ ✅ FIXED (8ce0f51)
+- **Fix applied**: Removed parentBlockId from filter, kept only `parentEntryId === entry.parentEntryId`
 
 ## HIGH (race conditions)
 
@@ -31,22 +26,16 @@
 - **Problem**: Multiple consecutive dialogue blocks for same character only keep last text
 - **Fix**: Accumulate pendingDialogueText across multiple dialogue blocks
 
-### LEAK-001: Drag event listeners not cleaned on unmount
-- **File**: `src/components/editor/screenplay/EmbeddedTrackView.tsx:504-505`
-- **Problem**: `document.addEventListener("mousemove/mouseup")` added on mouseDown — if component unmounts during drag, listeners persist
-- **Fix**: Use AbortController or cleanup in useEffect return
+### ~~LEAK-001: Drag event listeners not cleaned on unmount~~ ✅ FIXED (8ce0f51)
+- **Fix applied**: AbortController + cleanup in EmbeddedTrackView
 
-### BUG-004: Old shotSyncEngine still runs alongside rundown
-- **File**: `src/hooks/useSyncOrchestrator.ts:152-227`
-- **Problem**: Old 300ms debounced blocks→shots→timeline path still active. Runs in parallel with new rundown path. Creates duplicate shots.
-- **Fix**: Remove old path entirely (Phase 6 cleanup)
+### ~~BUG-004: Old shotSyncEngine still runs alongside rundown~~ ✅ FIXED (8ce0f51)
+- **Fix applied**: Removed old path entirely (−80 lines from useSyncOrchestrator)
 
 ## LOW
 
-### BUG-005: Missing null check in shot-child-reorder
-- **File**: `src/hooks/useSyncOrchestrator.ts:318`
-- **Problem**: `reorderEntry(shotId, newOrder)` called without checking entry exists
-- **Fix**: Add `const entry = entries.find(...)` check
+### ~~BUG-005: Missing null check in shot-child-reorder~~ ✅ FIXED (8ce0f51)
+- **Fix applied**: Added `entries.find()` check before reorderEntry call
 
 ### ARCH-001: Duplicate getTopLevel/getLeafEntries logic
 - **Locations**: `src/lib/rundownHierarchy.ts` AND `src/store/rundown.ts`

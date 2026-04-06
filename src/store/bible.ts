@@ -88,6 +88,8 @@ interface BibleDocument {
   storyHistory: string
   directorVision: string
   directorProfile: DirectorProfile
+  /** Custom prompt for Ambient Focus Mode background generation */
+  ambientPrompt: string
 }
 
 function createDefaultBible(): BibleDocument {
@@ -98,6 +100,7 @@ function createDefaultBible(): BibleDocument {
     storyHistory: "",
     directorVision: "",
     directorProfile: { ...BUILT_IN_DIRECTORS[0] },
+    ambientPrompt: "",
   }
 }
 
@@ -115,6 +118,7 @@ interface BibleState extends BibleDocument {
   removeUnusedEntries: () => { chars: number; locs: number; props: number }
   updateStoryHistory: (value: string) => void
   updateDirectorVision: (value: string) => void
+  updateAmbientPrompt: (value: string) => void
   setDirectorProfile: (profile: DirectorProfile) => void
   setActiveProject: (projectId: string | null) => void
 }
@@ -408,6 +412,12 @@ export const useBibleStore = create<BibleState>()(
           ...updateCurrentProjectBible(state, { directorVision: value }),
         }))
       },
+      updateAmbientPrompt: (value) => {
+        set((state) => ({
+          ambientPrompt: value,
+          ...updateCurrentProjectBible(state, { ambientPrompt: value }),
+        }))
+      },
       setDirectorProfile: (profile) => {
         set((state) => ({
           directorProfile: { ...profile },
@@ -427,6 +437,7 @@ export const useBibleStore = create<BibleState>()(
                   storyHistory: state.storyHistory,
                   directorVision: state.directorVision,
                   directorProfile: state.directorProfile,
+                  ambientPrompt: state.ambientPrompt,
                 },
               }
             : state.projectBibles

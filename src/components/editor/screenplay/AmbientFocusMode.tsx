@@ -28,7 +28,7 @@ const CROSSFADE_DURATION_MS = 3000
 /** Image model */
 const IMAGE_MODEL = "nano-banana" // cheapest
 
-const AMBIENT_STYLE = [
+const DEFAULT_AMBIENT_STYLE = [
   "Comic book panel, graphic novel style,",
   "bold black ink outlines, halftone dots,",
   "dramatic camera angles like storyboard frames,",
@@ -45,9 +45,10 @@ const AMBIENT_STYLE = [
 
 // ─── Prompt builder ───
 
-function buildAmbientPrompt(sceneText: string, bible: { characters: string; locations: string }, panelCount: number): string {
+function buildAmbientPrompt(sceneText: string, bible: { characters: string; locations: string }, panelCount: number, customStyle?: string): string {
   const scene = sceneText.slice(0, 500).trim()
-  const parts = [AMBIENT_STYLE]
+  const style = customStyle?.trim() || DEFAULT_AMBIENT_STYLE
+  const parts = [style]
 
   // Panel layout instruction based on how many images we have
   if (panelCount <= 1) {
@@ -261,12 +262,15 @@ export function AmbientFocusMode() {
 
   const { text: sceneText, heading: sceneHeading } = useCurrentSceneInfo()
   const bible = useBibleContext()
+  const ambientPrompt = useBibleStore((s) => s.ambientPrompt)
   const sceneTextRef = useRef(sceneText)
   const headingRef = useRef(sceneHeading)
   const bibleRef = useRef(bible)
+  const ambientPromptRef = useRef(ambientPrompt)
   sceneTextRef.current = sceneText
   headingRef.current = sceneHeading
   bibleRef.current = bible
+  ambientPromptRef.current = ambientPrompt
 
   // ─── Fullscreen ───
 
@@ -331,7 +335,7 @@ export function AmbientFocusMode() {
     cooldownRef.current = Date.now() + GENERATION_COOLDOWN_MS
 
     const reason = sceneChanged ? "new scene" : "new text"
-    const prompt = buildAmbientPrompt(currentText, bibleRef.current, imageCountRef.current + 1)
+    const prompt = buildAmbientPrompt(currentText, bibleRef.current, imageCountRef.current + 1, ambientPromptRef.current)
     console.log(`[Ambient] Generating (${reason}):`, prompt.slice(0, 80) + "...")
     const result = await generateAmbientImage(prompt)
 
@@ -397,17 +401,19 @@ export function AmbientFocusMode() {
         transition: "opacity 1.5s ease-in-out",
       }}
     >
-      {/* Ambient images — sharp, vivid, full background */}
+      {/* Ambient images — 110% scale to guarantee full bleed on any aspect ratio */}
       {images.map((img, i) => (
         <div
           key={img.blobKey}
           style={{
             position: "absolute",
-            inset: 0,
+            inset: "-5%",
+            width: "110%",
+            height: "110%",
             backgroundImage: `url(${img.url})`,
             backgroundSize: "cover",
             backgroundPosition: "center",
-            opacity: i === activeIdx % images.length ? 0.55 : 0,
+            opacity: i === activeIdx % images.length ? 0.15 : 0,
             transition: `opacity ${CROSSFADE_DURATION_MS}ms ease-in-out`,
           }}
         />
@@ -422,59 +428,7 @@ export function AmbientFocusMode() {
         }}
       />
 
-      {/* Debug progress bar */}
-      <div
-        style={{
-          position: "fixed",
-          bottom: 0,
-          left: 0,
-          right: 0,
-          zIndex: 9999,
-          pointerEvents: "none",
-          padding: "8px 16px",
-          display: "flex",
-          alignItems: "center",
-          gap: 10,
-          fontFamily: "system-ui, sans-serif",
-          fontSize: 11,
-          color: "rgba(255,255,255,0.5)",
-          backgroundColor: "rgba(0,0,0,0.6)",
-          backdropFilter: "blur(4px)",
-        }}
-      >
-        <span style={{ color: "#D4A853", fontWeight: 600 }}>AMBIENT</span>
-        <span>{images.length}/{MAX_IMAGES_KEPT} img</span>
-        {generating && (
-          <>
-            <span style={{ color: "rgba(255,255,255,0.25)" }}>|</span>
-            <div style={{ flex: 1, maxWidth: 200, height: 3, borderRadius: 2, backgroundColor: "rgba(255,255,255,0.1)", overflow: "hidden" }}>
-              <div style={{ width: "100%", height: "100%", backgroundColor: "#D4A853", animation: "ambientProgress 3s ease-in-out infinite", transformOrigin: "left" }} />
-            </div>
-            <span style={{ color: "#D4A853" }}>generating...</span>
-          </>
-        )}
-        {!generating && images.length === 0 && (
-          <span style={{ color: "rgba(255,255,255,0.25)" }}>waiting for text changes...</span>
-        )}
-        {!generating && images.length > 0 && (
-          <span style={{ color: "rgba(255,255,255,0.25)" }}>active: {activeIdx % images.length + 1}/{images.length}</span>
-        )}
-      </div>
-
-      <style>{`
-        @keyframes ambientProgress {
-          0% { transform: scaleX(0); }
-          50% { transform: scaleX(1); }
-          100% { transform: scaleX(0); }
-        }
-      `}</style>
-
-      <style>{`
-        @keyframes pulse {
-          0%, 100% { opacity: 0.4; }
-          50% { opacity: 0.8; }
-        }
-      `}</style>
+      {/* Debug info removed — clean fullscreen */}
     </div>
   )
 }

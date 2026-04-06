@@ -132,44 +132,8 @@ export function createRenderElement({
 
     const isLocked = lockedBlockIds?.has(el.id) ?? false
 
-    // Duration badge + shot status dot
-    const blockDurationMs = durationMap?.get(el.id)
-    const shotStatus = shotStatusMap?.get(el.id)
-    const showBadge = blockDurationMs != null && (el.type === "scene_heading" || el.type === "action" || el.type === "dialogue")
-
-    const durationBadge = showBadge ? (
-      <span
-        contentEditable={false}
-        style={{
-          position: "absolute",
-          right: -68,
-          top: "50%",
-          transform: "translateY(-50%)",
-          display: "flex",
-          alignItems: "center",
-          gap: 4,
-          fontSize: 9,
-          fontFamily: "system-ui, sans-serif",
-          userSelect: "none",
-          whiteSpace: "nowrap",
-          lineHeight: "14px",
-          pointerEvents: "none",
-        }}
-      >
-        {shotStatus && (
-          <span style={{
-            width: 5,
-            height: 5,
-            borderRadius: "50%",
-            backgroundColor: shotStatus === "image" ? "#4ADE80" : shotStatus === "prompt" ? "#FBBF24" : "#555",
-            flexShrink: 0,
-          }} />
-        )}
-        <span style={{ color: "#666", opacity: 0.7 }}>
-          {(blockDurationMs / 1000).toFixed(1)}s
-        </span>
-      </span>
-    ) : null
+    // Duration badges hidden in screenplay editor — visible only in storyboard/breakdown
+    const durationBadge = null
 
     switch (el.type) {
       case "scene_heading": {
@@ -186,40 +150,12 @@ export function createRenderElement({
               textTransform: "uppercase",
               position: "relative",
               transition: "box-shadow 0.3s ease",
-              boxShadow: isHighlighted && sceneInfo
-                ? `inset 3px 0 0 ${sceneInfo.color}, 0 0 0 1px ${sceneInfo.color}40`
-                : sceneInfo
-                  ? `inset 3px 0 0 ${sceneInfo.color}`
-                  : undefined,
-              borderRadius: isHighlighted ? 3 : undefined,
-              backgroundColor: isHighlighted ? `${sceneInfo?.color ?? "#4A7C6F"}12` : undefined,
+              boxShadow: undefined,
+              borderRadius: undefined,
+              backgroundColor: undefined,
             }}
           >
-            {sceneInfo && (
-              <span
-                contentEditable={false}
-                style={{
-                  position: "absolute",
-                  left: -48,
-                  top: "50%",
-                  transform: "translateY(-50%)",
-                  fontSize: 8,
-                  fontWeight: 700,
-                  fontFamily: "system-ui, sans-serif",
-                  letterSpacing: "0.08em",
-                  textTransform: "uppercase",
-                  color: sceneInfo.color,
-                  backgroundColor: `${sceneInfo.color}18`,
-                  borderRadius: 3,
-                  padding: "1px 4px",
-                  userSelect: "none",
-                  whiteSpace: "nowrap",
-                  lineHeight: "14px",
-                }}
-              >
-                SC {sceneInfo.index}
-              </span>
-            )}
+            {/* Scene number badge hidden in screenplay — visible in storyboard/breakdown */}
             {durationBadge}
             {children}
           </div>
@@ -322,7 +258,7 @@ export function createRenderElement({
             data-block-id={el.id}
             style={{
               ...baseStyle,
-              position: (isLocked || showBadge) ? "relative" as const : undefined,
+              position: isLocked ? "relative" as const : undefined,
             }}
           >
             {isLocked && (

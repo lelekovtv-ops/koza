@@ -79,6 +79,10 @@ import {
   SCREENPLAY_PAGE_PADDING_TOP_PX,
   SCREENPLAY_PAGE_WIDTH_PX,
   SCREENPLAY_PARENTHETICAL_INDENT_CH,
+  SCREENPLAY_SCENE_HEADING_MARGIN_TOP_PX,
+  SCREENPLAY_CHARACTER_MARGIN_TOP_PX,
+  SCREENPLAY_TRANSITION_MARGIN_TOP_PX,
+  SCREENPLAY_ACTION_AFTER_ACTION_MARGIN_TOP_PX,
 } from "./screenplay/screenplayLayoutConstants"
 import { calculatePageBreaks } from "./screenplay/screenplayPageBreaks"
 import { useBibleStore } from "@/store/bible"
@@ -399,6 +403,7 @@ const SlateScreenplayEditor = forwardRef<
     selectedText: "",
   })
   const [toolbarCollapsed, setToolbarCollapsed] = useState(focusMode)
+  const viewMode = useScreenplaySettings((s) => s.viewMode)
   const [zoomPercent, setZoomPercent] = useState(100)
   const [typewriterSound, setTypewriterSound] = useState(false)
   const [slugGhost, setSlugGhost] = useState<{ ghost: string; full: string } | null>(null)
@@ -1167,7 +1172,7 @@ const SlateScreenplayEditor = forwardRef<
               height: SCREENPLAY_PAGE_HEIGHT_PX,
               backgroundColor: focusMode ? "rgba(0,0,0,0.35)" : appTheme === "architect" ? colors.surfaceBg : paperTheme.bg,
               borderRadius: focusMode ? 8 : 3,
-              border: focusMode ? "1px solid rgba(255,255,255,0.06)" : appTheme === "architect" ? `1px solid ${colors.border}` : `1px solid ${paperTheme.bg === "#FFFFFF" ? "#E5E0DB" : "rgba(255,255,255,0.06)"}`,
+              border: focusMode ? "none" : appTheme === "architect" ? `1px solid ${colors.border}` : `1px solid ${paperTheme.bg === "#FFFFFF" ? "#E5E0DB" : "transparent"}`,
               boxShadow: focusMode ? "0 0 60px rgba(0,0,0,0.4)" : appTheme === "architect" ? colors.shadow : "0 8px 60px rgba(0,0,0,0.4)",
               backdropFilter: focusMode ? "blur(6px) saturate(0.95)" : undefined,
               WebkitBackdropFilter: focusMode ? "blur(6px) saturate(0.95)" : undefined,
@@ -1294,7 +1299,15 @@ const SlateScreenplayEditor = forwardRef<
 
   return (
     <div className="flex h-full flex-col" style={{ backgroundColor: focusMode ? "transparent" : colors.bg }}>
-      <div className="relative mx-auto flex w-full flex-1 overflow-hidden" style={focusMode ? undefined : { maxWidth: Math.max(720, SCREENPLAY_PAGE_WIDTH_PX * zoomScale + 120) }}>
+      <div className="relative mx-auto flex w-full flex-1 overflow-hidden" style={focusMode ? undefined : {
+        maxWidth: viewMode === "spread"
+          ? Math.max(1440, SCREENPLAY_PAGE_WIDTH_PX * 2 * zoomScale + 200)
+          : viewMode === "fullscreen"
+            ? "100%"
+            : viewMode === "scroll"
+              ? Math.max(720, SCREENPLAY_PAGE_WIDTH_PX * zoomScale + 120)
+              : Math.max(720, SCREENPLAY_PAGE_WIDTH_PX * zoomScale + 120),
+      }}>
         <ScreenplayToolbar
           colors={colors}
           focusMode={focusMode}
@@ -1325,18 +1338,183 @@ const SlateScreenplayEditor = forwardRef<
           typewriterSound={typewriterSound}
         />
 
+        {/* SPREAD PREVIEW — read-only two-page book view */}
+        {viewMode === "spread" && !focusMode && (
+          <div
+            className="relative flex-1 overflow-auto"
+            style={{ backgroundColor: appTheme === "architect" ? "#080808" : isDark ? "#201E1B" : "#EDEDED", padding: "32px 24px" }}
+          >
+            {(() => {
+              const previewScale = 0.58
+              const pageW = SCREENPLAY_PAGE_WIDTH_PX * previewScale
+              const pageH = SCREENPLAY_PAGE_HEIGHT_PX * previewScale
+              const spreadGap = 2
+              const rowGap = 40
+              const pairCount = Math.ceil(visualPageCount / 2)
+              const fullEditorH = visualPageCount * SCREENPLAY_PAGE_HEIGHT_PX + (visualPageCount - 1) * SCREENPLAY_PAGE_GAP_PX
+
+              return (
+                <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: rowGap, paddingBottom: 60 }}>
+                  {Array.from({ length: pairCount }).map((_, pair) => {
+                    const leftIdx = pair * 2
+                    const rightIdx = pair * 2 + 1
+
+                    return (
+                      <div key={pair} style={{ display: "flex", gap: spreadGap, filter: "drop-shadow(0 2px 6px rgba(0,0,0,0.2))" }}>
+                        {[leftIdx, rightIdx].map((pageIdx) => {
+                          if (pageIdx >= visualPageCount) {
+                            return <div key={pageIdx} style={{ width: pageW, height: pageH }} />
+                          }
+
+                          const sourceTop = pageIdx * (SCREENPLAY_PAGE_HEIGHT_PX + SCREENPLAY_PAGE_GAP_PX)
+
+                          return (
+                            <div
+                              key={pageIdx}
+                              style={{
+                                width: pageW,
+                                height: pageH,
+                                backgroundColor: colors.surfaceBg,
+                                overflow: "hidden",
+                                position: "relative",
+                              }}
+                            >
+                              {/* Page number */}
+                              <div style={{
+                                position: "absolute",
+                                top: 8,
+                                right: 12,
+                                fontSize: 9,
+                                color: colors.muted,
+                                zIndex: 2,
+                                fontFamily: "'Courier Prime', monospace",
+                              }}>
+                                {pageIdx + 1}.
+                              </div>
+
+                              {/* Scaled + clipped content */}
+                              <div style={{
+                                transform: `scale(${previewScale})`,
+                                transformOrigin: "top left",
+                                width: SCREENPLAY_PAGE_WIDTH_PX,
+                                height: SCREENPLAY_PAGE_HEIGHT_PX,
+                                overflow: "hidden",
+                                pointerEvents: "none",
+                                position: "relative",
+                              }}>
+                                <div style={{
+                                  position: "absolute",
+                                  top: -sourceTop,
+                                  left: 0,
+                                  width: SCREENPLAY_PAGE_WIDTH_PX,
+                                }}>
+                                  {blocks.map((block, bi) => {
+                                    const style: React.CSSProperties = {
+                                      fontFamily: "'Courier Prime', monospace",
+                                      fontSize: SCREENPLAY_FONT_SIZE_PX,
+                                      lineHeight: `${SCREENPLAY_LINE_HEIGHT_PX}px`,
+                                      padding: `0 ${SCREENPLAY_PAGE_PADDING_RIGHT_PX}px 0 ${SCREENPLAY_PAGE_PADDING_LEFT_PX}px`,
+                                      color: colors.text,
+                                    }
+
+                                    if (block.type === "scene_heading") {
+                                      return (
+                                        <div key={block.id} style={{
+                                          ...style,
+                                          fontWeight: "bold",
+                                          textTransform: "uppercase",
+                                          color: colors.scene,
+                                          marginTop: bi === 0 ? SCREENPLAY_PAGE_PADDING_TOP_PX : SCREENPLAY_SCENE_HEADING_MARGIN_TOP_PX,
+                                        }}>
+                                          {block.text}
+                                        </div>
+                                      )
+                                    }
+                                    if (block.type === "character") {
+                                      return (
+                                        <div key={block.id} style={{
+                                          ...style,
+                                          textTransform: "uppercase",
+                                          paddingLeft: `${SCREENPLAY_PAGE_PADDING_LEFT_PX + SCREENPLAY_CHARACTER_INDENT_CH * 8}px`,
+                                          marginTop: SCREENPLAY_CHARACTER_MARGIN_TOP_PX,
+                                          color: colors.character,
+                                        }}>
+                                          {block.text}
+                                        </div>
+                                      )
+                                    }
+                                    if (block.type === "dialogue") {
+                                      return (
+                                        <div key={block.id} style={{
+                                          ...style,
+                                          paddingLeft: `${SCREENPLAY_PAGE_PADDING_LEFT_PX + SCREENPLAY_DIALOGUE_INDENT_LEFT_CH * 8}px`,
+                                          paddingRight: `${SCREENPLAY_PAGE_PADDING_RIGHT_PX + SCREENPLAY_DIALOGUE_INDENT_RIGHT_CH * 8}px`,
+                                        }}>
+                                          {block.text}
+                                        </div>
+                                      )
+                                    }
+                                    if (block.type === "parenthetical") {
+                                      return (
+                                        <div key={block.id} style={{
+                                          ...style,
+                                          paddingLeft: `${SCREENPLAY_PAGE_PADDING_LEFT_PX + SCREENPLAY_PARENTHETICAL_INDENT_CH * 8}px`,
+                                          color: colors.parenthetical,
+                                        }}>
+                                          {block.text}
+                                        </div>
+                                      )
+                                    }
+                                    if (block.type === "transition") {
+                                      return (
+                                        <div key={block.id} style={{
+                                          ...style,
+                                          textAlign: "right",
+                                          textTransform: "uppercase",
+                                          marginTop: SCREENPLAY_TRANSITION_MARGIN_TOP_PX,
+                                          color: colors.transition,
+                                        }}>
+                                          {block.text}
+                                        </div>
+                                      )
+                                    }
+                                    // action, shot, etc
+                                    return (
+                                      <div key={block.id} style={{
+                                        ...style,
+                                        marginTop: bi === 0 ? SCREENPLAY_PAGE_PADDING_TOP_PX : SCREENPLAY_ACTION_AFTER_ACTION_MARGIN_TOP_PX,
+                                      }}>
+                                        {block.text}
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    )
+                  })}
+                </div>
+              )
+            })()}
+          </div>
+        )}
+
         {/* EDITOR AREA */}
-        <div className="relative flex-1 overflow-hidden" style={{ backgroundColor: focusMode ? "transparent" : (appTheme === "architect" ? "#080808" : isDark ? "#201E1B" : "#EDEDED"), padding: focusMode ? "40px 0" : "0 0 0 72px" }}>
-          {/* Top shadow — page slides under */}
-          <div className="pointer-events-none absolute inset-x-0 top-0 z-50 h-28" style={{ background: `linear-gradient(to bottom, ${appTheme === "architect" ? '#080808' : isDark ? '#201E1B' : '#EDEDED'} 0%, ${appTheme === "architect" ? '#080808cc' : isDark ? '#201E1Bcc' : '#EDEDEDcc'} 40%, transparent 100%)` }} />
+        {(viewMode !== "spread" || focusMode) && <>
+        <div className="relative flex-1 overflow-hidden" style={{ backgroundColor: focusMode ? "transparent" : (appTheme === "architect" ? "#080808" : isDark ? "#201E1B" : "#EDEDED"), padding: focusMode ? "0" : "0 0 0 72px" }}>
+          {/* Top shadow — page slides under (hidden in focus mode) */}
+          {!focusMode && <div className="pointer-events-none absolute inset-x-0 top-0 z-50 h-28" style={{ background: `linear-gradient(to bottom, ${appTheme === "architect" ? '#080808' : isDark ? '#201E1B' : '#EDEDED'} 0%, ${appTheme === "architect" ? '#080808cc' : isDark ? '#201E1Bcc' : '#EDEDEDcc'} 40%, transparent 100%)` }} />}
           <div
             ref={standaloneScrollRef}
             className="relative h-full w-full overflow-auto"
             style={{
-              backgroundColor: focusMode ? "rgba(10,11,16,0.75)" : "transparent",
-              borderRadius: focusMode ? "3px" : undefined,
-              border: focusMode ? `1px solid ${colors.border}` : undefined,
-              width: focusMode ? 660 : undefined,
+              backgroundColor: focusMode ? "rgba(10,11,16,0.65)" : "transparent",
+              borderRadius: undefined,
+              border: undefined,
+              width: focusMode ? 700 : undefined,
               maxWidth: focusMode ? "calc(100vw - 48px)" : undefined,
               margin: focusMode ? "0 auto" : undefined,
               backdropFilter: focusMode ? "blur(12px)" : undefined,
@@ -1351,37 +1529,56 @@ const SlateScreenplayEditor = forwardRef<
               setZoomPercent={setZoomPercent}
             />
 
-            {/* Pages container */}
+            {/* Pages container — adapts to viewMode */}
             <div
               style={{
                 position: "relative",
-                width: SCREENPLAY_PAGE_WIDTH_PX * zoomScale,
-                margin: `${SCREENPLAY_PAGE_GAP_PX * zoomScale}px auto`,
-                minHeight: visualPageCount * SCREENPLAY_PAGE_HEIGHT_PX * zoomScale + (visualPageCount - 1) * SCREENPLAY_PAGE_GAP_PX * zoomScale,
+                width: viewMode === "scroll" || viewMode === "fullscreen"
+                  ? "100%"
+                  : viewMode === "spread"
+                    ? SCREENPLAY_PAGE_WIDTH_PX * 2 * zoomScale + SCREENPLAY_PAGE_GAP_PX * zoomScale
+                    : SCREENPLAY_PAGE_WIDTH_PX * zoomScale,
+                maxWidth: viewMode === "fullscreen" ? SCREENPLAY_PAGE_WIDTH_PX * zoomScale : undefined,
+                margin: viewMode === "scroll"
+                  ? "0 auto"
+                  : `${SCREENPLAY_PAGE_GAP_PX * zoomScale}px auto`,
+                minHeight: viewMode === "scroll"
+                  ? undefined
+                  : visualPageCount * SCREENPLAY_PAGE_HEIGHT_PX * zoomScale + (visualPageCount - 1) * SCREENPLAY_PAGE_GAP_PX * zoomScale,
               }}
             >
-              {/* Page paper backgrounds */}
-              {Array.from({ length: visualPageCount }).map((_, i) => (
-                <div
-                  key={`page-${i}`}
-                  style={{
-                    position: "absolute",
-                    top: i * (SCREENPLAY_PAGE_HEIGHT_PX + SCREENPLAY_PAGE_GAP_PX) * zoomScale,
-                    left: 0,
-                    width: "100%",
-                    height: SCREENPLAY_PAGE_HEIGHT_PX * zoomScale,
-                    backgroundColor: focusMode ? colors.surfaceBg : colors.surfaceBg,
-                    boxShadow: isDark
-                      ? "0 1px 3px rgba(0,0,0,0.24), 0 1px 2px rgba(0,0,0,0.16)"
-                      : "0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06)",
-                    borderRadius: 2,
-                    pointerEvents: "none",
-                  }}
-                />
-              ))}
+              {/* Page paper backgrounds (hidden in scroll mode) */}
+              {viewMode !== "scroll" && Array.from({ length: visualPageCount }).map((_, i) => {
+                const isSpread = viewMode === "spread"
+                const col = isSpread ? i % 2 : 0
+                const row = isSpread ? Math.floor(i / 2) : i
+                const pageW = SCREENPLAY_PAGE_WIDTH_PX * zoomScale
+                const pageH = SCREENPLAY_PAGE_HEIGHT_PX * zoomScale
+                const gapH = SCREENPLAY_PAGE_GAP_PX * zoomScale
+                const gapW = SCREENPLAY_PAGE_GAP_PX * zoomScale
 
-              {/* Page numbers */}
-              {visualPageCount > 1 && Array.from({ length: visualPageCount }).map((_, i) => (
+                return (
+                  <div
+                    key={`page-${i}`}
+                    style={{
+                      position: "absolute",
+                      top: isSpread
+                        ? row * (pageH + gapH)
+                        : i * (pageH + gapH),
+                      left: isSpread ? col * (pageW + gapW) : 0,
+                      width: isSpread ? pageW : "100%",
+                      height: pageH,
+                      backgroundColor: colors.surfaceBg,
+                      boxShadow: isDark ? "none" : "0 2px 8px rgba(0,0,0,0.12)",
+                      borderRadius: 0,
+                      pointerEvents: "none",
+                    }}
+                  />
+                )
+              })}
+
+              {/* Page numbers (hidden in scroll mode) */}
+              {viewMode !== "scroll" && visualPageCount > 1 && Array.from({ length: visualPageCount }).map((_, i) => (
                 <div
                   key={`pgnum-${i}`}
                   style={{
@@ -1414,12 +1611,16 @@ const SlateScreenplayEditor = forwardRef<
                   style={{
                     position: "relative",
                     zIndex: 1,
-                    padding: editorPadding,
+                    padding: viewMode === "scroll"
+                      ? `${SCREENPLAY_PAGE_PADDING_TOP_PX * zoomScale}px ${SCREENPLAY_PAGE_PADDING_RIGHT_PX * zoomScale}px`
+                      : editorPadding,
                     outline: "none",
                     color: colors.text,
                     caretColor: colors.accent,
-                    background: "transparent",
-                    minHeight: visualPageCount * SCREENPLAY_PAGE_HEIGHT_PX * zoomScale + (visualPageCount - 1) * SCREENPLAY_PAGE_GAP_PX * zoomScale,
+                    background: viewMode === "scroll" ? colors.surfaceBg : "transparent",
+                    minHeight: viewMode === "scroll"
+                      ? "100vh"
+                      : visualPageCount * SCREENPLAY_PAGE_HEIGHT_PX * zoomScale + (visualPageCount - 1) * SCREENPLAY_PAGE_GAP_PX * zoomScale,
                   }}
                 />
               </Slate>
@@ -1478,6 +1679,7 @@ const SlateScreenplayEditor = forwardRef<
           applyAIAction={applyAIAction}
           setFloatingToolbar={setFloatingToolbar}
         />
+      </>}
       </div>
 
       <ScreenplayFooter

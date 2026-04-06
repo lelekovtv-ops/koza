@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { StorageCleanup } from "@/components/app/StorageCleanup";
 import { DevInspector } from "@/components/app/DevInspector";
 import { GlobalNav } from "@/components/app/GlobalNav";
+import { MainContent } from "@/components/app/MainContent";
 import { ThemeProvider } from "@/components/app/ThemeProvider";
 import "./globals.css";
 
@@ -26,9 +27,9 @@ export default function RootLayout({
         <ThemeProvider />
         <StorageCleanup />
         <GlobalNav />
-        <main className="flex-1 overflow-auto pt-[56px]">
+        <MainContent>
           {children}
-        </main>
+        </MainContent>
         <DevInspector />
       </body>
     </html>

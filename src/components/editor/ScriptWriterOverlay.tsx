@@ -511,7 +511,7 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
         <div
           className="relative z-2 h-full px-6"
           style={{
-            paddingTop: PAGE_TOP,
+            paddingTop: isFocusMode ? 0 : PAGE_TOP,
             paddingBottom: 0,
           }}
         >
@@ -519,7 +519,7 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
             <div
               className="relative flex h-full w-screen max-w-none items-stretch justify-center overflow-hidden transition-opacity duration-300"
               style={{
-                height: `calc(100dvh - ${PAGE_TOP}px)`,
+                height: isFocusMode ? "100dvh" : `calc(100dvh - ${PAGE_TOP}px)`,
               }}
             >
               <div
@@ -624,7 +624,7 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
                   className="relative -mx-6 flex h-full w-screen max-w-none items-stretch overflow-hidden transition-opacity duration-300"
                   style={{
                     opacity: secondPageVisible ? 1 : 0,
-                    height: `calc(100dvh - ${PAGE_TOP}px)`,
+                    height: isFocusMode ? "100dvh" : `calc(100dvh - ${PAGE_TOP}px)`,
                   }}
                 >
                   <div
@@ -696,13 +696,13 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
         </div>
       </div>
 
-      {visible && (
+      {visible && !isFocusMode && (
         <div className="fixed bottom-6 right-6 z-5 rounded-md bg-[#1f1b17]/55 px-3 py-1 text-xs text-white/80 backdrop-blur-sm">
           {status === "saving" ? <span className="animate-pulse">Saving...</span> : <span>Saved</span>}
         </div>
       )}
 
-      {aiLoading && (
+      {aiLoading && !isFocusMode && (
         <div className="fixed bottom-16 right-6 z-6 rounded-md bg-[#1f1b17]/70 px-3 py-1 text-xs text-white/90 backdrop-blur-sm">
           {aiStatus}
         </div>
@@ -710,9 +710,10 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
 
       {!isFocusMode && <CommandBarTrigger />}
       <ScreenplayCommandBar />
-      {!isFocusMode && <KeyboardHints />}
+      <KeyboardHints />
+      <ViewModeButton />
 
-      {aiError && !aiLoading && (
+      {aiError && !aiLoading && !isFocusMode && (
         <button
           type="button"
           onClick={() => setAiError(null)}
@@ -723,7 +724,7 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
         </button>
       )}
 
-      {uploadError && (
+      {uploadError && !isFocusMode && (
         <button
           type="button"
           onClick={() => setUploadError(null)}
@@ -747,6 +748,127 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
         />
       )}
     </div>
+  )
+}
+
+function ViewModeButton() {
+  const [open, setOpen] = useState(false)
+  const viewMode = useScreenplaySettings((s) => s.viewMode)
+  const setViewMode = useScreenplaySettings((s) => s.setViewMode)
+
+  const modes = [
+    { id: "single" as const, label: "Single Page", icon: (
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2">
+        <rect x="4" y="1" width="8" height="14" rx="1" />
+      </svg>
+    )},
+    { id: "spread" as const, label: "Two Pages", icon: (
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2">
+        <rect x="1" y="2" width="6" height="12" rx="1" />
+        <rect x="9" y="2" width="6" height="12" rx="1" />
+      </svg>
+    )},
+    { id: "fullscreen" as const, label: "Fullscreen", icon: (
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2">
+        <rect x="1" y="1" width="14" height="14" rx="1" />
+        <path d="M1 4h14M1 12h14" strokeWidth="0.8" strokeOpacity="0.4" />
+      </svg>
+    )},
+    { id: "scroll" as const, label: "Continuous", icon: (
+      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2">
+        <rect x="4" y="0" width="8" height="16" rx="1" />
+        <line x1="6" y1="4" x2="10" y2="4" strokeWidth="0.8" strokeOpacity="0.4" />
+        <line x1="6" y1="7" x2="10" y2="7" strokeWidth="0.8" strokeOpacity="0.4" />
+        <line x1="6" y1="10" x2="10" y2="10" strokeWidth="0.8" strokeOpacity="0.4" />
+      </svg>
+    )},
+  ]
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        title="View mode"
+        style={{
+          position: "fixed",
+          left: 18,
+          top: 122,
+          zIndex: 500,
+          pointerEvents: "auto",
+          width: 42,
+          height: 42,
+          borderRadius: "50%",
+          border: open ? "1px solid rgba(212, 168, 83, 0.3)" : "1px solid rgba(255,255,255,0.08)",
+          background: open ? "rgba(212, 168, 83, 0.12)" : "rgba(255,255,255,0.05)",
+          color: open ? "#D4A853" : "rgba(255,255,255,0.35)",
+          cursor: "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          transition: "all 0.2s",
+        }}
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.3">
+          <rect x="1" y="1" width="6" height="6" rx="1" />
+          <rect x="9" y="1" width="6" height="6" rx="1" />
+          <rect x="1" y="9" width="6" height="6" rx="1" />
+          <rect x="9" y="9" width="6" height="6" rx="1" />
+        </svg>
+      </button>
+
+      {open && (
+        <div
+          style={{
+            position: "fixed",
+            left: 14,
+            top: 172,
+            zIndex: 500,
+            pointerEvents: "auto",
+            userSelect: "none",
+            fontFamily: "system-ui, sans-serif",
+            display: "flex",
+            flexDirection: "column",
+            gap: 4,
+            background: "rgba(30, 30, 30, 0.9)",
+            backdropFilter: "blur(12px)",
+            borderRadius: 10,
+            border: "1px solid rgba(255,255,255,0.08)",
+            padding: 6,
+          }}
+        >
+          {modes.map((mode) => {
+            const active = viewMode === mode.id
+            return (
+              <button
+                key={mode.id}
+                type="button"
+                onClick={() => { setViewMode(mode.id); setOpen(false) }}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "7px 12px",
+                  borderRadius: 6,
+                  border: "none",
+                  background: active ? "rgba(212, 168, 83, 0.15)" : "transparent",
+                  color: active ? "#D4A853" : "rgba(255,255,255,0.4)",
+                  fontSize: 13,
+                  cursor: "pointer",
+                  transition: "all 0.15s",
+                  whiteSpace: "nowrap",
+                }}
+                onMouseEnter={(e) => { if (!active) e.currentTarget.style.background = "rgba(255,255,255,0.06)" }}
+                onMouseLeave={(e) => { if (!active) e.currentTarget.style.background = "transparent" }}
+              >
+                {mode.icon}
+                <span>{mode.label}</span>
+              </button>
+            )
+          })}
+        </div>
+      )}
+    </>
   )
 }
 
@@ -805,13 +927,13 @@ function KeyboardHints() {
           left: 18,
           top: 72,
           zIndex: 200,
-          width: 32,
-          height: 32,
+          width: 42,
+          height: 42,
           borderRadius: "50%",
           border: open ? "1px solid rgba(212, 168, 83, 0.3)" : "1px solid rgba(255,255,255,0.08)",
           background: open ? "rgba(212, 168, 83, 0.12)" : "rgba(255,255,255,0.05)",
           color: open ? "#D4A853" : "rgba(255,255,255,0.35)",
-          fontSize: 15,
+          fontSize: 20,
           fontWeight: 700,
           fontFamily: "system-ui, sans-serif",
           cursor: "pointer",
@@ -829,19 +951,19 @@ function KeyboardHints() {
           style={{
             position: "fixed",
             left: 14,
-            top: 114,
+            top: 134,
             zIndex: 200,
             userSelect: "none",
             fontFamily: "system-ui, sans-serif",
             display: "flex",
             flexDirection: "column",
-            gap: 10,
+            gap: 13,
           }}
         >
           {hints.map(({ keys, desc, action }, i) => {
             const isSeparator = keys === "─"
             if (isSeparator) {
-              return <div key={i} style={{ height: 1, width: 120, background: "rgba(255,255,255,0.06)", margin: "2px 0" }} />
+              return <div key={i} style={{ height: 1, width: 156, background: "rgba(255,255,255,0.06)", margin: "2px 0" }} />
             }
             const isHovered = hoveredIdx === i
             return (
@@ -853,28 +975,28 @@ function KeyboardHints() {
                 style={{
                   display: "flex",
                   alignItems: "baseline",
-                  gap: 7,
+                  gap: 9,
                   cursor: action ? "pointer" : "default",
-                  padding: "2px 4px",
-                  marginLeft: -4,
-                  borderRadius: 4,
-                  background: isHovered && action ? "rgba(212, 168, 83, 0.1)" : "transparent",
-                  transition: "background 0.15s",
+                  padding: "5px 10px",
+                  marginLeft: -10,
+                  borderRadius: 8,
+                  background: isHovered && action ? "rgba(255, 255, 255, 0.06)" : "transparent",
+                  transition: "background 0.2s",
                 }}
               >
                 <span style={{
-                  fontSize: 11,
+                  fontSize: 14,
                   fontWeight: 600,
                   color: isHovered && action ? "rgba(212, 168, 83, 0.7)" : "rgba(255,255,255,0.3)",
                   whiteSpace: "nowrap",
-                  minWidth: 56,
+                  minWidth: 72,
                   textAlign: "right",
                   transition: "color 0.15s",
                 }}>
                   {keys}
                 </span>
                 <span style={{
-                  fontSize: 11,
+                  fontSize: 14,
                   color: isHovered && action ? "rgba(212, 168, 83, 0.5)" : "rgba(255,255,255,0.18)",
                   transition: "color 0.15s",
                 }}>
