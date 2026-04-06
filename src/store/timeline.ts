@@ -3,6 +3,7 @@ import { persist } from "zustand/middleware"
 import { safeStorage } from "@/lib/safeStorage"
 import type { ChangeOrigin } from "@/lib/productionTypes"
 import { syncBus } from "@/lib/syncBus"
+import { emitOp, shouldEmit } from "@/lib/ws/opEmitter"
 
 export type HistoryEntrySource = "generate" | "edit" | "crop" | "color" | "loading"
 
@@ -297,6 +298,27 @@ export const useTimelineStore = create<TimelineState>()(
           }),
         }))
 
+        if (shouldEmit(origin)) {
+          emitOp({
+            type: "shot.create",
+            shotId: shot.id,
+            sceneId: shot.sceneId || "",
+            parentBlockId: shot.parentBlockId ?? undefined,
+            data: {
+              order: shot.order,
+              duration: shot.duration,
+              shotSize: shot.shotSize,
+              cameraMotion: shot.cameraMotion,
+              caption: shot.caption,
+              label: shot.label,
+              directorNote: shot.directorNote,
+              cameraNote: shot.cameraNote,
+              imagePrompt: shot.imagePrompt,
+              videoPrompt: shot.videoPrompt,
+            },
+          })
+        }
+
         return shot.id
       },
       removeShot: (id, origin?) => {
@@ -317,6 +339,9 @@ export const useTimelineStore = create<TimelineState>()(
             ...updateCurrentProjectTimeline(state, { shots }),
           }
         })
+        if (shouldEmit(origin)) {
+          emitOp({ type: "shot.delete", shotId: id })
+        }
       },
       updateShot: (id, patch, origin?) => {
         set((state) => {
@@ -330,6 +355,9 @@ export const useTimelineStore = create<TimelineState>()(
             ...updateCurrentProjectTimeline(state, { shots }),
           }
         })
+        if (shouldEmit(origin)) {
+          emitOp({ type: "shot.update", shotId: id, patch: patch as Record<string, unknown> })
+        }
       },
       reorderShot: (id, toIndex, origin?) => {
         set((state) => {

@@ -16,6 +16,7 @@ import {
   type BlockType,
 } from "@/lib/screenplayFormat"
 import type { ChangeOrigin, Shot, ShotGroup } from "@/lib/productionTypes"
+import { emitOp, shouldEmit } from "@/lib/ws/opEmitter"
 
 type ScriptDocument = {
   scenario: string   // plain text (export from blocks, kept for compat)
@@ -535,6 +536,9 @@ export const useScriptStore = create<ScriptState>()(
             ...updateCurrentProjectScript(state, { blocks, scenario }),
           }
         })
+        if (shouldEmit(origin)) {
+          emitOp({ type: "block.create", blockId: newBlock.id, afterId, blockType: type })
+        }
         return newBlock.id
       },
 
@@ -549,6 +553,9 @@ export const useScriptStore = create<ScriptState>()(
             ...updateCurrentProjectScript(state, { blocks, scenario }),
           }
         })
+        if (shouldEmit(origin)) {
+          emitOp({ type: "block.update", blockId: id, text })
+        }
       },
 
       changeType: (id, type, origin) => {
@@ -562,6 +569,9 @@ export const useScriptStore = create<ScriptState>()(
             ...updateCurrentProjectScript(state, { blocks, scenario }),
           }
         })
+        if (shouldEmit(origin)) {
+          emitOp({ type: "block.changeType", blockId: id, blockType: type })
+        }
       },
 
       deleteBlock: (id, origin) => {
@@ -579,6 +589,9 @@ export const useScriptStore = create<ScriptState>()(
             ...updateCurrentProjectScript(state, { blocks: finalBlocks, shots, scenario }),
           }
         })
+        if (shouldEmit(origin)) {
+          emitOp({ type: "block.delete", blockId: id })
+        }
       },
 
       updateBlockProduction: (id, patch, origin) => {
@@ -592,6 +605,9 @@ export const useScriptStore = create<ScriptState>()(
             ...updateCurrentProjectScript(state, { blocks }),
           }
         })
+        if (shouldEmit(origin)) {
+          emitOp({ type: "block.updateMeta", blockId: id, meta: patch as Record<string, unknown> })
+        }
       },
 
       // ── Shots (parent-child with blocks) ──

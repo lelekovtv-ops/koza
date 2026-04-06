@@ -3,6 +3,28 @@ import { persist } from "zustand/middleware"
 import { safeStorage } from "@/lib/safeStorage"
 import { loadBlob } from "@/lib/fileStorage"
 import { useDevLogStore } from "@/store/devlog"
+import { emitOp } from "@/lib/ws/opEmitter"
+
+// Debounced bible settings sync — collects rapid edits into one op
+let _bibleSyncTimer: ReturnType<typeof setTimeout> | null = null
+function emitBibleSettings() {
+  if (_bibleSyncTimer) clearTimeout(_bibleSyncTimer)
+  _bibleSyncTimer = setTimeout(() => {
+    const s = useBibleStore.getState()
+    emitOp({
+      type: "settings.set",
+      key: "bible",
+      data: {
+        characters: s.characters,
+        locations: s.locations,
+        props: s.props,
+        directorVision: s.directorVision,
+        storyHistory: s.storyHistory,
+        ambientPrompt: s.ambientPrompt,
+      },
+    })
+  }, 2000)
+}
 import {
   type BibleReferenceImage,
   type CharacterEntry,
@@ -339,6 +361,7 @@ export const useBibleStore = create<BibleState>()(
           ))
           return { characters, ...updateCurrentProjectBible(state, { characters }) }
         })
+        emitBibleSettings()
       },
       updateLocation: (id, patch) => {
         set((state) => {
@@ -347,6 +370,7 @@ export const useBibleStore = create<BibleState>()(
           ))
           return { locations, ...updateCurrentProjectBible(state, { locations }) }
         })
+        emitBibleSettings()
       },
       updateProp: (id, patch) => {
         set((state) => {
@@ -355,6 +379,7 @@ export const useBibleStore = create<BibleState>()(
           ))
           return { props, ...updateCurrentProjectBible(state, { props }) }
         })
+        emitBibleSettings()
       },
       addProp: (prop) => {
         set((state) => {
@@ -411,12 +436,14 @@ export const useBibleStore = create<BibleState>()(
           directorVision: value,
           ...updateCurrentProjectBible(state, { directorVision: value }),
         }))
+        emitBibleSettings()
       },
       updateAmbientPrompt: (value) => {
         set((state) => ({
           ambientPrompt: value,
           ...updateCurrentProjectBible(state, { ambientPrompt: value }),
         }))
+        emitBibleSettings()
       },
       setDirectorProfile: (profile) => {
         set((state) => ({
