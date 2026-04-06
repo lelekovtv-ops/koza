@@ -1404,7 +1404,6 @@ const SlateScreenplayEditor = forwardRef<
   if (embedded) {
     const isScrollMode = viewMode === "scroll"
     const isSpreadMode = viewMode === "spread"
-    const isFullscreenMode = viewMode === "fullscreen"
 
     // Spread mode — read-only two-page preview
     if (isSpreadMode) {
@@ -1427,11 +1426,8 @@ const SlateScreenplayEditor = forwardRef<
       )
     }
 
-    // Single / Scroll / Fullscreen — editable
+    // Single / Scroll — editable
     const isLight = paperTheme.bg === "#FFFFFF" || paperTheme.bg === "#FFF8F0" || paperTheme.bg === "#F5F0E8"
-    const embeddedWidth = isFullscreenMode
-      ? "100%"
-      : SCREENPLAY_PAGE_WIDTH_PX
 
     return (
       <div
@@ -1439,9 +1435,7 @@ const SlateScreenplayEditor = forwardRef<
         className="w-full"
         style={{
           position: "relative",
-          width: embeddedWidth,
-          maxWidth: isFullscreenMode ? Math.max(SCREENPLAY_PAGE_WIDTH_PX, 1200) : undefined,
-          margin: isFullscreenMode ? "0 auto" : undefined,
+          width: SCREENPLAY_PAGE_WIDTH_PX,
           minHeight: isScrollMode
             ? undefined
             : visualPageCount * SCREENPLAY_PAGE_HEIGHT_PX + (visualPageCount - 1) * SCREENPLAY_PAGE_GAP_PX,
@@ -1604,11 +1598,7 @@ const SlateScreenplayEditor = forwardRef<
       <div className="relative mx-auto flex w-full flex-1 overflow-hidden" style={focusMode ? undefined : {
         maxWidth: viewMode === "spread"
           ? Math.max(1440, SCREENPLAY_PAGE_WIDTH_PX * 2 * zoomScale + 200)
-          : viewMode === "fullscreen"
-            ? "100%"
-            : viewMode === "scroll"
-              ? Math.max(720, SCREENPLAY_PAGE_WIDTH_PX * zoomScale + 120)
-              : Math.max(720, SCREENPLAY_PAGE_WIDTH_PX * zoomScale + 120),
+          : Math.max(720, SCREENPLAY_PAGE_WIDTH_PX * zoomScale + 120),
       }}>
         <ScreenplayToolbar
           colors={colors}
@@ -1685,10 +1675,9 @@ const SlateScreenplayEditor = forwardRef<
             <div
               style={{
                 position: "relative",
-                width: viewMode === "scroll" || viewMode === "fullscreen"
+                width: viewMode === "scroll"
                   ? "100%"
                   : SCREENPLAY_PAGE_WIDTH_PX * zoomScale,
-                maxWidth: viewMode === "fullscreen" ? Math.max(SCREENPLAY_PAGE_WIDTH_PX * zoomScale, 1200) : undefined,
                 margin: viewMode === "scroll"
                   ? "0 auto"
                   : `${SCREENPLAY_PAGE_GAP_PX * zoomScale}px auto`,

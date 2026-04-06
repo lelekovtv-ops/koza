@@ -5,7 +5,6 @@ import {
   BookOpen,
   Eye,
   EyeOff,
-  Maximize,
   Moon,
   Columns2,
   FileText,
@@ -82,7 +81,6 @@ export function ScreenplayCommandBar() {
   const viewModeLabels: Record<PageViewMode, string> = {
     single: "Single Page",
     spread: "Two Pages",
-    fullscreen: "Fullscreen",
     scroll: "Scroll",
   }
 
@@ -129,14 +127,6 @@ export function ScreenplayCommandBar() {
       icon: <Columns2 className="h-4 w-4" />,
       action: () => { settings.setViewMode("spread"); settings.setCommandBarOpen(false) },
       active: settings.viewMode === "spread",
-      group: "View",
-    },
-    {
-      id: "view-fullscreen",
-      label: "Fullscreen Page",
-      icon: <Maximize className="h-4 w-4" />,
-      action: () => { settings.setViewMode("fullscreen"); settings.setCommandBarOpen(false) },
-      active: settings.viewMode === "fullscreen",
       group: "View",
     },
     {

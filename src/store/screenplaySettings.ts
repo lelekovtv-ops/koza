@@ -2,7 +2,7 @@ import { create } from "zustand"
 import { persist } from "zustand/middleware"
 import { safeStorage } from "@/lib/safeStorage"
 
-export type PageViewMode = "single" | "spread" | "fullscreen" | "scroll"
+export type PageViewMode = "single" | "spread" | "scroll"
 export type PaperTheme = "classic" | "warm" | "cool" | "dark" | "pure-dark"
 
 const PAPER_THEMES: Record<PaperTheme, { bg: string; text: string; label: string }> = {

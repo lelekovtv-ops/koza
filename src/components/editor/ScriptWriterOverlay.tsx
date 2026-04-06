@@ -770,12 +770,6 @@ function ViewModeButton() {
         <rect x="9" y="2" width="6" height="12" rx="1" />
       </svg>
     )},
-    { id: "fullscreen" as const, label: "Fullscreen", icon: (
-      <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2">
-        <rect x="1" y="1" width="14" height="14" rx="1" />
-        <path d="M1 4h14M1 12h14" strokeWidth="0.8" strokeOpacity="0.4" />
-      </svg>
-    )},
     { id: "scroll" as const, label: "Continuous", icon: (
       <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2">
         <rect x="4" y="0" width="8" height="16" rx="1" />
