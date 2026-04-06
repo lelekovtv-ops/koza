@@ -1,17 +1,24 @@
 "use client"
 
-import { useState, useMemo, useCallback } from "react"
+import { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import { useScriptStore } from "@/store/script"
 import { useScenesStore } from "@/store/scenes"
 
 export function SceneNavigatorButton() {
   const [open, setOpen] = useState(false)
 
+  // Close when other popups open
+  useEffect(() => {
+    const handler = () => setOpen(false)
+    window.addEventListener("koza-popup-open", handler)
+    return () => window.removeEventListener("koza-popup-open", handler)
+  }, [])
+
   return (
     <>
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => { const next = !open; setOpen(next); if (next) window.dispatchEvent(new Event("koza-popup-open")) }}
         title="Scene navigator"
         style={{
           position: "fixed",
@@ -50,8 +57,18 @@ export function SceneNavigatorButton() {
 }
 
 function SceneNavigatorPanel({ onClose }: { onClose: () => void }) {
+  const panelRef = useRef<HTMLDivElement>(null)
   const blocks = useScriptStore((s) => s.blocks)
   const scenes = useScenesStore((s) => s.scenes)
+
+  // Close on click outside
+  useEffect(() => {
+    const handler = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) onClose()
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [onClose])
 
   const sceneHeadings = useMemo(() => {
     return blocks
@@ -78,6 +95,7 @@ function SceneNavigatorPanel({ onClose }: { onClose: () => void }) {
 
   return (
     <div
+      ref={panelRef}
       style={{
         position: "fixed",
         left: 14,

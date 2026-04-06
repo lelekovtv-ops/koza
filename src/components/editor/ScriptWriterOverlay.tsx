@@ -759,6 +759,31 @@ function ViewModeButton() {
   const setViewMode = useScreenplaySettings((s) => s.setViewMode)
   const focusMode = useScreenplaySettings((s) => s.focusMode)
   const toggleFocusMode = useScreenplaySettings((s) => s.toggleFocusMode)
+  const panelRef = useRef<HTMLDivElement>(null)
+
+  // Close on click outside
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (panelRef.current && !panelRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [open])
+
+  // Auto-close after 4s
+  useEffect(() => {
+    if (!open) return
+    const t = setTimeout(() => setOpen(false), 4000)
+    return () => clearTimeout(t)
+  }, [open])
+
+  // Close when other popups open
+  useEffect(() => {
+    const handler = () => setOpen(false)
+    window.addEventListener("koza-popup-open", handler)
+    return () => window.removeEventListener("koza-popup-open", handler)
+  }, [])
 
   const modes = [
     { id: "single" as const, label: "Single Page", icon: (
@@ -786,7 +811,7 @@ function ViewModeButton() {
     <>
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => { const next = !open; setOpen(next); if (next) window.dispatchEvent(new Event("koza-popup-open")) }}
         title="View mode"
         style={{
           position: "fixed",
@@ -817,6 +842,7 @@ function ViewModeButton() {
 
       {open && (
         <div
+          ref={panelRef}
           style={{
             position: "fixed",
             left: 14,
@@ -909,6 +935,31 @@ function KeyboardHints() {
   const [open, setOpen] = useState(false)
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const settings = useScreenplaySettings()
+  const hintsPanelRef = useRef<HTMLDivElement>(null)
+
+  // Close on click outside
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (hintsPanelRef.current && !hintsPanelRef.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener("mousedown", handler)
+    return () => document.removeEventListener("mousedown", handler)
+  }, [open])
+
+  // Auto-close after 5s
+  useEffect(() => {
+    if (!open) return
+    const t = setTimeout(() => setOpen(false), 5000)
+    return () => clearTimeout(t)
+  }, [open])
+
+  // Close when other popups open
+  useEffect(() => {
+    const handler = () => setOpen(false)
+    window.addEventListener("koza-popup-open", handler)
+    return () => window.removeEventListener("koza-popup-open", handler)
+  }, [])
 
   const sendKey = useCallback((key: string, opts?: { shift?: boolean; meta?: boolean }) => {
     setOpen(false)
@@ -946,7 +997,7 @@ function KeyboardHints() {
     <>
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
+        onClick={() => { const next = !open; setOpen(next); if (next) window.dispatchEvent(new Event("koza-popup-open")) }}
         title="Keyboard shortcuts"
         style={{
           position: "fixed",
@@ -974,6 +1025,7 @@ function KeyboardHints() {
 
       {open && (
         <div
+          ref={hintsPanelRef}
           style={{
             position: "fixed",
             left: 14,
