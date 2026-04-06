@@ -48,17 +48,12 @@ interface ScriptState extends ScriptDocument {
 
   // ── Shots (parent-child with blocks) ──
   setShots: (shots: Shot[]) => void
-  addShotToBlock: (parentBlockId: string, partial: Partial<Shot>) => string
   removeShotFromBlock: (shotId: string) => void
   reorderShotInBlock: (shotId: string, newOrder: number) => void
   updateShot: (shotId: string, patch: Partial<Shot>) => void
-  clearBlockContent: (blockId: string) => void
 
-  // ── Shot groups (deprecated) ──
+  // ── Shot groups (used by breakdown enrichment) ──
   setShotGroups: (groups: ShotGroup[]) => void
-  addShotGroup: (group: ShotGroup) => void
-  updateShotGroup: (id: string, patch: Partial<ShotGroup>) => void
-  removeShotGroup: (id: string) => void
 
   // ── Demo scripts ──
   loadDemo: (id: string) => void
@@ -378,40 +373,6 @@ export const useScriptStore = create<ScriptState>()(
         }))
       },
 
-      addShotToBlock: (parentBlockId, partial) => {
-        const id = `shot_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`
-        set((state) => {
-          const siblings = state.shots.filter((s) => s.parentBlockId === parentBlockId)
-          const newShot: Shot = {
-            id,
-            parentBlockId,
-            order: siblings.length,
-            label: partial.label ?? `Shot ${siblings.length + 1}`,
-            caption: partial.caption ?? "",
-            sourceText: partial.sourceText ?? "",
-            shotSize: partial.shotSize ?? "",
-            cameraMotion: partial.cameraMotion ?? "",
-            directorNote: partial.directorNote ?? "",
-            cameraNote: partial.cameraNote ?? "",
-            imagePrompt: partial.imagePrompt ?? "",
-            videoPrompt: partial.videoPrompt ?? "",
-            visualDescription: partial.visualDescription ?? "",
-            durationMs: partial.durationMs ?? 2000,
-            visual: partial.visual ?? null,
-            locked: partial.locked ?? false,
-            autoSynced: partial.autoSynced ?? true,
-            speaker: partial.speaker ?? null,
-            type: partial.type ?? "action",
-          }
-          const shots = [...state.shots, newShot]
-          return {
-            shots,
-            ...updateCurrentProjectScript(state, { shots }),
-          }
-        })
-        return id
-      },
-
       removeShotFromBlock: (shotId) => {
         set((state) => {
           const shot = state.shots.find((s) => s.id === shotId)
@@ -471,71 +432,12 @@ export const useScriptStore = create<ScriptState>()(
         })
       },
 
-      clearBlockContent: (blockId) => {
-        set((state) => {
-          // Remove all child shots
-          const shots = state.shots.filter((s) => s.parentBlockId !== blockId)
-          // Clear production fields on the block
-          const blocks = state.blocks.map((b) =>
-            b.id === blockId
-              ? {
-                  ...b,
-                  visual: undefined,
-                  voiceClipId: undefined,
-                  sfxHints: undefined,
-                  shotGroupId: undefined,
-                  modifier: undefined,
-                  durationMs: undefined,
-                  durationSource: undefined,
-                }
-              : b
-          )
-          return {
-            blocks,
-            shots,
-            ...updateCurrentProjectScript(state, { blocks, shots }),
-          }
-        })
-      },
-
-      // ── Shot groups (deprecated) ──
+      // ── Shot groups (used by breakdown enrichment) ──
       setShotGroups: (shotGroups) => {
         set((state) => ({
           shotGroups,
           ...updateCurrentProjectScript(state, { shotGroups }),
         }))
-      },
-
-      addShotGroup: (group) => {
-        set((state) => {
-          const shotGroups = [...state.shotGroups, group]
-          return {
-            shotGroups,
-            ...updateCurrentProjectScript(state, { shotGroups }),
-          }
-        })
-      },
-
-      updateShotGroup: (id, patch) => {
-        set((state) => {
-          const shotGroups = state.shotGroups.map((g) =>
-            g.id === id ? { ...g, ...patch } : g
-          )
-          return {
-            shotGroups,
-            ...updateCurrentProjectScript(state, { shotGroups }),
-          }
-        })
-      },
-
-      removeShotGroup: (id) => {
-        set((state) => {
-          const shotGroups = state.shotGroups.filter((g) => g.id !== id)
-          return {
-            shotGroups,
-            ...updateCurrentProjectScript(state, { shotGroups }),
-          }
-        })
       },
 
       setFlow: (flowPatch) => {
@@ -599,11 +501,3 @@ export const useScriptStore = create<ScriptState>()(
     { name: "koza-script", storage: safeStorage }
   )
 )
-
-/** Get shots for a specific block (standalone selector to avoid circular reference) */
-export function getShotsForBlock(blockId: string): Shot[] {
-  return useScriptStore
-    .getState()
-    .shots.filter((s) => s.parentBlockId === blockId)
-    .sort((a, b) => a.order - b.order)
-}

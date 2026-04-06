@@ -1,24 +1,26 @@
 # Improvement Plan
 
-## Phase A: Bug Fixes (immediate)
+## Phase A: Bug Fixes ✅ DONE (commit 8ce0f51)
 
-1. **Fix BUG-001**: entryByBlockId → Map<string, RundownEntry[]> in useSyncOrchestrator reverse sync
-2. **Fix BUG-002**: reorderEntry filter — remove parentBlockId check
-3. **Fix LEAK-001**: AbortController for drag handlers in EmbeddedTrackView
-4. **Fix BUG-004**: Remove old shotSyncEngine path from useSyncOrchestrator (lines 152-227)
-5. **Fix BUG-005**: Null check before reorderEntry
+1. ~~**Fix BUG-001**: entryByBlockId → Map<string, RundownEntry[]>~~
+2. ~~**Fix BUG-002**: reorderEntry filter — remove parentBlockId check~~
+3. ~~**Fix LEAK-001**: AbortController for drag handlers in EmbeddedTrackView~~
+4. ~~**Fix BUG-004**: Remove old shotSyncEngine path from useSyncOrchestrator~~
+5. ~~**Fix BUG-005**: Null check before reorderEntry~~
 
 ## Phase B: Remove Legacy Code
 
-1. Delete `src/lib/shotSyncEngine.ts` — replaced by rundownBuilder
-2. Delete `src/lib/syncBus.ts` — replaced by direct store calls
-3. Remove `Shot` interface from productionTypes.ts
-4. Remove `ShotGroup` interface
-5. Remove `SyncEventType`, `SyncEvent` types
-6. Remove `shots[]`, `shotGroups[]` from scriptStore
-7. Remove shot CRUD from scriptStore (addShotToBlock, removeShotFromBlock, etc.)
-8. Remove `TimelineShot` from timelineStore → use RundownEntry directly
-9. Delete `src/lib/rundownBridge.ts` — no longer needed after direct consumption
+### ✅ Done
+1. ~~Delete `src/lib/shotSyncEngine.ts`~~ — deleted, `simpleHash` moved to rundownBuilder
+2. ~~Remove dead Shot CRUD from scriptStore~~ — removed addShotToBlock, clearBlockContent, addShotGroup, updateShotGroup, removeShotGroup, getShotsForBlock
+
+### ⛔ NOT safe to remove yet (still live)
+3. `syncBus.ts` — used by 5 files for reverse sync (timeline→screenplay). Remove after migrating to direct store calls
+4. `Shot` / `ShotGroup` interfaces — Shot used by scriptStore + enrichFromBreakdown; ShotGroup used by breakdown enrichment + StoryboardPanel
+5. `SyncEventType` / `SyncEvent` — used by syncBus + useSyncOrchestrator
+6. `TimelineShot` — imported by 19 files, main UI type. Remove after migrating StoryboardPanel + ShotStudio to rundownStore
+7. `rundownBridge.ts` — adapter RundownEntry→TimelineShot used by useSyncOrchestrator. Remove after #6
+8. `shots[]` / `shotGroups[]` in scriptStore — shots used by ScriptViewer (fallback) + sync; shotGroups by breakdown enrichment
 
 ## Phase C: Test Coverage
 

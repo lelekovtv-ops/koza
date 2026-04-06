@@ -10,7 +10,17 @@
 import type { RundownEntry } from "./rundownTypes"
 import { createRundownEntry, makeRundownEntryId } from "./rundownTypes"
 import { estimateBlockDurationMs, dialogueDurationMs, actionDurationMs, HEADING_MS } from "./durationEngine"
-import { simpleHash } from "./shotSyncEngine"
+// ─── Utilities ───────────────────────────────────────────────
+
+/** Fast FNV-1a hash for text comparison */
+export function simpleHash(str: string): number {
+  let hash = 0x811c9dc5
+  for (let i = 0; i < str.length; i++) {
+    hash ^= str.charCodeAt(i)
+    hash = (hash * 0x01000193) >>> 0
+  }
+  return hash
+}
 
 // ─── Input Types ─────────────────────────────────────────────
 
