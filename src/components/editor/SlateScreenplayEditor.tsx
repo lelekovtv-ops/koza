@@ -402,11 +402,14 @@ function SpreadPreview({ blocks, visualPageCount: externalPageCount, colors, isD
   const textColor = focusMode ? "rgba(255,255,255,0.85)" : appTheme === "architect" ? colors.text : paperText
 
   const renderBlock = useCallback((block: Block, bi: number) => {
+    // Match screenplayRenderers.tsx exactly: base padding from page margins,
+    // then character/dialogue/parenthetical add ch-based indents on top
     const base: React.CSSProperties = {
-      fontFamily: "'Courier Prime', monospace",
+      fontFamily: "'Courier Prime', 'Courier New', monospace",
       fontSize: SCREENPLAY_FONT_SIZE_PX,
       lineHeight: `${SCREENPLAY_LINE_HEIGHT_PX}px`,
-      padding: `0 ${SCREENPLAY_PAGE_PADDING_RIGHT_PX}px 0 ${SCREENPLAY_PAGE_PADDING_LEFT_PX}px`,
+      paddingLeft: SCREENPLAY_PAGE_PADDING_LEFT_PX,
+      paddingRight: SCREENPLAY_PAGE_PADDING_RIGHT_PX,
       color: textColor,
       whiteSpace: "pre-wrap",
       wordBreak: "break-word",
@@ -415,11 +418,11 @@ function SpreadPreview({ blocks, visualPageCount: externalPageCount, colors, isD
       case "scene_heading":
         return <div key={block.id} style={{ ...base, fontWeight: "bold", textTransform: "uppercase", color: colors.scene, marginTop: bi === 0 ? SCREENPLAY_PAGE_PADDING_TOP_PX : SCREENPLAY_SCENE_HEADING_MARGIN_TOP_PX }}>{block.text}</div>
       case "character":
-        return <div key={block.id} style={{ ...base, textTransform: "uppercase", paddingLeft: SCREENPLAY_PAGE_PADDING_LEFT_PX + SCREENPLAY_CHARACTER_INDENT_CH * 8, marginTop: SCREENPLAY_CHARACTER_MARGIN_TOP_PX, color: colors.character }}>{block.text}</div>
+        return <div key={block.id} style={{ ...base, fontWeight: "bold", textTransform: "uppercase", paddingLeft: `calc(${SCREENPLAY_PAGE_PADDING_LEFT_PX}px + ${SCREENPLAY_CHARACTER_INDENT_CH}ch)`, marginTop: SCREENPLAY_CHARACTER_MARGIN_TOP_PX, color: colors.character }}>{block.text}</div>
       case "dialogue":
-        return <div key={block.id} style={{ ...base, paddingLeft: SCREENPLAY_PAGE_PADDING_LEFT_PX + SCREENPLAY_DIALOGUE_INDENT_LEFT_CH * 8, paddingRight: SCREENPLAY_PAGE_PADDING_RIGHT_PX + SCREENPLAY_DIALOGUE_INDENT_RIGHT_CH * 8 }}>{block.text}</div>
+        return <div key={block.id} style={{ ...base, paddingLeft: `calc(${SCREENPLAY_PAGE_PADDING_LEFT_PX}px + ${SCREENPLAY_DIALOGUE_INDENT_LEFT_CH}ch)`, paddingRight: `calc(${SCREENPLAY_PAGE_PADDING_RIGHT_PX}px + ${SCREENPLAY_DIALOGUE_INDENT_RIGHT_CH}ch)` }}>{block.text}</div>
       case "parenthetical":
-        return <div key={block.id} style={{ ...base, paddingLeft: SCREENPLAY_PAGE_PADDING_LEFT_PX + SCREENPLAY_PARENTHETICAL_INDENT_CH * 8, color: colors.parenthetical }}>{block.text}</div>
+        return <div key={block.id} style={{ ...base, fontStyle: "italic", paddingLeft: `calc(${SCREENPLAY_PAGE_PADDING_LEFT_PX}px + ${SCREENPLAY_PARENTHETICAL_INDENT_CH}ch)`, color: colors.parenthetical }}>{block.text}</div>
       case "transition":
         return <div key={block.id} style={{ ...base, textAlign: "right", textTransform: "uppercase", marginTop: SCREENPLAY_TRANSITION_MARGIN_TOP_PX, color: colors.transition }}>{block.text}</div>
       default:
