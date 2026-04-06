@@ -330,9 +330,11 @@ interface SpreadPreviewProps {
   isDark: boolean
   appTheme: string
   focusMode: boolean
+  paperBg: string
+  paperText: string
 }
 
-function SpreadPreview({ blocks, visualPageCount: externalPageCount, colors, isDark, appTheme, focusMode }: SpreadPreviewProps) {
+function SpreadPreview({ blocks, visualPageCount: externalPageCount, colors, isDark, appTheme, focusMode, paperBg, paperText }: SpreadPreviewProps) {
   // Calculate page count from blocks if external count is unreliable (embedded mode)
   const estimatedPageCount = useMemo(() => {
     if (externalPageCount > 1) return externalPageCount
@@ -397,13 +399,15 @@ function SpreadPreview({ blocks, visualPageCount: externalPageCount, colors, isD
     }
   }, [pairCount])
 
+  const textColor = focusMode ? "rgba(255,255,255,0.85)" : appTheme === "architect" ? colors.text : paperText
+
   const renderBlock = useCallback((block: Block, bi: number) => {
     const base: React.CSSProperties = {
       fontFamily: "'Courier Prime', monospace",
       fontSize: SCREENPLAY_FONT_SIZE_PX,
       lineHeight: `${SCREENPLAY_LINE_HEIGHT_PX}px`,
       padding: `0 ${SCREENPLAY_PAGE_PADDING_RIGHT_PX}px 0 ${SCREENPLAY_PAGE_PADDING_LEFT_PX}px`,
-      color: colors.text,
+      color: textColor,
       whiteSpace: "pre-wrap",
       wordBreak: "break-word",
     }
@@ -421,7 +425,7 @@ function SpreadPreview({ blocks, visualPageCount: externalPageCount, colors, isD
       default:
         return <div key={block.id} style={{ ...base, marginTop: bi === 0 ? SCREENPLAY_PAGE_PADDING_TOP_PX : SCREENPLAY_ACTION_AFTER_ACTION_MARGIN_TOP_PX }}>{block.text}</div>
     }
-  }, [colors])
+  }, [colors, textColor])
 
   const renderPage = useCallback((pageIdx: number, previewScale: number) => {
     if (pageIdx >= estimatedPageCount) {
@@ -431,9 +435,18 @@ function SpreadPreview({ blocks, visualPageCount: externalPageCount, colors, isD
     const pageW = SCREENPLAY_PAGE_WIDTH_PX * previewScale
     const pageH = SCREENPLAY_PAGE_HEIGHT_PX * previewScale
 
+    const isLight = paperBg === "#FFFFFF" || paperBg === "#FFF8F0" || paperBg === "#F5F0E8"
+    const pageBg = focusMode ? "rgba(0,0,0,0.35)" : appTheme === "architect" ? colors.surfaceBg : paperBg
+    const pageNumColor = isLight && !focusMode ? "rgba(0,0,0,0.3)" : colors.muted
+    const pageBorder = focusMode ? "none" : isLight ? "1px solid rgba(0,0,0,0.08)" : "1px solid rgba(255,255,255,0.06)"
+
     return (
-      <div style={{ width: pageW, height: pageH, backgroundColor: colors.surfaceBg, overflow: "hidden", position: "relative", borderRadius: 2 }}>
-        <div style={{ position: "absolute", top: 8, right: 12, fontSize: 11, color: colors.muted, zIndex: 2, fontFamily: "'Courier Prime', monospace" }}>
+      <div style={{
+        width: pageW, height: pageH, backgroundColor: pageBg, overflow: "hidden", position: "relative", borderRadius: 2,
+        border: pageBorder,
+        boxShadow: focusMode ? "0 0 40px rgba(0,0,0,0.4)" : isLight ? "0 2px 12px rgba(0,0,0,0.12)" : "0 4px 20px rgba(0,0,0,0.3)",
+      }}>
+        <div style={{ position: "absolute", top: 8, right: 12, fontSize: 11, color: pageNumColor, zIndex: 2, fontFamily: "'Courier Prime', monospace" }}>
           {pageIdx + 1}.
         </div>
         <div style={{ transform: `scale(${previewScale})`, transformOrigin: "top left", width: SCREENPLAY_PAGE_WIDTH_PX, height: SCREENPLAY_PAGE_HEIGHT_PX, overflow: "hidden", pointerEvents: "none", position: "relative" }}>
@@ -443,7 +456,7 @@ function SpreadPreview({ blocks, visualPageCount: externalPageCount, colors, isD
         </div>
       </div>
     )
-  }, [blocks, estimatedPageCount, colors, renderBlock])
+  }, [blocks, estimatedPageCount, colors, renderBlock, paperBg, focusMode, appTheme])
 
   const leftIdx = spreadIdx
   const rightIdx = spreadIdx + 1
@@ -1385,6 +1398,8 @@ const SlateScreenplayEditor = forwardRef<
             isDark={isDark}
             appTheme={appTheme}
             focusMode={focusMode}
+            paperBg={paperTheme.bg}
+            paperText={paperTheme.text}
           />
         </div>
       )
@@ -1603,6 +1618,8 @@ const SlateScreenplayEditor = forwardRef<
             isDark={isDark}
             appTheme={appTheme}
             focusMode={focusMode}
+            paperBg={paperTheme.bg}
+            paperText={paperTheme.text}
           />
         )}
 
