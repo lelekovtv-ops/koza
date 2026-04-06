@@ -5,7 +5,7 @@ import { NODE_REGISTRY } from "@/lib/canvas/nodeRegistry"
 import { compileBlockToGraph } from "@/lib/canvas/modifierGraphCompiler"
 import { useScriptStore } from "@/store/script"
 import { useTimelineStore } from "@/store/timeline"
-import { syncBus } from "@/lib/syncBus"
+// syncBus removed — ops handle sync now
 
 // ─── Types ──────────────────────────────────────────────────
 
@@ -225,6 +225,6 @@ export const useBlockCanvasStore = create<BlockCanvasState>()((set, get) => ({
       },
     }, "canvas")
 
-    syncBus.dispatch("canvas", "block-production", { canvasData }, { blockId: activeBlockId })
+    // syncBus dispatch removed — updateBlockProduction above already emits op
   },
 }))

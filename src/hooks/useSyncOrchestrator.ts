@@ -1,28 +1,25 @@
 /**
- * useSyncOrchestrator — unified bidirectional sync between
- * screenplay, scenes, timeline, bible, dialogue, and voice.
+ * useSyncOrchestrator — forward sync between screenplay, scenes, timeline,
+ * bible, dialogue, and voice.
  *
- * Replaces useSceneSync + useShotSync with a single hook that:
- * 1. Forward sync: blocks → scenes → bible → dialogue → shots (as before)
- * 2. Reverse sync: listens to SyncBus for timeline/voice → blocks
- * 3. Uses origin tracking to prevent infinite loops
+ * Forward sync: blocks → scenes → rundown → timeline → bible → dialogue → voice
+ * Reverse sync: handled by WS operations (Phase 3+), no longer via syncBus.
+ * Timeline→rundown visual propagation kept for local consistency.
  */
 
-import { useEffect, useRef } from "react"
+import { useEffect } from "react"
 import { useScriptStore } from "@/store/script"
 import { useScenesStore } from "@/store/scenes"
 import { useTimelineStore } from "@/store/timeline"
 import { useBibleStore } from "@/store/bible"
 import { useDialogueStore, extractDialogueLines } from "@/store/dialogue"
-import { syncBus } from "@/lib/syncBus"
-import type { SyncEvent } from "@/lib/productionTypes"
 import { useVoiceTrackStore, generateVoiceClipsFromDialogue } from "@/store/voiceTrack"
 import { useRundownStore } from "@/store/rundown"
 import { entriesToTimelineShots } from "@/lib/rundownBridge"
 
 /**
  * Mount this hook at the workspace/studio level.
- * It handles all data synchronization between modules.
+ * It handles forward data synchronization between modules.
  */
 export function useSyncOrchestrator() {
   const blocks = useScriptStore((s) => s.blocks)
@@ -132,107 +129,9 @@ export function useSyncOrchestrator() {
     return () => window.clearTimeout(timer)
   }, [blocks, scenes, characters, setDialogueLines])
 
-  // Old shotSyncEngine path removed — rundown handles all blocks→timeline sync now
-
-  // ── Reverse sync: listen to SyncBus for timeline/voice → blocks + rundown ──
-  useEffect(() => {
-    const unsub = syncBus.on((event: SyncEvent) => {
-      // Only handle events from other origins
-      if (event.origin === "screenplay") return
-
-      switch (event.type) {
-        case "duration-change": {
-          // Timeline changed duration → update block + rundown
-          const { blockId } = event
-          const { durationMs } = event.payload as { durationMs: number }
-          if (blockId && typeof durationMs === "number") {
-            useScriptStore
-              .getState()
-              .updateBlockProduction(
-                blockId,
-                { durationMs, durationSource: "manual" },
-                "timeline",
-              )
-            // Also update rundown entry
-            const entry = useRundownStore.getState().entries.find(
-              (e) => e.parentBlockId === blockId,
-            )
-            if (entry) {
-              useRundownStore.getState().setManualDuration(entry.id, durationMs)
-            }
-          }
-          break
-        }
-
-        case "voice-text": {
-          // Voice clip text changed → update dialogue block
-          const { blockId } = event
-          const { text } = event.payload as { text: string }
-          if (blockId && typeof text === "string") {
-            useScriptStore.getState().updateBlock(blockId, text, "voice")
-          }
-          break
-        }
-
-        case "voice-duration": {
-          // TTS returned real duration → update block + rundown
-          const { blockId } = event
-          const { durationMs } = event.payload as { durationMs: number }
-          if (blockId && typeof durationMs === "number") {
-            useScriptStore
-              .getState()
-              .updateBlockProduction(
-                blockId,
-                { durationMs, durationSource: "media" },
-                "voice",
-              )
-            // Also update rundown entry
-            const entry = useRundownStore.getState().entries.find(
-              (e) => e.parentBlockId === blockId,
-            )
-            if (entry) {
-              useRundownStore.getState().setMediaDuration(entry.id, durationMs)
-            }
-          }
-          break
-        }
-
-        case "shot-child-remove": {
-          // Timeline/storyboard requested shot removal → scriptStore + rundown
-          const { shotId } = event.payload as { shotId: string }
-          if (shotId) {
-            useScriptStore.getState().removeShotFromBlock(shotId)
-            // Also remove from rundown
-            const entry = useRundownStore.getState().entries.find(
-              (e) => e.id === shotId,
-            )
-            if (entry) {
-              useRundownStore.getState().deleteEntry(entry.id)
-            }
-          }
-          break
-        }
-
-        case "shot-child-reorder": {
-          // Timeline/storyboard requested shot reorder within block
-          const { shotId, newOrder } = event.payload as { shotId: string; newOrder: number }
-          if (shotId && typeof newOrder === "number") {
-            useScriptStore.getState().reorderShotInBlock(shotId, newOrder)
-            // Also reorder in rundown (if entry exists)
-            const entry = useRundownStore.getState().entries.find((e) => e.id === shotId)
-            if (entry) useRundownStore.getState().reorderEntry(shotId, newOrder)
-          }
-          break
-        }
-      }
-    })
-
-    return unsub
-  }, [])
-
-  // ── Reverse sync: timeline updateShot → rundown entry ──
-  // When StoryboardPanel or other components update a shot in timeline store,
-  // propagate the visual/prompt data back to rundown (persisted)
+  // ── Timeline → rundown visual propagation (local consistency) ──
+  // When StoryboardPanel updates a shot in timeline store,
+  // propagate visual/prompt data back to rundown (persisted)
   useEffect(() => {
     return useTimelineStore.subscribe((state, prev) => {
       if (state._lastOrigin === "screenplay") return
@@ -241,7 +140,6 @@ export function useSyncOrchestrator() {
       const prevMap = new Map(prev.shots.map((s) => [s.id, s]))
       const entries = useRundownStore.getState().entries
 
-      // Build blockId→entries[] lookup (multiple entries can share same parentBlockId via sub-shots)
       const entriesByBlockId = new Map<string, typeof entries>()
       for (const e of entries) {
         const key = e.parentBlockId
@@ -267,7 +165,6 @@ export function useSyncOrchestrator() {
 
         if (!visualChanged) continue
 
-        // Find matching rundown entry: by id first, then by parentBlockId (first match)
         const entry = entryById.get(shot.id)
           ?? (entriesByBlockId.get(shot.parentBlockId ?? "")?.[0])
           ?? (entriesByBlockId.get(shot.blockRange?.[0] ?? "")?.[0])

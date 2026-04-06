@@ -2,7 +2,6 @@ import { create } from "zustand"
 import { persist } from "zustand/middleware"
 import { safeStorage } from "@/lib/safeStorage"
 import type { ChangeOrigin } from "@/lib/productionTypes"
-import { syncBus } from "@/lib/syncBus"
 import { emitOp, shouldEmit } from "@/lib/ws/opEmitter"
 
 export type HistoryEntrySource = "generate" | "edit" | "crop" | "color" | "loading"
@@ -325,8 +324,8 @@ export const useTimelineStore = create<TimelineState>()(
         const shot = get().shots.find((s) => s.id === id)
         // Guard: shots with parentBlockId can only be removed via screenplay (scriptStore)
         if (shot?.parentBlockId && origin !== "screenplay") {
-          // Delegate to scriptStore — the sync orchestrator will project back
-          syncBus.dispatch(origin ?? "timeline", "shot-child-remove", { shotId: id }, { blockId: shot.parentBlockId })
+          // Direct call to scriptStore instead of syncBus (lazy import to avoid circular dep)
+          import("@/store/script").then(m => m.useScriptStore.getState().removeShotFromBlock(id))
           return
         }
         set((state) => {
