@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation"
 import { useThemeStore } from "@/store/theme"
 import { useScreenplaySettings } from "@/store/screenplaySettings"
 import { UserMenu } from "./UserMenu"
+import { OnlineUsers } from "./OnlineUsers"
 
 const NAV_ITEMS = [
   { id: "media", href: "/library", label: "MEDIA" },
@@ -249,8 +250,9 @@ function GlobalNavInner() {
 
       <Divider />
 
-      {/* Theme toggle + User menu */}
+      {/* Theme toggle + Online users + User menu */}
       <div className="flex items-center gap-2 pr-4">
+        <OnlineUsers />
         <ThemeToggle />
         <UserMenu />
       </div>

@@ -5,6 +5,7 @@ import { GlobalNav } from "@/components/app/GlobalNav";
 import { MainContent } from "@/components/app/MainContent";
 import { ThemeProvider } from "@/components/app/ThemeProvider";
 import { AuthProvider } from "@/components/app/AuthProvider";
+import { LockBanner } from "@/components/app/LockBanner";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -32,6 +33,7 @@ export default function RootLayout({
           <MainContent>
             {children}
           </MainContent>
+          <LockBanner />
           <DevInspector />
         </AuthProvider>
       </body>
