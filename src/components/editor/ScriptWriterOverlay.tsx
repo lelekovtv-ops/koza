@@ -759,13 +759,17 @@ function ViewModeButton() {
   const setViewMode = useScreenplaySettings((s) => s.setViewMode)
   const focusMode = useScreenplaySettings((s) => s.focusMode)
   const toggleFocusMode = useScreenplaySettings((s) => s.toggleFocusMode)
+  const btnRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
 
-  // Close on click outside
+  // Close on click outside (ignore clicks on button itself)
   useEffect(() => {
     if (!open) return
     const handler = (e: MouseEvent) => {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) setOpen(false)
+      const t = e.target as Node
+      if (btnRef.current?.contains(t)) return
+      if (panelRef.current?.contains(t)) return
+      setOpen(false)
     }
     document.addEventListener("mousedown", handler)
     return () => document.removeEventListener("mousedown", handler)
@@ -810,6 +814,7 @@ function ViewModeButton() {
   return (
     <>
       <button
+        ref={btnRef}
         type="button"
         onClick={() => { const next = !open; setOpen(next); if (next) window.dispatchEvent(new Event("koza-popup-open")) }}
         title="View mode"
@@ -935,13 +940,17 @@ function KeyboardHints() {
   const [open, setOpen] = useState(false)
   const [hoveredIdx, setHoveredIdx] = useState<number | null>(null)
   const settings = useScreenplaySettings()
+  const hintsBtnRef = useRef<HTMLButtonElement>(null)
   const hintsPanelRef = useRef<HTMLDivElement>(null)
 
-  // Close on click outside
+  // Close on click outside (ignore clicks on button itself)
   useEffect(() => {
     if (!open) return
     const handler = (e: MouseEvent) => {
-      if (hintsPanelRef.current && !hintsPanelRef.current.contains(e.target as Node)) setOpen(false)
+      const t = e.target as Node
+      if (hintsBtnRef.current?.contains(t)) return
+      if (hintsPanelRef.current?.contains(t)) return
+      setOpen(false)
     }
     document.addEventListener("mousedown", handler)
     return () => document.removeEventListener("mousedown", handler)
@@ -996,6 +1005,7 @@ function KeyboardHints() {
   return (
     <>
       <button
+        ref={hintsBtnRef}
         type="button"
         onClick={() => { const next = !open; setOpen(next); if (next) window.dispatchEvent(new Event("koza-popup-open")) }}
         title="Keyboard shortcuts"

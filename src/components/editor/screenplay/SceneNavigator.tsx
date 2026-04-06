@@ -6,6 +6,7 @@ import { useScenesStore } from "@/store/scenes"
 
 export function SceneNavigatorButton() {
   const [open, setOpen] = useState(false)
+  const btnRef = useRef<HTMLButtonElement>(null)
 
   // Close when other popups open
   useEffect(() => {
@@ -17,6 +18,7 @@ export function SceneNavigatorButton() {
   return (
     <>
       <button
+        ref={btnRef}
         type="button"
         onClick={() => { const next = !open; setOpen(next); if (next) window.dispatchEvent(new Event("koza-popup-open")) }}
         title="Scene navigator"
@@ -51,24 +53,27 @@ export function SceneNavigatorButton() {
         </svg>
       </button>
 
-      {open && <SceneNavigatorPanel onClose={() => setOpen(false)} />}
+      {open && <SceneNavigatorPanel onClose={() => setOpen(false)} btnRef={btnRef} />}
     </>
   )
 }
 
-function SceneNavigatorPanel({ onClose }: { onClose: () => void }) {
+function SceneNavigatorPanel({ onClose, btnRef }: { onClose: () => void; btnRef: React.RefObject<HTMLButtonElement | null> }) {
   const panelRef = useRef<HTMLDivElement>(null)
   const blocks = useScriptStore((s) => s.blocks)
   const scenes = useScenesStore((s) => s.scenes)
 
-  // Close on click outside
+  // Close on click outside (ignore clicks on button itself)
   useEffect(() => {
     const handler = (e: MouseEvent) => {
-      if (panelRef.current && !panelRef.current.contains(e.target as Node)) onClose()
+      const t = e.target as Node
+      if (btnRef.current?.contains(t)) return
+      if (panelRef.current?.contains(t)) return
+      onClose()
     }
     document.addEventListener("mousedown", handler)
     return () => document.removeEventListener("mousedown", handler)
-  }, [onClose])
+  }, [onClose, btnRef])
 
   const sceneHeadings = useMemo(() => {
     return blocks
