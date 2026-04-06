@@ -73,7 +73,7 @@ interface ScriptState extends ScriptDocument {
 
 
 const createDefaultScript = (): ScriptDocument => {
-  const defaultText = DEMO_SCRIPTS["slonik"] ?? ""
+  const defaultText = DEMO_SCRIPTS["signal"] ?? ""
   const blocks = defaultText ? parseTextToBlocks(defaultText) : [makeBlock("action")]
   return {
     scenario: defaultText ? exportBlocksToText(blocks) : "",
@@ -112,6 +112,131 @@ function updateCurrentProjectScript(
 }
 
 export const DEMO_SCRIPTS: Record<string, string> = {
+  "signal": `FADE IN:
+
+INT. DEEP SPACE MONITORING STATION — NIGHT
+
+A windowless room buried under a mountain. Banks of monitors cast blue light on bare concrete walls. Coffee cups and energy bar wrappers everywhere. The hum of servers.
+
+ELENA VASQUEZ (34, sharp eyes, rumpled NASA polo) sits alone at a workstation. Headphones on. She's been here for hours.
+
+On her screen: the SETI signal analyzer. Flat lines. Static. Nothing. Like every night for the past three years.
+
+She reaches for her coffee. Empty. She sighs, pulls off her headphones—
+
+A PING.
+
+Elena freezes. Looks at the screen. A spike in the waveform. Then another. Then a pattern.
+
+ELENA
+(whisper)
+No way.
+
+She puts the headphones back on. The signal is clear. Rhythmic. Unmistakably artificial.
+
+She picks up the red phone.
+
+ELENA (CONT'D)
+This is Vasquez at Goldstone. I need Director Chen. Now.
+
+(beat)
+
+Yes, I know what time it is. Tell him we have a Signal.
+
+SMASH CUT TO:
+
+INT. NASA HEADQUARTERS — DIRECTOR'S OFFICE — NIGHT
+
+JAMES CHEN (58, silver hair, reading glasses) stares at a laptop screen. His hand trembles slightly. Behind him, through floor-to-ceiling windows, the Washington Monument glows.
+
+Elena is on video call, her face pixelated but intense.
+
+ELENA (ON SCREEN)
+It's repeating every 47 seconds. Prime number interval. Hydrogen line frequency. This isn't a pulsar, James.
+
+CHEN
+Where's it coming from?
+
+ELENA (ON SCREEN)
+That's the thing. It's not coming from space.
+
+A long silence.
+
+CHEN
+What do you mean?
+
+ELENA (ON SCREEN)
+The signal is coming from beneath the ocean floor. Pacific basin. 4,000 meters down.
+
+Chen takes off his glasses. Rubs his eyes. Puts them back on.
+
+CHEN
+I'm calling the President.
+
+CUT TO:
+
+EXT. PACIFIC OCEAN — DAY
+
+AERIAL SHOT. Endless blue water. A single research vessel, the MERIDIAN, cuts through gentle swells.
+
+SUPER: "72 HOURS LATER"
+
+INT. MERIDIAN — RESEARCH LAB — CONTINUOUS
+
+Cramped, packed with equipment. Elena works alongside DR. KOFI ASANTE (45, marine geologist, calm presence). Screens show sonar maps of the ocean floor.
+
+KOFI
+You understand this changes everything, right? If there's something manufactured at that depth — it predates any known civilization. We're talking millions of years.
+
+ELENA
+I know what we're talking about.
+
+KOFI
+Do you? Because the last three people I told this to thought I was having a breakdown.
+
+Elena smiles for the first time. It transforms her face.
+
+ELENA
+Kofi. I've spent three years listening to static, hoping for exactly this. I'm the last person who'll think you're crazy.
+
+EXT. PACIFIC OCEAN — LATER
+
+The Meridian has stopped. Equipment cranes lower a deep-sea ROV — ORPHEUS — into the water. Its lights pierce the darkness as it descends.
+
+INT. MERIDIAN — ROV CONTROL ROOM — CONTINUOUS
+
+Elena and Kofi watch the monitors. The ROV's cameras show the descent: blue fading to black. Fish scatter in the lights.
+
+DEPTH COUNTER: 1,000m... 2,000m... 3,000m...
+
+KOFI
+Signal's getting stronger.
+
+3,800m. The ocean floor appears. Mud. Rocks. Ancient sediment undisturbed for millennia.
+
+Then — something else.
+
+ELENA
+Oh my God.
+
+On the screen: a perfect geometric structure embedded in the seabed. Black. Smooth. The size of a football field. Not natural. Not possible.
+
+It's pulsing with faint light. The same rhythm as the signal.
+
+KOFI
+(barely audible)
+It's been waiting.
+
+The structure's light intensifies. On every screen in the room, the same message appears — not in any human language, but somehow, impossibly, understood:
+
+WE HEARD YOU WERE LOOKING FOR US.
+
+SMASH CUT TO BLACK.
+
+TITLE CARD: "SIGNAL"
+
+FADE OUT.`,
+
   "slonik": `INT. СЛОНОВЬЯ ФЕРМА — УТРО
 
 Рассвет. Золотой свет заливает просторный загон с высокими деревьями. Слонихи лениво жуют сено. Маленький СЛОНИК (3 года, большие уши, пыльные коленки) бегает между ног взрослых.
@@ -246,6 +371,7 @@ FADE OUT.`,
 }
 
 export const DEMO_SCRIPT_LIST: { id: string; label: string }[] = [
+  { id: "signal", label: "Signal (Sci-Fi Short)" },
   { id: "slonik", label: "Слоник ищет маму" },
 ]
 
