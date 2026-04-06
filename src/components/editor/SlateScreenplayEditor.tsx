@@ -330,9 +330,10 @@ interface SpreadPreviewProps {
   isDark: boolean
   appTheme: string
   zoomPercent: number
+  focusMode: boolean
 }
 
-function SpreadPreview({ blocks, visualPageCount, colors, isDark, appTheme, zoomPercent }: SpreadPreviewProps) {
+function SpreadPreview({ blocks, visualPageCount, colors, isDark, appTheme, zoomPercent, focusMode }: SpreadPreviewProps) {
   const userScale = zoomPercent / 100
   const previewScale = 0.52 * userScale
   const pageW = SCREENPLAY_PAGE_WIDTH_PX * previewScale
@@ -424,7 +425,7 @@ function SpreadPreview({ blocks, visualPageCount, colors, isDark, appTheme, zoom
   return (
     <div
       className="relative flex-1 overflow-auto"
-      style={{ backgroundColor: appTheme === "architect" ? "#080808" : isDark ? "#201E1B" : "#EDEDED", padding: "32px 24px" }}
+      style={{ backgroundColor: focusMode ? "transparent" : appTheme === "architect" ? "#080808" : isDark ? "#201E1B" : "#EDEDED", padding: "32px 24px" }}
     >
       <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: rowGap, paddingBottom: 60 }}>
         {Array.from({ length: pairCount }).map((_, pair) => {
@@ -1513,7 +1514,7 @@ const SlateScreenplayEditor = forwardRef<
         />
 
         {/* SPREAD PREVIEW — read-only two-page book view */}
-        {viewMode === "spread" && !focusMode && (
+        {viewMode === "spread" && (
           <SpreadPreview
             blocks={blocks}
             visualPageCount={visualPageCount}
@@ -1521,11 +1522,12 @@ const SlateScreenplayEditor = forwardRef<
             isDark={isDark}
             appTheme={appTheme}
             zoomPercent={zoomPercent}
+            focusMode={focusMode}
           />
         )}
 
         {/* EDITOR AREA */}
-        {(viewMode !== "spread" || focusMode) && <>
+        {viewMode !== "spread" && <>
         <div className="relative flex-1 overflow-hidden" style={{ backgroundColor: focusMode ? "transparent" : (appTheme === "architect" ? "#080808" : isDark ? "#201E1B" : "#EDEDED"), padding: focusMode ? "0" : "0 0 0 72px" }}>
           {/* Top shadow — page slides under (hidden in focus mode) */}
           {!focusMode && <div className="pointer-events-none absolute inset-x-0 top-0 z-50 h-28" style={{ background: `linear-gradient(to bottom, ${appTheme === "architect" ? '#080808' : isDark ? '#201E1B' : '#EDEDED'} 0%, ${appTheme === "architect" ? '#080808cc' : isDark ? '#201E1Bcc' : '#EDEDEDcc'} 40%, transparent 100%)` }} />}
@@ -1557,9 +1559,7 @@ const SlateScreenplayEditor = forwardRef<
                 position: "relative",
                 width: viewMode === "scroll" || viewMode === "fullscreen"
                   ? "100%"
-                  : viewMode === "spread"
-                    ? SCREENPLAY_PAGE_WIDTH_PX * 2 * zoomScale + SCREENPLAY_PAGE_GAP_PX * zoomScale
-                    : SCREENPLAY_PAGE_WIDTH_PX * zoomScale,
+                  : SCREENPLAY_PAGE_WIDTH_PX * zoomScale,
                 maxWidth: viewMode === "fullscreen" ? Math.max(SCREENPLAY_PAGE_WIDTH_PX * zoomScale, 1200) : undefined,
                 margin: viewMode === "scroll"
                   ? "0 auto"
@@ -1571,24 +1571,17 @@ const SlateScreenplayEditor = forwardRef<
             >
               {/* Page paper backgrounds (hidden in scroll mode) */}
               {viewMode !== "scroll" && Array.from({ length: visualPageCount }).map((_, i) => {
-                const isSpread = viewMode === "spread"
-                const col = isSpread ? i % 2 : 0
-                const row = isSpread ? Math.floor(i / 2) : i
-                const pageW = SCREENPLAY_PAGE_WIDTH_PX * zoomScale
                 const pageH = SCREENPLAY_PAGE_HEIGHT_PX * zoomScale
                 const gapH = SCREENPLAY_PAGE_GAP_PX * zoomScale
-                const gapW = SCREENPLAY_PAGE_GAP_PX * zoomScale
 
                 return (
                   <div
                     key={`page-${i}`}
                     style={{
                       position: "absolute",
-                      top: isSpread
-                        ? row * (pageH + gapH)
-                        : i * (pageH + gapH),
-                      left: isSpread ? col * (pageW + gapW) : 0,
-                      width: isSpread ? pageW : "100%",
+                      top: i * (pageH + gapH),
+                      left: 0,
+                      width: "100%",
                       height: pageH,
                       backgroundColor: colors.surfaceBg,
                       boxShadow: isDark ? "none" : "0 2px 8px rgba(0,0,0,0.12)",
