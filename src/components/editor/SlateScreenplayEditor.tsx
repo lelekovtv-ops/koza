@@ -1323,20 +1323,54 @@ const SlateScreenplayEditor = forwardRef<
   // ─── Embedded mode (inside ScriptWriterOverlay) ───
 
   if (embedded) {
+    const isScrollMode = viewMode === "scroll"
+    const isSpreadMode = viewMode === "spread"
+    const isFullscreenMode = viewMode === "fullscreen"
+
+    // Spread mode — read-only two-page preview
+    if (isSpreadMode) {
+      return (
+        <div
+          ref={embeddedRootRef}
+          className="w-full"
+          style={{ opacity: focusMode && idleFade ? 0.04 : 1, transition: idleFade ? "opacity 3s ease-in-out" : "opacity 0.4s ease-out" }}
+        >
+          <SpreadPreview
+            blocks={blocks}
+            visualPageCount={visualPageCount}
+            colors={colors}
+            isDark={isDark}
+            appTheme={appTheme}
+            zoomPercent={100}
+            focusMode={focusMode}
+          />
+        </div>
+      )
+    }
+
+    // Single / Scroll / Fullscreen — editable
+    const embeddedWidth = isFullscreenMode
+      ? "100%"
+      : SCREENPLAY_PAGE_WIDTH_PX
+
     return (
       <div
         ref={embeddedRootRef}
         className="w-full"
         style={{
           position: "relative",
-          width: SCREENPLAY_PAGE_WIDTH_PX,
-          minHeight: visualPageCount * SCREENPLAY_PAGE_HEIGHT_PX + (visualPageCount - 1) * SCREENPLAY_PAGE_GAP_PX,
+          width: embeddedWidth,
+          maxWidth: isFullscreenMode ? Math.max(SCREENPLAY_PAGE_WIDTH_PX, 1200) : undefined,
+          margin: isFullscreenMode ? "0 auto" : undefined,
+          minHeight: isScrollMode
+            ? undefined
+            : visualPageCount * SCREENPLAY_PAGE_HEIGHT_PX + (visualPageCount - 1) * SCREENPLAY_PAGE_GAP_PX,
           opacity: focusMode && idleFade ? 0.04 : 1,
           transition: idleFade ? "opacity 3s ease-in-out" : "opacity 0.4s ease-out",
         }}
       >
-        {/* Page paper backgrounds */}
-        {Array.from({ length: visualPageCount }).map((_, i) => (
+        {/* Page paper backgrounds (hidden in scroll mode) */}
+        {!isScrollMode && Array.from({ length: visualPageCount }).map((_, i) => (
           <div
             key={`emb-page-${i}`}
             style={{
@@ -1356,8 +1390,8 @@ const SlateScreenplayEditor = forwardRef<
           />
         ))}
 
-        {/* Page numbers (hidden in focus mode) */}
-        {!focusMode && visualPageCount > 1 && Array.from({ length: visualPageCount }).map((_, i) => (
+        {/* Page numbers (hidden in focus mode and scroll mode) */}
+        {!focusMode && !isScrollMode && visualPageCount > 1 && Array.from({ length: visualPageCount }).map((_, i) => (
           <div
             key={`emb-pgnum-${i}`}
             style={{
@@ -1389,12 +1423,17 @@ const SlateScreenplayEditor = forwardRef<
             style={{
               position: "relative",
               zIndex: 1,
-              padding: `${SCREENPLAY_PAGE_PADDING_TOP_PX}px ${SCREENPLAY_PAGE_PADDING_RIGHT_PX}px ${SCREENPLAY_PAGE_PADDING_BOTTOM_PX}px ${SCREENPLAY_PAGE_PADDING_LEFT_PX}px`,
+              padding: isScrollMode
+                ? `${SCREENPLAY_PAGE_PADDING_TOP_PX}px ${SCREENPLAY_PAGE_PADDING_RIGHT_PX}px`
+                : `${SCREENPLAY_PAGE_PADDING_TOP_PX}px ${SCREENPLAY_PAGE_PADDING_RIGHT_PX}px ${SCREENPLAY_PAGE_PADDING_BOTTOM_PX}px ${SCREENPLAY_PAGE_PADDING_LEFT_PX}px`,
               outline: "none",
               color: focusMode ? "rgba(255,255,255,0.85)" : appTheme === "architect" ? colors.text : paperTheme.text,
               caretColor: focusMode ? "#D4A853" : appTheme === "architect" ? colors.muted : paperTheme.text,
-              background: "transparent",
-              minHeight: visualPageCount * SCREENPLAY_PAGE_HEIGHT_PX + (visualPageCount - 1) * SCREENPLAY_PAGE_GAP_PX,
+              background: isScrollMode ? (focusMode ? "rgba(0,0,0,0.35)" : colors.surfaceBg) : "transparent",
+              borderRadius: isScrollMode && focusMode ? 8 : undefined,
+              minHeight: isScrollMode
+                ? "100vh"
+                : visualPageCount * SCREENPLAY_PAGE_HEIGHT_PX + (visualPageCount - 1) * SCREENPLAY_PAGE_GAP_PX,
               fontFamily: "'Courier Prime', 'Courier New', monospace",
             }}
           />
