@@ -757,6 +757,8 @@ function ViewModeButton() {
   const [open, setOpen] = useState(false)
   const viewMode = useScreenplaySettings((s) => s.viewMode)
   const setViewMode = useScreenplaySettings((s) => s.setViewMode)
+  const focusMode = useScreenplaySettings((s) => s.focusMode)
+  const toggleFocusMode = useScreenplaySettings((s) => s.toggleFocusMode)
 
   const modes = [
     { id: "single" as const, label: "Single Page", icon: (
@@ -862,6 +864,35 @@ function ViewModeButton() {
               </button>
             )
           })}
+          {/* Separator */}
+          <div style={{ height: 1, background: "rgba(255,255,255,0.06)", margin: "2px 8px" }} />
+          {/* Focus Mode */}
+          <button
+            type="button"
+            onClick={() => { toggleFocusMode(); setOpen(false) }}
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              padding: "7px 12px",
+              borderRadius: 6,
+              border: "none",
+              background: focusMode ? "rgba(212, 168, 83, 0.15)" : "transparent",
+              color: focusMode ? "#D4A853" : "rgba(255,255,255,0.4)",
+              fontSize: 13,
+              cursor: "pointer",
+              transition: "all 0.15s",
+              whiteSpace: "nowrap",
+            }}
+            onMouseEnter={(e) => { if (!focusMode) e.currentTarget.style.background = "rgba(255,255,255,0.06)" }}
+            onMouseLeave={(e) => { if (!focusMode) e.currentTarget.style.background = "transparent" }}
+          >
+            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.2">
+              <circle cx="8" cy="8" r="6" />
+              <circle cx="8" cy="8" r="2" fill="currentColor" stroke="none" />
+            </svg>
+            <span>Focus Mode</span>
+          </button>
         </div>
       )}
     </>
@@ -907,7 +938,6 @@ function KeyboardHints() {
     { keys: "⌘⇧ T", desc: "Transition", action: () => sendKey("t", { meta: true, shift: true }) },
     { keys: "(", desc: "Parenthetical", action: () => sendKey("(") },
     { keys: "─", desc: "─────────" },
-    { keys: "⌘ F", desc: "Focus Mode", action: () => { settings.toggleFocusMode(); setOpen(false) } },
     { keys: "◯", desc: settings.bibleMarkers ? "Hide markers" : "Show markers", action: () => { settings.toggleBibleMarkers(); setOpen(false) } },
     { keys: "♪", desc: settings.typewriterSound ? "Sound off" : "Sound on", action: () => { settings.toggleTypewriterSound(); setOpen(false) } },
   ], [settings, sendKey])
