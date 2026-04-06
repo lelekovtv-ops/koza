@@ -416,7 +416,7 @@ function SpreadPreview({ blocks, visualPageCount: externalPageCount, colors, isD
     }
     switch (block.type) {
       case "scene_heading":
-        return <div key={block.id} style={{ ...base, fontWeight: "bold", textTransform: "uppercase", color: colors.scene, marginTop: bi === 0 ? SCREENPLAY_PAGE_PADDING_TOP_PX : SCREENPLAY_SCENE_HEADING_MARGIN_TOP_PX }}>{block.text}</div>
+        return <div key={block.id} style={{ ...base, fontWeight: "bold", textTransform: "uppercase", color: colors.scene, marginTop: SCREENPLAY_SCENE_HEADING_MARGIN_TOP_PX }}>{block.text}</div>
       case "character":
         return <div key={block.id} style={{ ...base, fontWeight: "bold", textTransform: "uppercase", paddingLeft: `calc(${SCREENPLAY_PAGE_PADDING_LEFT_PX}px + ${SCREENPLAY_CHARACTER_INDENT_CH}ch)`, marginTop: SCREENPLAY_CHARACTER_MARGIN_TOP_PX, color: colors.character }}>{block.text}</div>
       case "dialogue":
@@ -426,7 +426,7 @@ function SpreadPreview({ blocks, visualPageCount: externalPageCount, colors, isD
       case "transition":
         return <div key={block.id} style={{ ...base, textAlign: "right", textTransform: "uppercase", marginTop: SCREENPLAY_TRANSITION_MARGIN_TOP_PX, color: colors.transition }}>{block.text}</div>
       default:
-        return <div key={block.id} style={{ ...base, marginTop: bi === 0 ? SCREENPLAY_PAGE_PADDING_TOP_PX : SCREENPLAY_ACTION_AFTER_ACTION_MARGIN_TOP_PX }}>{block.text}</div>
+        return <div key={block.id} style={{ ...base, marginTop: SCREENPLAY_ACTION_AFTER_ACTION_MARGIN_TOP_PX }}>{block.text}</div>
     }
   }, [colors, textColor])
 
@@ -453,7 +453,7 @@ function SpreadPreview({ blocks, visualPageCount: externalPageCount, colors, isD
           {pageIdx + 1}.
         </div>
         <div style={{ transform: `scale(${previewScale})`, transformOrigin: "top left", width: SCREENPLAY_PAGE_WIDTH_PX, height: SCREENPLAY_PAGE_HEIGHT_PX, overflow: "hidden", pointerEvents: "none", position: "relative" }}>
-          <div style={{ position: "absolute", top: -sourceTop, left: 0, width: SCREENPLAY_PAGE_WIDTH_PX }}>
+          <div style={{ position: "absolute", top: -sourceTop + SCREENPLAY_PAGE_PADDING_TOP_PX, left: 0, width: SCREENPLAY_PAGE_WIDTH_PX }}>
             {blocks.map(renderBlock)}
           </div>
         </div>
