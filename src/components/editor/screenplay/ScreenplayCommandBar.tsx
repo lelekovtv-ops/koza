@@ -9,6 +9,7 @@ import {
   Moon,
   Columns2,
   FileText,
+  Printer,
   ScrollText,
   Sun,
   Volume2,
@@ -145,6 +146,15 @@ export function ScreenplayCommandBar() {
       action: () => { settings.setViewMode("scroll"); settings.setCommandBarOpen(false) },
       active: settings.viewMode === "scroll",
       group: "View",
+    },
+    // Print
+    {
+      id: "print",
+      label: "Print Screenplay",
+      icon: <Printer className="h-4 w-4" />,
+      action: () => { settings.setCommandBarOpen(false); setTimeout(() => window.print(), 200) },
+      rightLabel: "⌘P",
+      group: "Export",
     },
     // Paper themes
     ...Object.entries(PAPER_THEMES).map(([key, theme]) => ({

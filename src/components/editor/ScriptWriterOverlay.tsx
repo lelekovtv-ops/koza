@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { Upload } from "lucide-react"
 import { ScreenplayCommandBar, CommandBarTrigger } from "@/components/editor/screenplay/ScreenplayCommandBar"
+import { SceneNavigatorButton } from "@/components/editor/screenplay/SceneNavigator"
 import { useScreenplaySettings } from "@/store/screenplaySettings"
 import { AmbientFocusMode } from "@/components/editor/screenplay/AmbientFocusMode"
 import { useAutosave } from "@/hooks/useAutosave"
@@ -712,6 +713,7 @@ export default function ScriptWriterOverlay(props: ScriptWriterOverlayProps) {
       <ScreenplayCommandBar />
       <KeyboardHints />
       <ViewModeButton />
+      <SceneNavigatorButton />
 
       {aiError && !aiLoading && !isFocusMode && (
         <button

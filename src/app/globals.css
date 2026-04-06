@@ -870,3 +870,39 @@ body {
 [data-theme="architect"] [class*="text-[#D7CDC1]"] {
   color: rgba(255, 255, 255, 0.40) !important;
 }
+
+/* ── Print styles ── */
+@media print {
+  /* Hide everything except screenplay content */
+  nav, header, footer,
+  [class*="GlobalNav"],
+  [class*="CommandBar"],
+  [class*="TopInfo"],
+  [class*="Toolbar"],
+  [class*="KeyboardHints"],
+  [class*="ViewMode"],
+  [class*="SceneNavigator"],
+  [class*="AmbientFocus"],
+  [class*="backdrop-blur"],
+  button,
+  input[type="range"] {
+    display: none !important;
+  }
+  /* Show only the editor content */
+  .slate-screenplay-editor {
+    background: white !important;
+    color: black !important;
+    padding: 72px 72px 72px 108px !important;
+    font-family: "Courier New", Courier, monospace !important;
+    font-size: 12pt !important;
+    line-height: 1 !important;
+  }
+  /* Reset page setup */
+  @page {
+    size: letter;
+    margin: 0;
+  }
+  body {
+    background: white !important;
+  }
+}

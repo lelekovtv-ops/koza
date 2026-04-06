@@ -657,7 +657,8 @@ const SlateScreenplayEditor = forwardRef<
   })
   const [toolbarCollapsed, setToolbarCollapsed] = useState(focusMode)
   const viewMode = useScreenplaySettings((s) => s.viewMode)
-  const [zoomPercent, setZoomPercent] = useState(100)
+  const zoomPercent = useScreenplaySettings((s) => s.zoom)
+  const setZoomPercent = useScreenplaySettings((s) => s.setZoom)
   const [typewriterSound, setTypewriterSound] = useState(false)
   const [slugGhost, setSlugGhost] = useState<{ ghost: string; full: string } | null>(null)
   const [autocomplete, setAutocomplete] = useState<AutocompleteState | null>(null)
@@ -1677,6 +1678,7 @@ const SlateScreenplayEditor = forwardRef<
               pageCount={pageCount}
               zoomPercent={zoomPercent}
               setZoomPercent={setZoomPercent}
+              blocks={blocks}
             />
 
             {/* Pages container — adapts to viewMode */}
