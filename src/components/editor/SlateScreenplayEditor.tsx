@@ -1406,6 +1406,7 @@ const SlateScreenplayEditor = forwardRef<
     }
 
     // Single / Scroll / Fullscreen — editable
+    const isLight = paperTheme.bg === "#FFFFFF" || paperTheme.bg === "#FFF8F0" || paperTheme.bg === "#F5F0E8"
     const embeddedWidth = isFullscreenMode
       ? "100%"
       : SCREENPLAY_PAGE_WIDTH_PX
@@ -1481,13 +1482,21 @@ const SlateScreenplayEditor = forwardRef<
               position: "relative",
               zIndex: 1,
               padding: isScrollMode
-                ? `${SCREENPLAY_PAGE_PADDING_TOP_PX}px ${SCREENPLAY_PAGE_PADDING_RIGHT_PX}px`
+                ? `${SCREENPLAY_PAGE_PADDING_TOP_PX}px ${SCREENPLAY_PAGE_PADDING_RIGHT_PX}px ${SCREENPLAY_PAGE_PADDING_TOP_PX}px ${SCREENPLAY_PAGE_PADDING_LEFT_PX}px`
                 : `${SCREENPLAY_PAGE_PADDING_TOP_PX}px ${SCREENPLAY_PAGE_PADDING_RIGHT_PX}px ${SCREENPLAY_PAGE_PADDING_BOTTOM_PX}px ${SCREENPLAY_PAGE_PADDING_LEFT_PX}px`,
               outline: "none",
               color: focusMode ? "rgba(255,255,255,0.85)" : appTheme === "architect" ? colors.text : paperTheme.text,
               caretColor: focusMode ? "#D4A853" : appTheme === "architect" ? colors.muted : paperTheme.text,
-              background: isScrollMode ? (focusMode ? "rgba(0,0,0,0.35)" : colors.surfaceBg) : "transparent",
-              borderRadius: isScrollMode && focusMode ? 8 : undefined,
+              background: isScrollMode
+                ? focusMode ? "rgba(0,0,0,0.35)" : appTheme === "architect" ? colors.surfaceBg : paperTheme.bg
+                : "transparent",
+              borderRadius: isScrollMode ? 4 : undefined,
+              border: isScrollMode && !focusMode
+                ? isLight ? "1px solid rgba(0,0,0,0.08)" : "1px solid rgba(255,255,255,0.06)"
+                : undefined,
+              boxShadow: isScrollMode
+                ? focusMode ? "0 0 60px rgba(0,0,0,0.4)" : isLight ? "0 2px 16px rgba(0,0,0,0.1)" : "0 4px 24px rgba(0,0,0,0.3)"
+                : undefined,
               minHeight: isScrollMode
                 ? "100vh"
                 : visualPageCount * SCREENPLAY_PAGE_HEIGHT_PX + (visualPageCount - 1) * SCREENPLAY_PAGE_GAP_PX,
