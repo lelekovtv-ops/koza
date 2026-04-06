@@ -83,6 +83,7 @@ import {
   SCREENPLAY_CHARACTER_MARGIN_TOP_PX,
   SCREENPLAY_TRANSITION_MARGIN_TOP_PX,
   SCREENPLAY_ACTION_AFTER_ACTION_MARGIN_TOP_PX,
+  SCREENPLAY_EDITOR_PADDING,
 } from "./screenplay/screenplayLayoutConstants"
 import { calculatePageBreaks } from "./screenplay/screenplayPageBreaks"
 import { useBibleStore } from "@/store/bible"
@@ -325,7 +326,6 @@ function getPointFromCaretSnapshot(editor: Editor, snapshot: CaretSnapshot): Poi
 
 interface SpreadPreviewProps {
   blocks: Block[]
-  visualPageCount: number
   colors: ScreenplayColors
   isDark: boolean
   appTheme: string
@@ -334,35 +334,77 @@ interface SpreadPreviewProps {
   paperText: string
 }
 
-function SpreadPreview({ blocks, visualPageCount: externalPageCount, colors, isDark, appTheme, focusMode, paperBg, paperText }: SpreadPreviewProps) {
-  // Calculate page count from blocks if external count is unreliable (embedded mode)
-  const estimatedPageCount = useMemo(() => {
-    if (externalPageCount > 1) return externalPageCount
-    // Estimate from blocks content
-    const textAreaH = SCREENPLAY_PAGE_HEIGHT_PX - SCREENPLAY_PAGE_PADDING_TOP_PX - 96 // ~96px bottom padding
-    let totalH = 0
+function SpreadPreview({ blocks, colors, isDark, appTheme, focusMode, paperBg, paperText }: SpreadPreviewProps) {
+  const [spreadIdx, setSpreadIdx] = useState(0) // index of left page (always even)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const textColor = focusMode ? "rgba(255,255,255,0.85)" : appTheme === "architect" ? colors.text : paperText
+
+  // Render blocks identically to screenplayRenderers.tsx:
+  // Container provides page padding (left/right), blocks add ch-based indents
+  const renderBlock = useCallback((block: Block, bi: number) => {
+    const base: React.CSSProperties = {
+      fontFamily: "'Courier Prime', 'Courier New', monospace",
+      fontSize: SCREENPLAY_FONT_SIZE_PX,
+      lineHeight: `${SCREENPLAY_LINE_HEIGHT_PX}px`,
+      color: textColor,
+      whiteSpace: "pre-wrap",
+      wordBreak: "break-word",
+    }
+    switch (block.type) {
+      case "scene_heading":
+        return <div key={block.id} style={{ ...base, fontWeight: "bold", textTransform: "uppercase", color: colors.scene, marginTop: SCREENPLAY_SCENE_HEADING_MARGIN_TOP_PX }}>{block.text}</div>
+      case "character":
+        return <div key={block.id} style={{ ...base, fontWeight: "bold", textTransform: "uppercase", paddingLeft: `${SCREENPLAY_CHARACTER_INDENT_CH}ch`, marginTop: SCREENPLAY_CHARACTER_MARGIN_TOP_PX, color: colors.character }}>{block.text}</div>
+      case "dialogue":
+        return <div key={block.id} style={{ ...base, paddingLeft: `${SCREENPLAY_DIALOGUE_INDENT_LEFT_CH}ch`, paddingRight: `${SCREENPLAY_DIALOGUE_INDENT_RIGHT_CH}ch` }}>{block.text}</div>
+      case "parenthetical":
+        return <div key={block.id} style={{ ...base, fontStyle: "italic", paddingLeft: `${SCREENPLAY_PARENTHETICAL_INDENT_CH}ch`, color: colors.parenthetical }}>{block.text}</div>
+      case "transition":
+        return <div key={block.id} style={{ ...base, textAlign: "right", textTransform: "uppercase", marginTop: SCREENPLAY_TRANSITION_MARGIN_TOP_PX, color: colors.transition }}>{block.text}</div>
+      default:
+        return <div key={block.id} style={{ ...base, marginTop: SCREENPLAY_ACTION_AFTER_ACTION_MARGIN_TOP_PX }}>{block.text}</div>
+    }
+  }, [colors, textColor])
+
+  // Distribute blocks across pages by estimating heights
+  const pages = useMemo(() => {
+    const textAreaH = SCREENPLAY_PAGE_HEIGHT_PX - SCREENPLAY_PAGE_PADDING_TOP_PX - SCREENPLAY_PAGE_PADDING_BOTTOM_PX
+    const contentW = SCREENPLAY_PAGE_WIDTH_PX - SCREENPLAY_PAGE_PADDING_LEFT_PX - SCREENPLAY_PAGE_PADDING_RIGHT_PX
+    const charsPerLine = Math.max(20, Math.floor(contentW / (SCREENPLAY_FONT_SIZE_PX * 0.6)))
+    const result: Block[][] = []
+    let currentPage: Block[] = []
+    let currentH = 0
+
     for (let i = 0; i < blocks.length; i++) {
       const b = blocks[i]
-      // Estimate content width for wrapping
-      const contentW = b.type === "dialogue"
-        ? SCREENPLAY_PAGE_WIDTH_PX - SCREENPLAY_PAGE_PADDING_LEFT_PX - SCREENPLAY_PAGE_PADDING_RIGHT_PX - SCREENPLAY_DIALOGUE_INDENT_LEFT_CH * 8 - SCREENPLAY_DIALOGUE_INDENT_RIGHT_CH * 8
-        : SCREENPLAY_PAGE_WIDTH_PX - SCREENPLAY_PAGE_PADDING_LEFT_PX - SCREENPLAY_PAGE_PADDING_RIGHT_PX
-      const charsPerLine = Math.max(20, Math.floor(contentW / (SCREENPLAY_FONT_SIZE_PX * 0.6)))
-      const lines = Math.max(1, Math.ceil(b.text.length / charsPerLine))
-      const lineH = lines * SCREENPLAY_LINE_HEIGHT_PX
-      // Add margins
-      if (b.type === "scene_heading") totalH += (i === 0 ? SCREENPLAY_PAGE_PADDING_TOP_PX : SCREENPLAY_SCENE_HEADING_MARGIN_TOP_PX)
-      else if (b.type === "character") totalH += SCREENPLAY_CHARACTER_MARGIN_TOP_PX
-      else if (b.type === "transition") totalH += SCREENPLAY_TRANSITION_MARGIN_TOP_PX
-      else totalH += (i === 0 ? SCREENPLAY_PAGE_PADDING_TOP_PX : SCREENPLAY_ACTION_AFTER_ACTION_MARGIN_TOP_PX)
-      totalH += lineH
-    }
-    return Math.max(1, Math.ceil(totalH / textAreaH))
-  }, [blocks, externalPageCount])
+      // Estimate block height
+      let blockW = contentW
+      if (b.type === "dialogue") blockW = contentW - (SCREENPLAY_DIALOGUE_INDENT_LEFT_CH + SCREENPLAY_DIALOGUE_INDENT_RIGHT_CH) * (SCREENPLAY_FONT_SIZE_PX * 0.6)
+      else if (b.type === "character") blockW = contentW - SCREENPLAY_CHARACTER_INDENT_CH * (SCREENPLAY_FONT_SIZE_PX * 0.6)
+      const effCharsPerLine = Math.max(10, Math.floor(blockW / (SCREENPLAY_FONT_SIZE_PX * 0.6)))
+      const lines = Math.max(1, Math.ceil((b.text.length || 1) / effCharsPerLine))
+      let marginTop = SCREENPLAY_ACTION_AFTER_ACTION_MARGIN_TOP_PX
+      if (b.type === "scene_heading") marginTop = SCREENPLAY_SCENE_HEADING_MARGIN_TOP_PX
+      else if (b.type === "character") marginTop = SCREENPLAY_CHARACTER_MARGIN_TOP_PX
+      else if (b.type === "transition") marginTop = SCREENPLAY_TRANSITION_MARGIN_TOP_PX
+      const blockH = (currentPage.length === 0 ? 0 : marginTop) + lines * SCREENPLAY_LINE_HEIGHT_PX
 
-  const [spreadIdx, setSpreadIdx] = useState(0) // index of left page (always even)
-  const pairCount = Math.ceil(estimatedPageCount / 2)
-  const containerRef = useRef<HTMLDivElement>(null)
+      if (currentH + blockH > textAreaH && currentPage.length > 0) {
+        result.push(currentPage)
+        currentPage = [b]
+        currentH = lines * SCREENPLAY_LINE_HEIGHT_PX
+      } else {
+        currentPage.push(b)
+        currentH += blockH
+      }
+    }
+    if (currentPage.length > 0) result.push(currentPage)
+    return result
+  }, [blocks])
+
+  const totalPages = pages.length
+  const pairCount = Math.ceil(totalPages / 2)
 
   // Keyboard navigation
   useEffect(() => {
@@ -399,47 +441,19 @@ function SpreadPreview({ blocks, visualPageCount: externalPageCount, colors, isD
     }
   }, [pairCount])
 
-  const textColor = focusMode ? "rgba(255,255,255,0.85)" : appTheme === "architect" ? colors.text : paperText
-
-  // Render blocks identically to screenplayRenderers.tsx:
-  // Container provides page padding (left/right), blocks add ch-based indents
-  const renderBlock = useCallback((block: Block, bi: number) => {
-    const base: React.CSSProperties = {
-      fontFamily: "'Courier Prime', 'Courier New', monospace",
-      fontSize: SCREENPLAY_FONT_SIZE_PX,
-      lineHeight: `${SCREENPLAY_LINE_HEIGHT_PX}px`,
-      color: textColor,
-      whiteSpace: "pre-wrap",
-      wordBreak: "break-word",
-    }
-    switch (block.type) {
-      case "scene_heading":
-        return <div key={block.id} style={{ ...base, fontWeight: "bold", textTransform: "uppercase", color: colors.scene, marginTop: SCREENPLAY_SCENE_HEADING_MARGIN_TOP_PX }}>{block.text}</div>
-      case "character":
-        return <div key={block.id} style={{ ...base, fontWeight: "bold", textTransform: "uppercase", paddingLeft: `${SCREENPLAY_CHARACTER_INDENT_CH}ch`, marginTop: SCREENPLAY_CHARACTER_MARGIN_TOP_PX, color: colors.character }}>{block.text}</div>
-      case "dialogue":
-        return <div key={block.id} style={{ ...base, paddingLeft: `${SCREENPLAY_DIALOGUE_INDENT_LEFT_CH}ch`, paddingRight: `${SCREENPLAY_DIALOGUE_INDENT_RIGHT_CH}ch` }}>{block.text}</div>
-      case "parenthetical":
-        return <div key={block.id} style={{ ...base, fontStyle: "italic", paddingLeft: `${SCREENPLAY_PARENTHETICAL_INDENT_CH}ch`, color: colors.parenthetical }}>{block.text}</div>
-      case "transition":
-        return <div key={block.id} style={{ ...base, textAlign: "right", textTransform: "uppercase", marginTop: SCREENPLAY_TRANSITION_MARGIN_TOP_PX, color: colors.transition }}>{block.text}</div>
-      default:
-        return <div key={block.id} style={{ ...base, marginTop: SCREENPLAY_ACTION_AFTER_ACTION_MARGIN_TOP_PX }}>{block.text}</div>
-    }
-  }, [colors, textColor])
-
   const renderPage = useCallback((pageIdx: number, previewScale: number) => {
-    if (pageIdx >= estimatedPageCount) {
-      return <div style={{ width: SCREENPLAY_PAGE_WIDTH_PX * previewScale, height: SCREENPLAY_PAGE_HEIGHT_PX * previewScale }} />
-    }
-    const sourceTop = pageIdx * (SCREENPLAY_PAGE_HEIGHT_PX + SCREENPLAY_PAGE_GAP_PX)
     const pageW = SCREENPLAY_PAGE_WIDTH_PX * previewScale
     const pageH = SCREENPLAY_PAGE_HEIGHT_PX * previewScale
+
+    if (pageIdx >= pages.length) {
+      return <div style={{ width: pageW, height: pageH }} />
+    }
 
     const isLight = paperBg === "#FFFFFF" || paperBg === "#FFF8F0" || paperBg === "#F5F0E8"
     const pageBg = focusMode ? "rgba(0,0,0,0.35)" : appTheme === "architect" ? colors.surfaceBg : paperBg
     const pageNumColor = isLight && !focusMode ? "rgba(0,0,0,0.3)" : colors.muted
     const pageBorder = focusMode ? "none" : isLight ? "1px solid rgba(0,0,0,0.08)" : "1px solid rgba(255,255,255,0.06)"
+    const pageBlocks = pages[pageIdx]
 
     return (
       <div style={{
@@ -450,21 +464,21 @@ function SpreadPreview({ blocks, visualPageCount: externalPageCount, colors, isD
         <div style={{ position: "absolute", top: 8, right: 12, fontSize: 11, color: pageNumColor, zIndex: 2, fontFamily: "'Courier Prime', monospace" }}>
           {pageIdx + 1}.
         </div>
-        <div style={{ transform: `scale(${previewScale})`, transformOrigin: "top left", width: SCREENPLAY_PAGE_WIDTH_PX, height: SCREENPLAY_PAGE_HEIGHT_PX, overflow: "hidden", pointerEvents: "none", position: "relative" }}>
-          <div style={{
-            position: "absolute",
-            top: -sourceTop + SCREENPLAY_PAGE_PADDING_TOP_PX,
-            left: 0,
-            width: SCREENPLAY_PAGE_WIDTH_PX,
-            padding: `0 ${SCREENPLAY_PAGE_PADDING_RIGHT_PX}px 0 ${SCREENPLAY_PAGE_PADDING_LEFT_PX}px`,
-            boxSizing: "border-box",
-          }}>
-            {blocks.map(renderBlock)}
-          </div>
+        <div style={{
+          transform: `scale(${previewScale})`,
+          transformOrigin: "top left",
+          width: SCREENPLAY_PAGE_WIDTH_PX,
+          height: SCREENPLAY_PAGE_HEIGHT_PX,
+          overflow: "hidden",
+          pointerEvents: "none",
+          padding: SCREENPLAY_EDITOR_PADDING,
+          boxSizing: "border-box",
+        }}>
+          {pageBlocks.map(renderBlock)}
         </div>
       </div>
     )
-  }, [blocks, estimatedPageCount, colors, renderBlock, paperBg, focusMode, appTheme])
+  }, [pages, colors, renderBlock, paperBg, focusMode, appTheme])
 
   const leftIdx = spreadIdx
   const rightIdx = spreadIdx + 1
@@ -554,7 +568,7 @@ function SpreadPreview({ blocks, visualPageCount: externalPageCount, colors, isD
           ›
         </button>
 
-        <span style={{ marginLeft: 4 }}>{leftIdx + 1}–{Math.min(rightIdx + 1, estimatedPageCount)} / {estimatedPageCount}</span>
+        <span style={{ marginLeft: 4 }}>{leftIdx + 1}–{Math.min(rightIdx + 1, totalPages)} / {totalPages}</span>
       </div>
     </div>
   )
@@ -1401,7 +1415,6 @@ const SlateScreenplayEditor = forwardRef<
         >
           <SpreadPreview
             blocks={blocks}
-            visualPageCount={visualPageCount}
             colors={colors}
             isDark={isDark}
             appTheme={appTheme}
@@ -1630,7 +1643,6 @@ const SlateScreenplayEditor = forwardRef<
         {viewMode === "spread" && (
           <SpreadPreview
             blocks={blocks}
-            visualPageCount={visualPageCount}
             colors={colors}
             isDark={isDark}
             appTheme={appTheme}
