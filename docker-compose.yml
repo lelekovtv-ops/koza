@@ -1,0 +1,38 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: koza
+      POSTGRES_USER: koza
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-koza_dev_2026}
+    ports:
+      - "5432:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./server/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U koza"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  koza-ws:
+    build:
+      context: ./server
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://koza:${POSTGRES_PASSWORD:-koza_dev_2026}@postgres:5432/koza
+      JWT_SECRET: ${JWT_SECRET:-dev_jwt_secret_change_in_production}
+      PORT: 8080
+    ports:
+      - "8080:8080"
+
+volumes:
+  pgdata:
