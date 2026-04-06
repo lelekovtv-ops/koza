@@ -19,6 +19,7 @@ export type ChangeOrigin =
   | "voice"
   | "canvas"
   | "system"
+  | "remote"
 
 // ─── Production Visual ───────────────────────────────────────
 
