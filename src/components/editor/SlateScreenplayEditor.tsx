@@ -329,18 +329,48 @@ interface SpreadPreviewProps {
   colors: ScreenplayColors
   isDark: boolean
   appTheme: string
-  zoomPercent: number
   focusMode: boolean
 }
 
-function SpreadPreview({ blocks, visualPageCount, colors, isDark, appTheme, zoomPercent, focusMode }: SpreadPreviewProps) {
-  const userScale = zoomPercent / 100
-  const previewScale = 0.52 * userScale
-  const pageW = SCREENPLAY_PAGE_WIDTH_PX * previewScale
-  const pageH = SCREENPLAY_PAGE_HEIGHT_PX * previewScale
-  const spreadGap = 3
-  const rowGap = 32 * userScale
+function SpreadPreview({ blocks, visualPageCount, colors, isDark, appTheme, focusMode }: SpreadPreviewProps) {
+  const [spreadIdx, setSpreadIdx] = useState(0) // index of left page (always even)
   const pairCount = Math.ceil(visualPageCount / 2)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  // Keyboard navigation
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    el.focus()
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ") {
+        e.preventDefault()
+        setSpreadIdx((prev) => Math.min(prev + 2, (pairCount - 1) * 2))
+      } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault()
+        setSpreadIdx((prev) => Math.max(prev - 2, 0))
+      } else if (e.key === "Home") {
+        e.preventDefault()
+        setSpreadIdx(0)
+      } else if (e.key === "End") {
+        e.preventDefault()
+        setSpreadIdx((pairCount - 1) * 2)
+      }
+    }
+    el.addEventListener("keydown", handler)
+    return () => el.removeEventListener("keydown", handler)
+  }, [pairCount])
+
+  // Click zones — left half goes back, right half goes forward
+  const handleClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    if (x < rect.width / 2) {
+      setSpreadIdx((prev) => Math.max(prev - 2, 0))
+    } else {
+      setSpreadIdx((prev) => Math.min(prev + 2, (pairCount - 1) * 2))
+    }
+  }, [pairCount])
 
   const renderBlock = useCallback((block: Block, bi: number) => {
     const base: React.CSSProperties = {
@@ -352,145 +382,133 @@ function SpreadPreview({ blocks, visualPageCount, colors, isDark, appTheme, zoom
       whiteSpace: "pre-wrap",
       wordBreak: "break-word",
     }
-
     switch (block.type) {
       case "scene_heading":
-        return (
-          <div key={block.id} style={{
-            ...base,
-            fontWeight: "bold",
-            textTransform: "uppercase",
-            color: colors.scene,
-            marginTop: bi === 0 ? SCREENPLAY_PAGE_PADDING_TOP_PX : SCREENPLAY_SCENE_HEADING_MARGIN_TOP_PX,
-          }}>
-            {block.text}
-          </div>
-        )
+        return <div key={block.id} style={{ ...base, fontWeight: "bold", textTransform: "uppercase", color: colors.scene, marginTop: bi === 0 ? SCREENPLAY_PAGE_PADDING_TOP_PX : SCREENPLAY_SCENE_HEADING_MARGIN_TOP_PX }}>{block.text}</div>
       case "character":
-        return (
-          <div key={block.id} style={{
-            ...base,
-            textTransform: "uppercase",
-            paddingLeft: SCREENPLAY_PAGE_PADDING_LEFT_PX + SCREENPLAY_CHARACTER_INDENT_CH * 8,
-            marginTop: SCREENPLAY_CHARACTER_MARGIN_TOP_PX,
-            color: colors.character,
-          }}>
-            {block.text}
-          </div>
-        )
+        return <div key={block.id} style={{ ...base, textTransform: "uppercase", paddingLeft: SCREENPLAY_PAGE_PADDING_LEFT_PX + SCREENPLAY_CHARACTER_INDENT_CH * 8, marginTop: SCREENPLAY_CHARACTER_MARGIN_TOP_PX, color: colors.character }}>{block.text}</div>
       case "dialogue":
-        return (
-          <div key={block.id} style={{
-            ...base,
-            paddingLeft: SCREENPLAY_PAGE_PADDING_LEFT_PX + SCREENPLAY_DIALOGUE_INDENT_LEFT_CH * 8,
-            paddingRight: SCREENPLAY_PAGE_PADDING_RIGHT_PX + SCREENPLAY_DIALOGUE_INDENT_RIGHT_CH * 8,
-          }}>
-            {block.text}
-          </div>
-        )
+        return <div key={block.id} style={{ ...base, paddingLeft: SCREENPLAY_PAGE_PADDING_LEFT_PX + SCREENPLAY_DIALOGUE_INDENT_LEFT_CH * 8, paddingRight: SCREENPLAY_PAGE_PADDING_RIGHT_PX + SCREENPLAY_DIALOGUE_INDENT_RIGHT_CH * 8 }}>{block.text}</div>
       case "parenthetical":
-        return (
-          <div key={block.id} style={{
-            ...base,
-            paddingLeft: SCREENPLAY_PAGE_PADDING_LEFT_PX + SCREENPLAY_PARENTHETICAL_INDENT_CH * 8,
-            color: colors.parenthetical,
-          }}>
-            {block.text}
-          </div>
-        )
+        return <div key={block.id} style={{ ...base, paddingLeft: SCREENPLAY_PAGE_PADDING_LEFT_PX + SCREENPLAY_PARENTHETICAL_INDENT_CH * 8, color: colors.parenthetical }}>{block.text}</div>
       case "transition":
-        return (
-          <div key={block.id} style={{
-            ...base,
-            textAlign: "right",
-            textTransform: "uppercase",
-            marginTop: SCREENPLAY_TRANSITION_MARGIN_TOP_PX,
-            color: colors.transition,
-          }}>
-            {block.text}
-          </div>
-        )
+        return <div key={block.id} style={{ ...base, textAlign: "right", textTransform: "uppercase", marginTop: SCREENPLAY_TRANSITION_MARGIN_TOP_PX, color: colors.transition }}>{block.text}</div>
       default:
-        return (
-          <div key={block.id} style={{
-            ...base,
-            marginTop: bi === 0 ? SCREENPLAY_PAGE_PADDING_TOP_PX : SCREENPLAY_ACTION_AFTER_ACTION_MARGIN_TOP_PX,
-          }}>
-            {block.text}
-          </div>
-        )
+        return <div key={block.id} style={{ ...base, marginTop: bi === 0 ? SCREENPLAY_PAGE_PADDING_TOP_PX : SCREENPLAY_ACTION_AFTER_ACTION_MARGIN_TOP_PX }}>{block.text}</div>
     }
   }, [colors])
 
+  const renderPage = useCallback((pageIdx: number, previewScale: number) => {
+    if (pageIdx >= visualPageCount) {
+      return <div style={{ width: SCREENPLAY_PAGE_WIDTH_PX * previewScale, height: SCREENPLAY_PAGE_HEIGHT_PX * previewScale }} />
+    }
+    const sourceTop = pageIdx * (SCREENPLAY_PAGE_HEIGHT_PX + SCREENPLAY_PAGE_GAP_PX)
+    const pageW = SCREENPLAY_PAGE_WIDTH_PX * previewScale
+    const pageH = SCREENPLAY_PAGE_HEIGHT_PX * previewScale
+
+    return (
+      <div style={{ width: pageW, height: pageH, backgroundColor: colors.surfaceBg, overflow: "hidden", position: "relative", borderRadius: 2 }}>
+        <div style={{ position: "absolute", top: 8, right: 12, fontSize: 11, color: colors.muted, zIndex: 2, fontFamily: "'Courier Prime', monospace" }}>
+          {pageIdx + 1}.
+        </div>
+        <div style={{ transform: `scale(${previewScale})`, transformOrigin: "top left", width: SCREENPLAY_PAGE_WIDTH_PX, height: SCREENPLAY_PAGE_HEIGHT_PX, overflow: "hidden", pointerEvents: "none", position: "relative" }}>
+          <div style={{ position: "absolute", top: -sourceTop, left: 0, width: SCREENPLAY_PAGE_WIDTH_PX }}>
+            {blocks.map(renderBlock)}
+          </div>
+        </div>
+      </div>
+    )
+  }, [blocks, visualPageCount, colors, renderBlock])
+
+  const leftIdx = spreadIdx
+  const rightIdx = spreadIdx + 1
+  const currentPair = Math.floor(spreadIdx / 2)
+
   return (
     <div
-      className="relative flex-1 overflow-auto"
-      style={{ backgroundColor: focusMode ? "transparent" : appTheme === "architect" ? "#080808" : isDark ? "#201E1B" : "#EDEDED", padding: "32px 24px" }}
+      ref={containerRef}
+      tabIndex={0}
+      className="relative flex-1 flex flex-col items-center justify-center outline-none"
+      style={{
+        backgroundColor: focusMode ? "transparent" : appTheme === "architect" ? "#080808" : isDark ? "#201E1B" : "#EDEDED",
+        cursor: "pointer",
+        userSelect: "none",
+      }}
+      onClick={handleClick}
     >
-      <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: rowGap, paddingBottom: 60 }}>
-        {Array.from({ length: pairCount }).map((_, pair) => {
-          const leftIdx = pair * 2
-          const rightIdx = pair * 2 + 1
-
+      {/* Two pages side by side — fill available height */}
+      <div style={{ display: "flex", gap: 4, filter: "drop-shadow(0 4px 20px rgba(0,0,0,0.35))" }}>
+        {(() => {
+          // Calculate scale to fit both pages in viewport
+          const maxH = typeof window !== "undefined" ? window.innerHeight - 120 : 800
+          const maxW = typeof window !== "undefined" ? window.innerWidth - 160 : 1200
+          const scaleH = maxH / SCREENPLAY_PAGE_HEIGHT_PX
+          const scaleW = maxW / (SCREENPLAY_PAGE_WIDTH_PX * 2 + 4)
+          const previewScale = Math.min(scaleH, scaleW, 0.85)
           return (
-            <div key={pair} style={{ display: "flex", gap: spreadGap, filter: "drop-shadow(0 2px 8px rgba(0,0,0,0.25))" }}>
-              {[leftIdx, rightIdx].map((pageIdx) => {
-                if (pageIdx >= visualPageCount) {
-                  return <div key={pageIdx} style={{ width: pageW, height: pageH }} />
-                }
-
-                const sourceTop = pageIdx * (SCREENPLAY_PAGE_HEIGHT_PX + SCREENPLAY_PAGE_GAP_PX)
-
-                return (
-                  <div
-                    key={pageIdx}
-                    style={{
-                      width: pageW,
-                      height: pageH,
-                      backgroundColor: colors.surfaceBg,
-                      overflow: "hidden",
-                      position: "relative",
-                      borderRadius: 1,
-                    }}
-                  >
-                    {/* Page number */}
-                    <div style={{
-                      position: "absolute",
-                      top: 8 * previewScale,
-                      right: 10 * previewScale,
-                      fontSize: Math.max(8, 10 * previewScale),
-                      color: colors.muted,
-                      zIndex: 2,
-                      fontFamily: "'Courier Prime', monospace",
-                    }}>
-                      {pageIdx + 1}.
-                    </div>
-
-                    {/* Scaled content clipped to page bounds */}
-                    <div style={{
-                      transform: `scale(${previewScale})`,
-                      transformOrigin: "top left",
-                      width: SCREENPLAY_PAGE_WIDTH_PX,
-                      height: SCREENPLAY_PAGE_HEIGHT_PX,
-                      overflow: "hidden",
-                      pointerEvents: "none",
-                      position: "relative",
-                    }}>
-                      <div style={{
-                        position: "absolute",
-                        top: -sourceTop,
-                        left: 0,
-                        width: SCREENPLAY_PAGE_WIDTH_PX,
-                      }}>
-                        {blocks.map(renderBlock)}
-                      </div>
-                    </div>
-                  </div>
-                )
-              })}
-            </div>
+            <>
+              {renderPage(leftIdx, previewScale)}
+              {renderPage(rightIdx, previewScale)}
+            </>
           )
-        })}
+        })()}
+      </div>
+
+      {/* Page indicator + nav dots */}
+      <div style={{
+        position: "absolute",
+        bottom: 16,
+        left: "50%",
+        transform: "translateX(-50%)",
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "6px 14px",
+        borderRadius: 20,
+        background: "rgba(0,0,0,0.5)",
+        backdropFilter: "blur(8px)",
+        fontSize: 12,
+        color: "rgba(255,255,255,0.6)",
+        fontFamily: "system-ui, sans-serif",
+      }}>
+        {/* Left arrow */}
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setSpreadIdx((prev) => Math.max(prev - 2, 0)) }}
+          style={{ background: "none", border: "none", color: spreadIdx > 0 ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.15)", cursor: spreadIdx > 0 ? "pointer" : "default", fontSize: 14, padding: "0 4px" }}
+        >
+          ‹
+        </button>
+
+        {/* Dots */}
+        {Array.from({ length: pairCount }).map((_, i) => (
+          <button
+            key={i}
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setSpreadIdx(i * 2) }}
+            style={{
+              width: i === currentPair ? 16 : 6,
+              height: 6,
+              borderRadius: 3,
+              background: i === currentPair ? "#D4A853" : "rgba(255,255,255,0.25)",
+              border: "none",
+              cursor: "pointer",
+              padding: 0,
+              transition: "all 0.2s",
+            }}
+          />
+        ))}
+
+        {/* Right arrow */}
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setSpreadIdx((prev) => Math.min(prev + 2, (pairCount - 1) * 2)) }}
+          style={{ background: "none", border: "none", color: spreadIdx < (pairCount - 1) * 2 ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.15)", cursor: spreadIdx < (pairCount - 1) * 2 ? "pointer" : "default", fontSize: 14, padding: "0 4px" }}
+        >
+          ›
+        </button>
+
+        <span style={{ marginLeft: 4 }}>{leftIdx + 1}–{Math.min(rightIdx + 1, visualPageCount)} / {visualPageCount}</span>
       </div>
     </div>
   )
@@ -1341,7 +1359,6 @@ const SlateScreenplayEditor = forwardRef<
             colors={colors}
             isDark={isDark}
             appTheme={appTheme}
-            zoomPercent={100}
             focusMode={focusMode}
           />
         </div>
@@ -1560,7 +1577,6 @@ const SlateScreenplayEditor = forwardRef<
             colors={colors}
             isDark={isDark}
             appTheme={appTheme}
-            zoomPercent={zoomPercent}
             focusMode={focusMode}
           />
         )}
