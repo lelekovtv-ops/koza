@@ -761,6 +761,7 @@ function ViewModeButton() {
   const toggleFocusMode = useScreenplaySettings((s) => s.toggleFocusMode)
   const btnRef = useRef<HTMLButtonElement>(null)
   const panelRef = useRef<HTMLDivElement>(null)
+  const selfOpening = useRef(false)
 
   // Close on click outside (ignore clicks on button itself)
   useEffect(() => {
@@ -782,9 +783,9 @@ function ViewModeButton() {
     return () => clearTimeout(t)
   }, [open])
 
-  // Close when other popups open
+  // Close when other popups open (skip if we triggered it)
   useEffect(() => {
-    const handler = () => setOpen(false)
+    const handler = () => { if (!selfOpening.current) setOpen(false) }
     window.addEventListener("koza-popup-open", handler)
     return () => window.removeEventListener("koza-popup-open", handler)
   }, [])
@@ -816,7 +817,7 @@ function ViewModeButton() {
       <button
         ref={btnRef}
         type="button"
-        onClick={() => { const next = !open; setOpen(next); if (next) window.dispatchEvent(new Event("koza-popup-open")) }}
+        onClick={() => { const next = !open; setOpen(next); if (next) { selfOpening.current = true; window.dispatchEvent(new Event("koza-popup-open")); selfOpening.current = false } }}
         title="View mode"
         style={{
           position: "fixed",
@@ -942,6 +943,7 @@ function KeyboardHints() {
   const settings = useScreenplaySettings()
   const hintsBtnRef = useRef<HTMLButtonElement>(null)
   const hintsPanelRef = useRef<HTMLDivElement>(null)
+  const hintsSelfOpening = useRef(false)
 
   // Close on click outside (ignore clicks on button itself)
   useEffect(() => {
@@ -963,9 +965,9 @@ function KeyboardHints() {
     return () => clearTimeout(t)
   }, [open])
 
-  // Close when other popups open
+  // Close when other popups open (skip if we triggered it)
   useEffect(() => {
-    const handler = () => setOpen(false)
+    const handler = () => { if (!hintsSelfOpening.current) setOpen(false) }
     window.addEventListener("koza-popup-open", handler)
     return () => window.removeEventListener("koza-popup-open", handler)
   }, [])
@@ -1007,7 +1009,7 @@ function KeyboardHints() {
       <button
         ref={hintsBtnRef}
         type="button"
-        onClick={() => { const next = !open; setOpen(next); if (next) window.dispatchEvent(new Event("koza-popup-open")) }}
+        onClick={() => { const next = !open; setOpen(next); if (next) { hintsSelfOpening.current = true; window.dispatchEvent(new Event("koza-popup-open")); hintsSelfOpening.current = false } }}
         title="Keyboard shortcuts"
         style={{
           position: "fixed",

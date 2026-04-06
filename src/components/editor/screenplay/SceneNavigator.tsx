@@ -7,10 +7,11 @@ import { useScenesStore } from "@/store/scenes"
 export function SceneNavigatorButton() {
   const [open, setOpen] = useState(false)
   const btnRef = useRef<HTMLButtonElement>(null)
+  const selfOpening = useRef(false)
 
-  // Close when other popups open
+  // Close when other popups open (skip if we triggered it)
   useEffect(() => {
-    const handler = () => setOpen(false)
+    const handler = () => { if (!selfOpening.current) setOpen(false) }
     window.addEventListener("koza-popup-open", handler)
     return () => window.removeEventListener("koza-popup-open", handler)
   }, [])
@@ -20,7 +21,7 @@ export function SceneNavigatorButton() {
       <button
         ref={btnRef}
         type="button"
-        onClick={() => { const next = !open; setOpen(next); if (next) window.dispatchEvent(new Event("koza-popup-open")) }}
+        onClick={() => { const next = !open; setOpen(next); if (next) { selfOpening.current = true; window.dispatchEvent(new Event("koza-popup-open")); selfOpening.current = false } }}
         title="Scene navigator"
         style={{
           position: "fixed",
