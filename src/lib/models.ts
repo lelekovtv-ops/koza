@@ -9,7 +9,7 @@ export type AIModel = {
   capabilities: string[]
 }
 
-export const DEFAULT_TEXT_MODEL_ID = "gpt-4o"
+export const DEFAULT_TEXT_MODEL_ID = "claude-sonnet-4-20250514"
 
 export const ALL_MODELS: AIModel[] = [
   // Text models

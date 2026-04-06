@@ -1,6 +1,8 @@
 import { create } from "zustand"
 import { persist } from "zustand/middleware"
 import { safeStorage } from "@/lib/safeStorage"
+import type { ChangeOrigin } from "@/lib/productionTypes"
+import { syncBus } from "@/lib/syncBus"
 
 export type HistoryEntrySource = "generate" | "edit" | "crop" | "color" | "loading"
 
@@ -35,7 +37,10 @@ export interface TimelineShot {
   visualDescription: string
   svg: string
   blockRange: [string, string] | null
+  parentBlockId: string | null
+  shotId: string | null         // FK to Shot.id in scriptStore
   locked: boolean
+  autoSynced: boolean
   sourceText: string
   customReferenceUrls?: string[]
   excludedBibleIds?: string[]
@@ -71,11 +76,12 @@ interface TimelineState {
   scrollLeft: number
   selectedShotId: string | null
   selectedClipId: string | null
-  addShot: (partial?: Partial<TimelineShot>) => string
-  removeShot: (id: string) => void
-  updateShot: (id: string, patch: Partial<TimelineShot>) => void
-  reorderShot: (id: string, toIndex: number) => void
-  reorderShots: (shots: TimelineShot[]) => void
+  addShot: (partial?: Partial<TimelineShot>, origin?: ChangeOrigin) => string
+  removeShot: (id: string, origin?: ChangeOrigin) => void
+  updateShot: (id: string, patch: Partial<TimelineShot>, origin?: ChangeOrigin) => void
+  reorderShot: (id: string, toIndex: number, origin?: ChangeOrigin) => void
+  reorderShots: (shots: TimelineShot[], origin?: ChangeOrigin) => void
+  _lastOrigin: ChangeOrigin | undefined
   addAudioClip: (partial?: Partial<AudioClip>) => string
   removeAudioClip: (id: string) => void
   updateAudioClip: (id: string, patch: Partial<AudioClip>) => void
@@ -205,7 +211,10 @@ export const createTimelineShot = (partial: Partial<TimelineShot> = {}): Timelin
   visualDescription: partial.visualDescription ?? "",
   svg: partial.svg ?? "",
   blockRange: partial.blockRange ?? null,
+  parentBlockId: partial.parentBlockId ?? null,
+  shotId: partial.shotId ?? null,
   locked: partial.locked ?? false,
+  autoSynced: partial.autoSynced ?? false,
   sourceText: partial.sourceText ?? "",
   customReferenceUrls: partial.customReferenceUrls ?? [],
   excludedBibleIds: partial.excludedBibleIds ?? [],
@@ -270,7 +279,8 @@ export const useTimelineStore = create<TimelineState>()(
   persist(
     (set, get) => ({
       ...initialState,
-      addShot: (partial = {}) => {
+      _lastOrigin: undefined as ChangeOrigin | undefined,
+      addShot: (partial = {}, origin?) => {
         const currentShots = get().shots
         const shot = createTimelineShot({
           ...partial,
@@ -281,6 +291,7 @@ export const useTimelineStore = create<TimelineState>()(
         set((state) => ({
           shots: normalizeShots([...state.shots, shot]),
           selectedShotId: shot.id,
+          _lastOrigin: origin,
           ...updateCurrentProjectTimeline(state, {
             shots: normalizeShots([...state.shots, shot]),
           }),
@@ -288,18 +299,26 @@ export const useTimelineStore = create<TimelineState>()(
 
         return shot.id
       },
-      removeShot: (id) => {
+      removeShot: (id, origin?) => {
+        const shot = get().shots.find((s) => s.id === id)
+        // Guard: shots with parentBlockId can only be removed via screenplay (scriptStore)
+        if (shot?.parentBlockId && origin !== "screenplay") {
+          // Delegate to scriptStore — the sync orchestrator will project back
+          syncBus.dispatch(origin ?? "timeline", "shot-child-remove", { shotId: id }, { blockId: shot.parentBlockId })
+          return
+        }
         set((state) => {
-          const shots = normalizeShots(state.shots.filter((shot) => shot.id !== id))
+          const shots = normalizeShots(state.shots.filter((s) => s.id !== id))
           return {
             shots,
             currentTime: getClampedCurrentTime(shots, state.currentTime),
             selectedShotId: state.selectedShotId === id ? null : state.selectedShotId,
+            _lastOrigin: origin,
             ...updateCurrentProjectTimeline(state, { shots }),
           }
         })
       },
-      updateShot: (id, patch) => {
+      updateShot: (id, patch, origin?) => {
         set((state) => {
           const shots = normalizeShots(
             state.shots.map((shot) => (shot.id === id ? createTimelineShot({ ...shot, ...patch, id: shot.id }) : shot))
@@ -307,16 +326,27 @@ export const useTimelineStore = create<TimelineState>()(
 
           return {
             shots,
+            _lastOrigin: origin,
             ...updateCurrentProjectTimeline(state, { shots }),
           }
         })
       },
-      reorderShot: (id, toIndex) => {
+      reorderShot: (id, toIndex, origin?) => {
         set((state) => {
           const currentShots = normalizeShots(state.shots)
-          const fromIndex = currentShots.findIndex((shot) => shot.id === id)
-          if (fromIndex === -1) return state
+          const shot = currentShots.find((s) => s.id === id)
+          if (!shot) return state
 
+          // Guard: if shot has parentBlockId, only allow reorder within same parent
+          if (shot.parentBlockId && origin !== "screenplay") {
+            const siblings = currentShots.filter((s) => s.parentBlockId === shot.parentBlockId)
+            const globalIndices = siblings.map((s) => currentShots.findIndex((cs) => cs.id === s.id))
+            const minIdx = Math.min(...globalIndices)
+            const maxIdx = Math.max(...globalIndices)
+            if (toIndex < minIdx || toIndex > maxIdx) return state // cross-block reorder blocked
+          }
+
+          const fromIndex = currentShots.findIndex((s) => s.id === id)
           const nextIndex = clamp(toIndex, 0, Math.max(0, currentShots.length - 1))
           if (fromIndex === nextIndex) return state
 
@@ -328,17 +358,19 @@ export const useTimelineStore = create<TimelineState>()(
 
           return {
             shots,
+            _lastOrigin: origin,
             ...updateCurrentProjectTimeline(state, { shots }),
           }
         })
       },
-      reorderShots: (shots) => {
+      reorderShots: (shots, origin?) => {
         set((state) => {
           const normalized = normalizeShots(shots)
           return {
             shots: normalized,
             currentTime: getClampedCurrentTime(normalized, state.currentTime),
             selectedShotId: normalized.some((shot) => shot.id === state.selectedShotId) ? state.selectedShotId : null,
+            _lastOrigin: origin,
             ...updateCurrentProjectTimeline(state, { shots: normalized }),
           }
         })

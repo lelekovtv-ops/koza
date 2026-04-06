@@ -1,8 +1,10 @@
 "use client"
 
 import { useState, useEffect, useRef, useCallback } from "react"
-import { X, ChevronDown, ChevronRight, Trash2, Eye, EyeOff, ArrowDown } from "lucide-react"
+import { X, ChevronDown, ChevronRight, Trash2, Eye, EyeOff, ArrowDown, Bug, GripHorizontal } from "lucide-react"
 import { useDevLogStore } from "@/store/devlog"
+import { usePathname, useRouter } from "next/navigation"
+import { getAccentColors } from "@/lib/themeColors"
 import type { LogEntry, LogEntryType } from "@/store/devlog"
 
 /* ─── Russian labels for pipeline stages ─── */
@@ -107,7 +109,6 @@ function EntryRow({ entry }: { entry: LogEntry }) {
   const label = STAGE_LABELS[entry.type] || entry.type
   const desc = STAGE_DESCRIPTIONS[entry.type]
 
-  // Try to parse details as JSON for pretty display
   let parsedDetails: object | null = null
   if (entry.details) {
     try { parsedDetails = JSON.parse(entry.details) } catch { /* plain text */ }
@@ -120,44 +121,26 @@ function EntryRow({ entry }: { entry: LogEntry }) {
         onClick={() => setExpanded(!expanded)}
         className="flex w-full items-start gap-3 px-4 py-2.5 text-left"
       >
-        {/* expand icon */}
         <span className="mt-0.5 flex-shrink-0 text-white/30">
           {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </span>
-
-        {/* color dot */}
-        <span
-          className="mt-1.5 h-2 w-2 flex-shrink-0 rounded-full"
-          style={{ backgroundColor: color }}
-        />
-
-        {/* content */}
+        <span className="mt-1.5 h-2 w-2 flex-shrink-0 rounded-full" style={{ backgroundColor: color }} />
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-2">
-            <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${typeBadgeBg(entry.type)}`} style={{ color }}>
-              {label}
-            </span>
+            <span className={`rounded px-1.5 py-0.5 text-[10px] font-medium ${typeBadgeBg(entry.type)}`} style={{ color }}>{label}</span>
             <span className="text-[10px] text-white/25">{formatRelativeTime(entry.timestamp)}</span>
           </div>
           <p className="mt-0.5 truncate text-[12px] text-white/60">{entry.title}</p>
         </div>
       </button>
 
-      {/* expanded details */}
       {expanded && (
         <div className="border-t border-white/[0.03] bg-white/[0.015] px-4 py-3 pl-12">
-          {/* description */}
-          {desc && (
-            <p className="mb-2 text-[11px] leading-relaxed text-white/40 italic">{desc}</p>
-          )}
-
-          {/* title (full) */}
+          {desc && <p className="mb-2 text-[11px] leading-relaxed text-white/40 italic">{desc}</p>}
           <div className="mb-2">
             <span className="text-[10px] uppercase tracking-wider text-white/25">Заголовок</span>
             <p className="mt-0.5 text-[12px] text-white/70">{entry.title}</p>
           </div>
-
-          {/* details */}
           {entry.details && (
             <div className="mb-2">
               <span className="text-[10px] uppercase tracking-wider text-white/25">Детали</span>
@@ -172,8 +155,6 @@ function EntryRow({ entry }: { entry: LogEntry }) {
               )}
             </div>
           )}
-
-          {/* meta */}
           {entry.meta && Object.keys(entry.meta).length > 0 && (
             <div>
               <span className="text-[10px] uppercase tracking-wider text-white/25">Мета-данные</span>
@@ -181,26 +162,14 @@ function EntryRow({ entry }: { entry: LogEntry }) {
                 {Object.entries(entry.meta).map(([key, val]) => (
                   <div key={key} className="flex items-baseline gap-2">
                     <span className="text-[11px] text-white/30">{key}:</span>
-                    <span className="text-[11px] text-white/60">
-                      {typeof val === "object" ? JSON.stringify(val) : String(val)}
-                    </span>
+                    <span className="text-[11px] text-white/60">{typeof val === "object" ? JSON.stringify(val) : String(val)}</span>
                   </div>
                 ))}
               </div>
             </div>
           )}
-
-          {/* group */}
-          {entry.group && (
-            <div className="mt-2 text-[10px] text-white/20">
-              Группа: {entry.group}
-            </div>
-          )}
-
-          {/* timestamp */}
-          <div className="mt-1 text-[10px] text-white/20">
-            {formatTimestamp(entry.timestamp)}
-          </div>
+          {entry.group && <div className="mt-2 text-[10px] text-white/20">Группа: {entry.group}</div>}
+          <div className="mt-1 text-[10px] text-white/20">{formatTimestamp(entry.timestamp)}</div>
         </div>
       )}
     </div>
@@ -211,11 +180,10 @@ function EntryRow({ entry }: { entry: LogEntry }) {
 
 function GroupBlock({ groupId, entries }: { groupId: string; entries: LogEntry[] }) {
   const [collapsed, setCollapsed] = useState(false)
-  const firstEntry = entries[entries.length - 1] // oldest in group
+  const firstEntry = entries[entries.length - 1]
   const hasError = entries.some((e) => e.type.includes("error"))
   const stageCount = new Set(entries.map((e) => e.type)).size
 
-  // Determine group label
   let groupLabel = groupId
   if (groupId.startsWith("breakdown-")) groupLabel = "Разбивка сцены"
   else if (groupId.startsWith("image-")) groupLabel = "Генерация изображения"
@@ -227,9 +195,7 @@ function GroupBlock({ groupId, entries }: { groupId: string; entries: LogEntry[]
         onClick={() => setCollapsed(!collapsed)}
         className="flex w-full items-center gap-2 border-b border-white/[0.06] bg-white/[0.03] px-4 py-2 text-left"
       >
-        <span className="text-white/30">
-          {collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
-        </span>
+        <span className="text-white/30">{collapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}</span>
         <span className={`h-1.5 w-1.5 rounded-full ${hasError ? "bg-red-400" : "bg-[#DCC7A3]/60"}`} />
         <span className="text-[11px] font-medium text-white/50">{groupLabel}</span>
         <span className="text-[10px] text-white/20">{entries.length} шагов · {stageCount} этапов</span>
@@ -258,7 +224,37 @@ function matchesFilter(e: LogEntry, f: FilterKey): boolean {
   return !e.type.startsWith("breakdown_") && !e.type.startsWith("image_")
 }
 
-/* ─── Main Inspector Panel ─── */
+/* ─── Draggable hook ─── */
+
+function useDraggable(initialPos: { x: number; y: number }) {
+  const [pos, setPos] = useState(initialPos)
+  const dragRef = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null)
+
+  const onMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault()
+    dragRef.current = { startX: e.clientX, startY: e.clientY, originX: pos.x, originY: pos.y }
+
+    const onMove = (ev: MouseEvent) => {
+      if (!dragRef.current) return
+      const dx = ev.clientX - dragRef.current.startX
+      const dy = ev.clientY - dragRef.current.startY
+      setPos({ x: dragRef.current.originX + dx, y: dragRef.current.originY + dy })
+    }
+
+    const onUp = () => {
+      dragRef.current = null
+      window.removeEventListener("mousemove", onMove)
+      window.removeEventListener("mouseup", onUp)
+    }
+
+    window.addEventListener("mousemove", onMove)
+    window.addEventListener("mouseup", onUp)
+  }, [pos])
+
+  return { pos, onMouseDown, setPos }
+}
+
+/* ─── Main Inspector + DEV Button (combined) ─── */
 
 export function DevInspector() {
   const [open, setOpen] = useState(false)
@@ -270,8 +266,18 @@ export function DevInspector() {
   const clear = useDevLogStore((s) => s.clear)
   const listRef = useRef<HTMLDivElement>(null)
   const prevCountRef = useRef(entries.length)
+  const router = useRouter()
+  const pathname = usePathname()
+  const hasErrors = entries.some((e) => e.type.includes("error"))
 
-  // Auto-scroll on new entries
+  // Draggable toggle button — position set after mount to avoid hydration mismatch
+  const [mounted, setMounted] = useState(false)
+  const { pos: btnPos, onMouseDown: onBtnDrag, setPos: setBtnPos } = useDraggable({ x: 0, y: 0 })
+  useEffect(() => {
+    setBtnPos({ x: window.innerWidth - 120, y: window.innerHeight - 48 })
+    setMounted(true)
+  }, [])
+
   useEffect(() => {
     if (autoScroll && entries.length > prevCountRef.current && listRef.current) {
       listRef.current.scrollTop = 0
@@ -279,14 +285,12 @@ export function DevInspector() {
     prevCountRef.current = entries.length
   }, [entries.length, autoScroll])
 
-  // Filter entries
   const filtered = entries.filter((e) => matchesFilter(e, filter))
 
-  // Group entries by group field
   const grouped = useCallback(() => {
     const groups: { id: string; entries: LogEntry[] }[] = []
-    const ungrouped: LogEntry[] = []
     const seen = new Map<string, number>()
+    const result: Array<{ type: "group"; id: string; entries: LogEntry[] } | { type: "entry"; entry: LogEntry }> = []
 
     for (const entry of filtered) {
       if (entry.group) {
@@ -297,37 +301,24 @@ export function DevInspector() {
           seen.set(entry.group, groups.length)
           groups.push({ id: entry.group, entries: [entry] })
         }
-      } else {
-        ungrouped.push(entry)
       }
     }
 
-    // Interleave: render in chronological order (newest first)
-    const result: Array<{ type: "group"; id: string; entries: LogEntry[] } | { type: "entry"; entry: LogEntry }> = []
-    let gi = 0, ui = 0
     const allItems = [
       ...groups.map((g) => ({ kind: "g" as const, ts: g.entries[0].timestamp, data: g })),
-      ...ungrouped.map((e) => ({ kind: "e" as const, ts: e.timestamp, data: e })),
+      ...filtered.filter((e) => !e.group).map((e) => ({ kind: "e" as const, ts: e.timestamp, data: e })),
     ].sort((a, b) => b.ts - a.ts)
 
     for (const item of allItems) {
-      if (item.kind === "g") {
-        result.push({ type: "group", ...(item.data as { id: string; entries: LogEntry[] }) })
-      } else {
-        result.push({ type: "entry", entry: item.data as LogEntry })
-      }
+      if (item.kind === "g") result.push({ type: "group", ...(item.data as { id: string; entries: LogEntry[] }) })
+      else result.push({ type: "entry", entry: item.data as LogEntry })
     }
-
     return result
   }, [filtered])
 
-  // Keyboard shortcut: Ctrl+Shift+I
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.ctrlKey && e.shiftKey && e.key === "I") {
-        e.preventDefault()
-        setOpen((prev) => !prev)
-      }
+      if (e.ctrlKey && e.shiftKey && e.key === "I") { e.preventDefault(); setOpen((p) => !p) }
     }
     window.addEventListener("keydown", handler)
     return () => window.removeEventListener("keydown", handler)
@@ -335,128 +326,139 @@ export function DevInspector() {
 
   const items = grouped()
 
+  if (process.env.NODE_ENV !== "development") return null
+
   return (
     <>
-      {/* Toggle button — fixed bottom-right */}
-      <button
-        type="button"
-        onClick={() => setOpen(!open)}
-        className={`fixed bottom-4 right-16 z-[9998] flex h-10 items-center gap-2 rounded-full border px-4 text-[11px] font-medium uppercase tracking-[0.14em] shadow-lg backdrop-blur-xl transition-all ${
-          open
-            ? "border-[#DCC7A3]/30 bg-[#DCC7A3]/15 text-[#DCC7A3]"
-            : "border-white/10 bg-black/60 text-white/50 hover:text-white/70"
-        }`}
-        title="Ctrl+Shift+I"
+      {/* Draggable floating button: Inspector + DEV */}
+      <div
+        className="fixed z-[9998] flex items-center gap-0.5 rounded-2xl px-1.5 py-1 transition-opacity duration-300"
+        style={{
+          left: btnPos.x,
+          top: btnPos.y,
+          transform: "translate(-50%, -50%)",
+          opacity: mounted ? 1 : 0,
+          background: "linear-gradient(135deg, rgba(20,18,16,0.92) 0%, rgba(30,26,22,0.88) 100%)",
+          backdropFilter: "blur(20px) saturate(1.5)",
+          border: `1px solid ${getAccentColors().accent15}`,
+          boxShadow: `0 4px 24px rgba(0,0,0,0.5), 0 0 1px ${getAccentColors().accent20}, inset 0 1px 0 rgba(255,255,255,0.04)`,
+        }}
       >
-        <Eye size={14} />
-        Inspector
-        {entries.length > 0 && (
-          <span className="ml-1 rounded-full bg-white/10 px-1.5 py-0.5 text-[9px]">{entries.length}</span>
+        {/* Drag handle */}
+        <div
+          onMouseDown={onBtnDrag}
+          className="flex items-center justify-center w-7 h-7 cursor-grab active:cursor-grabbing rounded-lg hover:bg-white/5 transition-colors"
+        >
+          <GripHorizontal size={11} className="text-[#D4A853]/30" />
+        </div>
+
+        {/* Divider */}
+        <div className="w-px h-4 bg-white/8" />
+
+        {/* Inspector button */}
+        <button
+          onClick={() => setOpen(!open)}
+          className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-[10px] font-semibold tracking-[0.15em] transition-all ${
+            open
+              ? "bg-[#D4A853]/20 text-[#D4A853] shadow-[0_0_12px_rgba(212,168,83,0.15)]"
+              : "text-white/35 hover:text-[#D4A853]/70 hover:bg-[#D4A853]/8"
+          }`}
+        >
+          <Eye size={11} />
+          INSPECTOR
+          {entries.length > 0 && (
+            <span
+              className="min-w-[18px] text-center rounded-full px-1.5 py-0.5 text-[8px] font-bold"
+              style={{
+                background: open ? getAccentColors().accent25 : "rgba(255,255,255,0.08)",
+                color: open ? getAccentColors().accent : "rgba(255,255,255,0.4)",
+              }}
+            >
+              {entries.length}
+            </span>
+          )}
+        </button>
+
+        {/* Divider */}
+        <div className="w-px h-4 bg-white/8" />
+
+        {/* DEV button */}
+        {pathname !== "/dev" && (
+          <button
+            onClick={() => router.push(`/dev?from=${encodeURIComponent(pathname)}`)}
+            className={`flex items-center gap-1.5 rounded-xl px-3 py-1.5 text-[10px] font-semibold tracking-[0.15em] transition-all ${
+              hasErrors
+                ? "text-red-400 hover:bg-red-500/10"
+                : "text-white/35 hover:text-emerald-400/70 hover:bg-emerald-500/8"
+            }`}
+          >
+            <Bug size={11} />
+            DEV
+            {entries.length > 0 && (
+              <span
+                className="min-w-[18px] text-center rounded-full px-1.5 py-0.5 text-[8px] font-bold"
+                style={{
+                  background: hasErrors ? "rgba(239,68,68,0.2)" : "rgba(255,255,255,0.08)",
+                  color: hasErrors ? "#f87171" : "rgba(255,255,255,0.4)",
+                }}
+              >
+                {entries.length > 99 ? "99+" : entries.length}
+              </span>
+            )}
+          </button>
         )}
-      </button>
+      </div>
 
       {/* Panel */}
       {open && (
         <div
           className="fixed inset-x-0 bottom-0 z-[9999] flex flex-col border-t border-white/[0.08] bg-[#0a0a0a]/95 backdrop-blur-2xl"
-          style={{
-            height: "75vh",
-            animation: "inspectorSlideUp 0.3s cubic-bezier(0.16,1,0.3,1)",
-          }}
+          style={{ height: "75vh", animation: "inspectorSlideUp 0.3s cubic-bezier(0.16,1,0.3,1)" }}
         >
-          {/* Header */}
           <div className="flex flex-shrink-0 items-center justify-between border-b border-white/[0.06] px-5 py-3">
             <div className="flex items-center gap-4">
-              <h2 className="text-xs font-semibold uppercase tracking-[0.2em] text-white/50">
-                Pipeline Inspector
-              </h2>
-
-              {/* Filters */}
+              <h2 className="text-xs font-semibold uppercase tracking-[0.2em] text-white/50">Pipeline Inspector</h2>
               <div className="flex gap-1 rounded-lg border border-white/[0.06] bg-white/[0.02] p-0.5">
                 {FILTERS.map((f) => (
                   <button
                     key={f.key}
                     type="button"
                     onClick={() => setFilter(f.key)}
-                    className={`rounded-md px-2.5 py-1 text-[10px] transition-colors ${
-                      filter === f.key ? "bg-white/10 text-white/80" : "text-white/30 hover:text-white/50"
-                    }`}
+                    className={`rounded-md px-2.5 py-1 text-[10px] transition-colors ${filter === f.key ? "bg-white/10 text-white/80" : "text-white/30 hover:text-white/50"}`}
                   >
                     {f.label}
                   </button>
                 ))}
               </div>
-
               <span className="text-[10px] text-white/20">{filtered.length} записей</span>
             </div>
-
             <div className="flex items-center gap-2">
-              {/* Logging toggle */}
-              <button
-                type="button"
-                onClick={() => setEnabled(!enabled)}
-                className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[10px] uppercase tracking-[0.1em] transition-colors ${
-                  enabled
-                    ? "bg-green-500/10 text-green-400/70"
-                    : "bg-white/5 text-white/30"
-                }`}
-              >
+              <button type="button" onClick={() => setEnabled(!enabled)} className={`flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-[10px] uppercase tracking-[0.1em] transition-colors ${enabled ? "bg-green-500/10 text-green-400/70" : "bg-white/5 text-white/30"}`}>
                 {enabled ? <Eye size={11} /> : <EyeOff size={11} />}
                 {enabled ? "Запись вкл" : "Запись выкл"}
               </button>
-
-              {/* Auto-scroll */}
-              <button
-                type="button"
-                onClick={() => setAutoScroll(!autoScroll)}
-                className={`flex items-center gap-1 rounded-lg px-2 py-1.5 text-[10px] transition-colors ${
-                  autoScroll ? "bg-[#DCC7A3]/10 text-[#DCC7A3]/70" : "bg-white/5 text-white/30"
-                }`}
-              >
-                <ArrowDown size={11} />
-                Авто
+              <button type="button" onClick={() => setAutoScroll(!autoScroll)} className={`flex items-center gap-1 rounded-lg px-2 py-1.5 text-[10px] transition-colors ${autoScroll ? "bg-[#DCC7A3]/10 text-[#DCC7A3]/70" : "bg-white/5 text-white/30"}`}>
+                <ArrowDown size={11} />Авто
               </button>
-
-              {/* Clear */}
-              <button
-                type="button"
-                onClick={clear}
-                className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-[10px] text-white/30 transition-colors hover:bg-white/5 hover:text-white/50"
-              >
-                <Trash2 size={11} />
-                Очистить
+              <button type="button" onClick={clear} className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-[10px] text-white/30 transition-colors hover:bg-white/5 hover:text-white/50">
+                <Trash2 size={11} />Очистить
               </button>
-
-              {/* Close */}
-              <button
-                type="button"
-                onClick={() => setOpen(false)}
-                className="flex h-7 w-7 items-center justify-center rounded-lg text-white/30 transition-colors hover:bg-white/5 hover:text-white/60"
-              >
+              <button type="button" onClick={() => setOpen(false)} className="flex h-7 w-7 items-center justify-center rounded-lg text-white/30 transition-colors hover:bg-white/5 hover:text-white/60">
                 <X size={14} />
               </button>
             </div>
           </div>
 
-          {/* Entry list */}
           <div ref={listRef} className="flex-1 overflow-y-auto">
             {items.length === 0 ? (
               <div className="flex h-full flex-col items-center justify-center gap-2 text-white/20">
                 <Eye size={32} className="opacity-30" />
                 <p className="text-sm">Нет событий</p>
-                <p className="text-[11px]">
-                  {enabled
-                    ? "Запустите разбивку или генерацию — события появятся здесь"
-                    : "Включите запись (кнопка «Запись вкл»)"}
-                </p>
+                <p className="text-[11px]">{enabled ? "Запустите разбивку или генерацию — события появятся здесь" : "Включите запись (кнопка «Запись вкл»)"}</p>
               </div>
             ) : (
               items.map((item, i) =>
-                item.type === "group" ? (
-                  <GroupBlock key={item.id} groupId={item.id} entries={item.entries} />
-                ) : (
-                  <EntryRow key={item.entry.id} entry={item.entry} />
-                ),
+                item.type === "group" ? <GroupBlock key={item.id} groupId={item.id} entries={item.entries} /> : <EntryRow key={item.entry.id} entry={item.entry} />
               )
             )}
           </div>

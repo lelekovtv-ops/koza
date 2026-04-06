@@ -6,9 +6,9 @@ interface KozaLogoProps {
 }
 
 const SIZES = {
-  sm:  { width: 100, height: 28 },
-  md:  { width: 160, height: 45 },
-  lg:  { width: 200, height: 56 },
+  sm:  { fontSize: 18, tagSize: 8 },
+  md:  { fontSize: 32, tagSize: 10 },
+  lg:  { fontSize: 48, tagSize: 12 },
 };
 
 export function KozaLogo({
@@ -17,73 +17,39 @@ export function KozaLogo({
   showTagline = false,
   className = "",
 }: KozaLogoProps) {
-  const { width, height } = SIZES[size];
+  const { fontSize, tagSize } = SIZES[size];
 
   return (
-    <div className={`flex flex-col items-center gap-2 ${className}`} style={{ width }}>
-      <svg
-        width={width}
-        height={height}
-        viewBox="0 0 200 56"
-        fill="none"
-        xmlns="http://www.w3.org/2000/svg"
-        style={
-          variant === "terminal"
-            ? {
-                filter:
-                  "drop-shadow(0 0 3px currentColor) drop-shadow(0 0 8px currentColor)",
-              }
-            : undefined
-        }
+    <div className={`flex flex-col items-center gap-2 ${className}`}>
+      <span
+        style={{
+          fontFamily: "'Libre Baskerville', Georgia, serif",
+          fontStyle: "italic",
+          fontSize,
+          fontWeight: 400,
+          letterSpacing: "0.15em",
+          lineHeight: 1,
+          ...(variant === "terminal"
+            ? { textShadow: "0 0 3px currentColor, 0 0 8px currentColor" }
+            : {}),
+        }}
       >
-        {/* K */}
-        <line x1="8"  y1="4"  x2="8"  y2="52" stroke="currentColor" strokeWidth="4" strokeLinecap="square"/>
-        <line x1="15" y1="4"  x2="15" y2="52" stroke="currentColor" strokeWidth="4" strokeLinecap="square"/>
-        <line x1="15" y1="28" x2="40" y2="4"  stroke="currentColor" strokeWidth="4" strokeLinecap="square"/>
-        <line x1="18" y1="31" x2="43" y2="7"  stroke="currentColor" strokeWidth="4" strokeLinecap="square"/>
-        <line x1="15" y1="28" x2="40" y2="52" stroke="currentColor" strokeWidth="4" strokeLinecap="square"/>
-        <line x1="18" y1="25" x2="43" y2="49" stroke="currentColor" strokeWidth="4" strokeLinecap="square"/>
-
-        {/* O */}
-        <line x1="54" y1="4"  x2="54" y2="52" stroke="currentColor" strokeWidth="4" strokeLinecap="square"/>
-        <line x1="61" y1="4"  x2="61" y2="52" stroke="currentColor" strokeWidth="4" strokeLinecap="square"/>
-        <line x1="84" y1="4"  x2="84" y2="52" stroke="currentColor" strokeWidth="4" strokeLinecap="square"/>
-        <line x1="91" y1="4"  x2="91" y2="52" stroke="currentColor" strokeWidth="4" strokeLinecap="square"/>
-        <line x1="54" y1="4"  x2="91" y2="4"  stroke="currentColor" strokeWidth="4" strokeLinecap="square"/>
-        <line x1="54" y1="11" x2="91" y2="11" stroke="currentColor" strokeWidth="4" strokeLinecap="square"/>
-        <line x1="54" y1="45" x2="91" y2="45" stroke="currentColor" strokeWidth="4" strokeLinecap="square"/>
-        <line x1="54" y1="52" x2="91" y2="52" stroke="currentColor" strokeWidth="4" strokeLinecap="square"/>
-
-        {/* Z */}
-        <line x1="103" y1="4"  x2="138" y2="4"  stroke="currentColor" strokeWidth="4" strokeLinecap="square"/>
-        <line x1="103" y1="11" x2="138" y2="11" stroke="currentColor" strokeWidth="4" strokeLinecap="square"/>
-        <line x1="136" y1="7"  x2="106" y2="49" stroke="currentColor" strokeWidth="4" strokeLinecap="square"/>
-        <line x1="143" y1="7"  x2="113" y2="49" stroke="currentColor" strokeWidth="4" strokeLinecap="square"/>
-        <line x1="103" y1="45" x2="138" y2="45" stroke="currentColor" strokeWidth="4" strokeLinecap="square"/>
-        <line x1="103" y1="52" x2="138" y2="52" stroke="currentColor" strokeWidth="4" strokeLinecap="square"/>
-
-        {/* A */}
-        <line x1="168" y1="4"  x2="150" y2="52" stroke="currentColor" strokeWidth="4" strokeLinecap="square"/>
-        <line x1="175" y1="4"  x2="157" y2="52" stroke="currentColor" strokeWidth="4" strokeLinecap="square"/>
-        <line x1="168" y1="4"  x2="186" y2="52" stroke="currentColor" strokeWidth="4" strokeLinecap="square"/>
-        <line x1="161" y1="4"  x2="179" y2="52" stroke="currentColor" strokeWidth="4" strokeLinecap="square"/>
-        <line x1="155" y1="33" x2="181" y2="33" stroke="currentColor" strokeWidth="4" strokeLinecap="square"/>
-        <line x1="154" y1="40" x2="180" y2="40" stroke="currentColor" strokeWidth="4" strokeLinecap="square"/>
-      </svg>
+        PIECE
+      </span>
 
       {showTagline && (
         <span
           style={{
-            width: "100%",
             fontFamily: "'Courier New', monospace",
             letterSpacing: "0.12em",
+            fontSize: tagSize,
             lineHeight: 1.08,
             textAlign: "center",
             whiteSpace: "nowrap",
           }}
-          className="text-[12px] text-neutral-500 dark:text-neutral-500 select-none"
+          className="text-neutral-500 select-none"
         >
-          Unasked. Built.
+          Creative Production Platform
         </span>
       )}
     </div>

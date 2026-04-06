@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1920 1080" width="1920" height="1080">
+  <defs>
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Libre+Baskerville:ital@1&display=swap');
+      .wm {
+        font-family: 'Libre Baskerville', Georgia, serif;
+        font-size: 280px;
+        font-weight: 400;
+        font-style: italic;
+        letter-spacing: 40px;
+        fill: #e8e4d9;
+      }
+      .sub {
+        font-family: 'Libre Baskerville', Georgia, serif;
+        font-size: 28px;
+        font-weight: 400;
+        letter-spacing: 38px;
+        fill: #5F5E5A;
+      }
+    </style>
+  </defs>
+
+  <!-- Background -->
+  <rect width="1920" height="1080" fill="#0e0e0d"/>
+
+  <!-- Wordmark -->
+  <text x="960" y="600"
+        class="wm"
+        text-anchor="middle"
+        dominant-baseline="auto">PIECE</text>
+
+  <!-- Rule -->
+  <line x1="560" y1="680" x2="1360" y2="680" stroke="#3d3d3a" stroke-width="1"/>
+
+  <!-- Tagline -->
+  <text x="960" y="740"
+        class="sub"
+        text-anchor="middle">CREATIVE PRODUCTION PLATFORM</text>
+
+</svg>

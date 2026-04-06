@@ -34,6 +34,15 @@ export interface Block {
   id: string
   type: BlockType
   text: string
+  // ── Production fields (optional, Slate.js ignores unknown props) ──
+  durationMs?: number
+  durationSource?: "auto" | "manual" | "media"
+  visual?: import("./productionTypes").ProductionVisual | null
+  voiceClipId?: string | null
+  sfxHints?: string[]
+  shotGroupId?: string | null
+  modifier?: import("./productionTypes").BlockModifier | null
+  locked?: boolean
 }
 
 /** What the Enter key produces after each block type */
@@ -97,14 +106,23 @@ export function cycleBlockType(current: BlockType, reverse = false): BlockType {
 // AUTO-DETECT FROM RAW TEXT (for paste / import)
 // ─────────────────────────────────────────────────────────────
 
-const RE_SCENE_HEADING = /^(INT\.|EXT\.|INT\.\/EXT\.|EXT\.\/INT\.|I\/E\.|EST\.)\s*/i
-const RE_TRANSITION    = /^(FADE\s+(IN|OUT(\.|:)|TO\s+BLACK)|CUT\s+TO:|SMASH\s+CUT\s+TO:|MATCH\s+CUT\s+TO:|DISSOLVE\s+TO:|WIPE\s+TO:|IRIS\s+(IN|OUT)|JUMP\s+CUT\s+TO:|FREEZE\s+FRAME:?)$|.*\s+TO:$/i
-const RE_SHOT          = /^(INSERT|BACK\s+TO\s+SCENE|CLOSE\s+ON|CLOSE-UP|ANGLE\s+ON|POV|WIDE\s+ON|INTERCUT\s+WITH|SERIES\s+OF\s+SHOTS):?$/i
+const RE_SCENE_HEADING = /^(INT\.\s*\/\s*EXT\.\s*|EXT\.\s*\/\s*INT\.\s*|INT\.\s*|EXT\.\s*|I\/E\.\s*|ИНТ\.\s*\/\s*ЭКСТ\.\s*|ЭКСТ\.\s*\/\s*ИНТ\.\s*|ИНТ\.\s*|ЭКСТ\.\s*|EST\.\s*)/i
+const RE_TRANSITION    = /^(FADE\s+(IN:?|OUT[\.::]?|TO\s+BLACK:?)|CUT\s+TO:|SMASH\s+CUT\s+TO:|MATCH\s+CUT\s+TO:|DISSOLVE\s+TO:|WIPE\s+TO:|IRIS\s+(IN|OUT):?|JUMP\s+CUT\s+TO:|FREEZE\s+FRAME:?|ЗАТЕМНЕНИЕ:?|ПЕРЕХОД:?|НАПЛЫВ:?|ВЫТЕСНЕНИЕ:?|СТОП-КАДР:?)$|.*\s+TO:$/i
+const RE_SHOT          = /^(INSERT|BACK\s+TO\s+SCENE|CLOSE\s+ON|CLOSE-UP|ANGLE\s+ON|POV|WIDE\s+ON|INTERCUT\s+WITH|SERIES\s+OF\s+SHOTS|КРУПНЫЙ\s+ПЛАН:?|КРУПНО:?|ДЕТАЛЬ:?|ОБЩИЙ\s+ПЛАН:?|СРЕДНИЙ\s+ПЛАН:?|ВСТАВКА:?|РАКУРС:?|ИНТЕРКАТ:?|ОБРАТНЫЙ\s+КАДР:?|СЕРИЯ\s+КАДРОВ:?):?$/i
 const RE_PARENTHETICAL = /^\(.*\)$/
+
+// ── Universal format: YouTube / Reels / Ad section tags + track hints ──
+const RE_SECTION_TAG   = /^\[(.+)\]\s*$/
+const RE_VOICE_HINT    = /^(ГОЛОС|VOICE|NARRATOR|ВЕДУЩИЙ|СПИКЕР):\s*/i
+const RE_VISUAL_HINT   = /^(ТИТР|TITLE|ГРАФИКА|GRAPHICS|B-ROLL|CTA):\s*/i
+const RE_MUSIC_HINT    = /^(МУЗЫКА|MUSIC|SFX|ЗВУК):\s*/i
 
 /**
  * Detect block type from raw text in context of surrounding blocks.
  * Used only for import/paste — not for live typing.
+ *
+ * Supports both traditional screenplays (INT./EXT.) and
+ * universal formats (YouTube/Reels/Ad: [SECTION], ГОЛОС:, ТИТР:).
  */
 export function detectBlockType(
   lines: string[],
@@ -115,6 +133,18 @@ export function detectBlockType(
   const trimmed = raw.trim()
 
   if (!trimmed) return "action" // blank lines are collapsed
+
+  // ── Universal format: [SECTION] tags → scene_heading ──
+  if (RE_SECTION_TAG.test(trimmed)) return "scene_heading"
+
+  // ── Universal format: ГОЛОС: → character (split in parseTextToBlocks) ──
+  if (RE_VOICE_HINT.test(trimmed)) return "character"
+
+  // ── Universal format: ТИТР: / ГРАФИКА: → action ──
+  if (RE_VISUAL_HINT.test(trimmed)) return "action"
+
+  // ── Universal format: МУЗЫКА: → action ──
+  if (RE_MUSIC_HINT.test(trimmed)) return "action"
 
   if (RE_SCENE_HEADING.test(trimmed)) return "scene_heading"
 
@@ -132,7 +162,10 @@ export function detectBlockType(
   }
 
   // Character heuristic: ALL CAPS, short, no punctuation, after blank/action
-  const stripped = trimmed.replace(/\s*\((V\.?O\.?|O\.?S\.?|O\.?C\.?|CONT'?D)\)\s*$/i, "")
+  // Strip character extensions: (V.O.), (O.S.), (CONT'D), age (55), (25 лет), etc.
+  const stripped = trimmed
+    .replace(/\s*\((V\.?O\.?|O\.?S\.?|O\.?C\.?|CONT'?D|ПРОД\.?)\)\s*$/i, "")
+    .replace(/\s*\(\d+(?:\s*(?:лет|years?|г\.?))?\)\s*$/i, "")
   const isAllCaps =
     stripped === stripped.toUpperCase() &&
     stripped !== stripped.toLocaleLowerCase() &&
@@ -156,6 +189,22 @@ export function detectBlockType(
     prevType === "parenthetical" ||
     prevType === "dialogue"
   ) {
+    // After dialogue + blank line: check if this is action, not continuation.
+    // Action heuristics: describes what someone DOES (third person),
+    // mentions character names as subjects, or is a stage direction.
+    if (prevType === "dialogue") {
+      // If previous line was blank, and this line looks like action → not dialogue.
+      const prevLine = (index > 0 ? lines[index - 1]?.trim() : "") ?? ""
+      if (prevLine === "") {
+        // After blank: check if text looks like action (third person narrative)
+        // Pattern: starts with a name + verb, or describes physical action
+        if (/^[A-ZА-ЯЁ][a-zа-яё]+\s+[a-zа-яё]/.test(trimmed)) return "action"
+        // Long text after blank = likely action description
+        if (trimmed.length > 60) return "action"
+        // Contains stage direction verbs
+        if (/\b(поднимает|входит|выходит|садится|встаёт|берёт|смотрит|открывает|закрывает|поворачивается|уходит|уплывает|плывёт|стоит|идёт|бежит|reaches|picks up|enters|exits|sits|stands|walks|runs|looks|opens|closes|turns)\b/i.test(trimmed)) return "action"
+      }
+    }
     return "dialogue"
   }
 
@@ -181,7 +230,11 @@ export function getLiveTypeConversion(block: Block): BlockType | null {
     t.startsWith("ext.") ||
     t.startsWith("int./ext.") ||
     t.startsWith("ext./int.") ||
-    t.startsWith("i/e.")
+    t.startsWith("i/e.") ||
+    t.startsWith("инт.") ||
+    t.startsWith("экст.") ||
+    t.startsWith("инт./экст.") ||
+    t.startsWith("экст./инт.")
   ) {
     return "scene_heading"
   }
@@ -207,7 +260,9 @@ export function normalizeBlockText(block: Block): string {
     case "transition":
       return block.text.toUpperCase()
     case "action":
-      return toSentenceCase(block.text)
+      // Preserve original text — don't force sentence case on pasted/imported text.
+      // Action blocks keep the author's intended casing.
+      return block.text
     default:
       return block.text
   }
@@ -269,7 +324,7 @@ export function reformatBlockAsType(text: string, targetType: BlockType): string
       return RE_TRANSITION.test(up) ? up : up + (up.endsWith(":") ? "" : ":")
     }
     case "action":
-      return toSentenceCase(clean)
+      return clean
     default:
       return clean
   }
@@ -288,7 +343,11 @@ export function extractCharacterNames(blocks: Block[]): string[] {
   for (const block of blocks) {
     if (block.type === "character" && block.text.trim().length > 1) {
       // Strip extensions like (V.O.), (O.S.)
-      const clean = block.text.trim().replace(/\s*\(.*\)\s*$/, "").trim()
+      // Strip all trailing parentheticals: (V.O.), (55), (CONT'D) etc.
+      const clean = block.text.trim()
+        .replace(/\s*\(\d+(?:\s*(?:лет|years?|г\.?))?\)\s*$/i, "")
+        .replace(/\s*\(.*\)\s*$/, "")
+        .trim()
       if (clean) names.add(clean)
     }
   }
@@ -303,18 +362,65 @@ export function extractCharacterNames(blocks: Block[]): string[] {
  * Parse a raw screenplay string (plain text or Fountain) into blocks.
  * Blank lines between elements are collapsed (not stored as blocks).
  */
-export function parseTextToBlocks(raw: string): Block[] {
+export function parseTextToBlocks(raw: string, initialPrevType?: BlockType | null): Block[] {
   const lines = raw.split("\n")
   const blocks: Block[] = []
-  let prevType: BlockType | null = null
+  let prevType: BlockType | null = initialPrevType ?? null
+  let blankCount = 0
 
   for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim()
     if (!trimmed) {
-      prevType = null // blank line resets dialogue chain
+      blankCount++
+      // Two+ blank lines always break the chain (new scene/section)
+      if (blankCount >= 2) {
+        prevType = null
+      }
       continue
     }
+
+    // Single blank line: check if this looks like a dialogue continuation.
+    // In pasted screenplays, character→blank→dialogue is common formatting.
+    // Only reset prevType if the blank line is NOT between character/dialogue chain.
+    if (blankCount === 1 && prevType !== null) {
+      const isDialogueChain = prevType === "character" || prevType === "parenthetical" || prevType === "dialogue"
+      if (!isDialogueChain) {
+        // Not in a dialogue chain — blank line is a normal separator, keep prevType
+        // (prevType stays so action→blank→action still works, and character detection
+        //  after action→blank still fires)
+      }
+      // In dialogue chains, prevType is preserved so the next line can be detected as dialogue
+    }
+
+    blankCount = 0
     const type = detectBlockType(lines, i, prevType)
+
+    // ── Universal format: [SECTION — Ns] → scene_heading with clean title ──
+    if (type === "scene_heading" && RE_SECTION_TAG.test(trimmed)) {
+      const inner = trimmed.match(RE_SECTION_TAG)![1]
+      // Strip duration suffix: "ИНТРО — 3 сек" → "ИНТРО"
+      const title = inner.replace(/\s*[—\-–]\s*\d+\s*(сек|sec|с|s|мин|min|мін)\s*/i, "").trim()
+      blocks.push({ id: makeBlockId(), type: "scene_heading", text: title || inner })
+      prevType = "scene_heading"
+      continue
+    }
+
+    // ── Universal format: ГОЛОС: text → character "ГОЛОС" + dialogue "text" ──
+    if (type === "character" && RE_VOICE_HINT.test(trimmed)) {
+      const hintMatch = trimmed.match(RE_VOICE_HINT)!
+      const speakerName = hintMatch[1].toUpperCase()
+      const dialogueText = trimmed.slice(hintMatch[0].length).trim()
+
+      blocks.push({ id: makeBlockId(), type: "character", text: speakerName })
+      prevType = "character"
+
+      if (dialogueText) {
+        blocks.push({ id: makeBlockId(), type: "dialogue", text: dialogueText })
+        prevType = "dialogue"
+      }
+      continue
+    }
+
     const block: Block = { id: makeBlockId(), type, text: trimmed }
     blocks.push(block)
     prevType = type

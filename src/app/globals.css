@@ -9,6 +9,125 @@
   --font-mono: "SFMono-Regular", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
   --font-serif: Georgia, "Times New Roman", Times, serif;
   --font-screenplay-mono: "Courier New", Courier, monospace;
+
+  /* ── Theme tokens (cinematic = default) ── */
+  --bg-base: #0B0C10;
+  --bg-surface: #141210;
+  --bg-elevated: #1A1916;
+  --bg-nav-from: #181614;
+  --bg-nav-via: #141210;
+  --bg-nav-to: #111010;
+
+  --accent: #D4A853;
+  --accent-rgb: 212, 168, 83;
+  --accent-glow: rgba(212, 168, 83, 0.35);
+
+  --text-primary: #ffffff;
+  --text-muted: rgba(255, 255, 255, 0.35);
+  --text-nav: rgba(255, 255, 255, 0.30);
+  --text-nav-hover: rgba(255, 255, 255, 0.55);
+  --text-logo: rgba(255, 255, 255, 0.20);
+  --text-logo-hover: rgba(255, 255, 255, 0.40);
+
+  --border-subtle: rgba(255, 255, 255, 0.05);
+  --border-light: rgba(255, 255, 255, 0.08);
+  --border-medium: rgba(255, 255, 255, 0.10);
+
+  --surface-glass: rgba(255, 255, 255, 0.03);
+  --surface-hover: rgba(255, 255, 255, 0.05);
+
+  --nav-shadow: 0 1px 0 rgba(255,255,255,0.03) inset, 0 4px 12px rgba(0,0,0,0.5);
+  --nav-divider-mid: rgba(255, 255, 255, 0.08);
+
+  --scanline-opacity: 0;
+  --glow-intensity: 0;
+  --chrome-border: transparent;
+}
+
+/* ── SYNTHWAVE 80s ── */
+[data-theme="synthwave"] {
+  --bg-base: #0a0614;
+  --bg-surface: #110b22;
+  --bg-elevated: #1a1040;
+  --bg-nav-from: #12082a;
+  --bg-nav-via: #0e0620;
+  --bg-nav-to: #0a0418;
+
+  --accent: #ff2d95;
+  --accent-rgb: 255, 45, 149;
+  --accent-glow: rgba(255, 45, 149, 0.45);
+
+  --text-primary: #e8d5ff;
+  --text-muted: rgba(232, 213, 255, 0.40);
+  --text-nav: rgba(0, 240, 255, 0.45);
+  --text-nav-hover: rgba(0, 240, 255, 0.80);
+  --text-logo: rgba(0, 240, 255, 0.30);
+  --text-logo-hover: rgba(0, 240, 255, 0.60);
+
+  --border-subtle: rgba(255, 45, 149, 0.08);
+  --border-light: rgba(0, 240, 255, 0.10);
+  --border-medium: rgba(0, 240, 255, 0.15);
+
+  --surface-glass: rgba(0, 240, 255, 0.03);
+  --surface-hover: rgba(0, 240, 255, 0.06);
+
+  --nav-shadow: 0 1px 0 rgba(0,240,255,0.06) inset, 0 4px 20px rgba(255,45,149,0.15), 0 1px 0 rgba(255,45,149,0.3);
+  --nav-divider-mid: rgba(0, 240, 255, 0.12);
+
+  --scanline-opacity: 0.03;
+  --glow-intensity: 1;
+  --chrome-border: rgba(0, 240, 255, 0.12);
+
+  /* Synthwave-specific tokens */
+  --neon-cyan: #00f0ff;
+  --neon-cyan-rgb: 0, 240, 255;
+  --neon-pink: #ff2d95;
+  --neon-pink-rgb: 255, 45, 149;
+  --neon-purple: #b026ff;
+  --neon-purple-rgb: 176, 38, 255;
+  --neon-yellow: #ffe744;
+  --grid-color: rgba(0, 240, 255, 0.06);
+}
+
+/* ── ARCHITECT — monochrome wireframe ── */
+[data-theme="architect"] {
+  --bg-base: #000000;
+  --bg-surface: #080808;
+  --bg-elevated: #111111;
+  --bg-nav-from: #0a0a0a;
+  --bg-nav-via: #050505;
+  --bg-nav-to: #000000;
+
+  --accent: #ffffff;
+  --accent-rgb: 255, 255, 255;
+  --accent-glow: rgba(255, 255, 255, 0.25);
+
+  --text-primary: #ffffff;
+  --text-muted: rgba(255, 255, 255, 0.40);
+  --text-nav: rgba(255, 255, 255, 0.35);
+  --text-nav-hover: rgba(255, 255, 255, 0.70);
+  --text-logo: rgba(255, 255, 255, 0.25);
+  --text-logo-hover: rgba(255, 255, 255, 0.55);
+
+  --border-subtle: rgba(255, 255, 255, 0.06);
+  --border-light: rgba(255, 255, 255, 0.12);
+  --border-medium: rgba(255, 255, 255, 0.18);
+
+  --surface-glass: rgba(255, 255, 255, 0.02);
+  --surface-hover: rgba(255, 255, 255, 0.04);
+
+  --nav-shadow: 0 1px 0 rgba(255,255,255,0.08) inset, 0 4px 16px rgba(0,0,0,0.8);
+  --nav-divider-mid: rgba(255, 255, 255, 0.12);
+
+  --scanline-opacity: 0;
+  --glow-intensity: 0;
+  --chrome-border: rgba(255, 255, 255, 0.15);
+
+  /* Architect-specific tokens */
+  --arch-grid: rgba(255, 255, 255, 0.04);
+  --arch-line: rgba(255, 255, 255, 0.12);
+  --arch-line-strong: rgba(255, 255, 255, 0.22);
+  --arch-text-dim: rgba(255, 255, 255, 0.30);
 }
 
 html,
@@ -19,6 +138,771 @@ body {
 }
 
 body {
-  background: #FAF6F1;
-  color: #2D2A26;
+  background: var(--bg-base);
+  color: var(--text-primary);
+}
+
+/* ── Scanline overlay (synthwave only) ── */
+[data-theme="synthwave"] body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  pointer-events: none;
+  background: repeating-linear-gradient(
+    0deg,
+    transparent,
+    transparent 2px,
+    rgba(0, 0, 0, 0.08) 2px,
+    rgba(0, 0, 0, 0.08) 4px
+  );
+  opacity: var(--scanline-opacity);
+}
+
+/* ── Neon text glow utility ── */
+[data-theme="synthwave"] .neon-glow {
+  text-shadow:
+    0 0 7px rgba(var(--neon-cyan-rgb), 0.6),
+    0 0 20px rgba(var(--neon-cyan-rgb), 0.3),
+    0 0 42px rgba(var(--neon-cyan-rgb), 0.15);
+}
+
+[data-theme="synthwave"] .neon-glow-pink {
+  text-shadow:
+    0 0 7px rgba(var(--neon-pink-rgb), 0.6),
+    0 0 20px rgba(var(--neon-pink-rgb), 0.3),
+    0 0 42px rgba(var(--neon-pink-rgb), 0.15);
+}
+
+/* ── Neon box glow ── */
+[data-theme="synthwave"] .neon-box {
+  box-shadow:
+    0 0 5px rgba(var(--neon-cyan-rgb), 0.15),
+    0 0 20px rgba(var(--neon-cyan-rgb), 0.08),
+    inset 0 1px 0 rgba(var(--neon-cyan-rgb), 0.1);
+}
+
+[data-theme="synthwave"] .neon-box-pink {
+  box-shadow:
+    0 0 5px rgba(var(--neon-pink-rgb), 0.15),
+    0 0 20px rgba(var(--neon-pink-rgb), 0.08),
+    inset 0 1px 0 rgba(var(--neon-pink-rgb), 0.1);
+}
+
+/* ── Grid background (for hero sections) ── */
+[data-theme="synthwave"] .synthwave-grid {
+  background-image:
+    linear-gradient(var(--grid-color) 1px, transparent 1px),
+    linear-gradient(90deg, var(--grid-color) 1px, transparent 1px);
+  background-size: 40px 40px;
+}
+
+/* ── Horizon gradient (optional decorative) ── */
+[data-theme="synthwave"] .synthwave-horizon {
+  background: linear-gradient(
+    180deg,
+    transparent 0%,
+    rgba(var(--neon-purple-rgb), 0.05) 40%,
+    rgba(var(--neon-pink-rgb), 0.08) 70%,
+    rgba(var(--neon-pink-rgb), 0.12) 100%
+  );
+}
+
+/* ── Chrome/metallic border accent ── */
+[data-theme="synthwave"] .chrome-edge {
+  border-color: var(--chrome-border);
+  box-shadow: 0 0 8px rgba(var(--neon-cyan-rgb), 0.08);
+}
+
+/* ══════════════════════════════════════════════════════
+   SYNTHWAVE: Gold → Neon Pink/Cyan accent overrides
+   ══════════════════════════════════════════════════════ */
+
+/* ── Text colors ── */
+[data-theme="synthwave"] [class*="text-[#D4A853]"] {
+  color: #ff2d95 !important;
+}
+[data-theme="synthwave"] [class*="text-[#DCC7A3]"] {
+  color: #ff6db8 !important;
+}
+[data-theme="synthwave"] [class*="text-[#E8C98A]"],
+[data-theme="synthwave"] [class*="text-[#E6C887]"],
+[data-theme="synthwave"] [class*="text-[#E8C778]"],
+[data-theme="synthwave"] [class*="text-[#E7D1A4]"],
+[data-theme="synthwave"] [class*="text-[#E8D7B2]"] {
+  color: #ff80c4 !important;
+}
+[data-theme="synthwave"] [class*="text-[#CBB892]"],
+[data-theme="synthwave"] [class*="text-[#DAB56A]"],
+[data-theme="synthwave"] [class*="text-[#DCC07A]"] {
+  color: #e878b8 !important;
+}
+
+/* ── Background colors (keep opacity from tailwind) ── */
+[data-theme="synthwave"] [class*="bg-[#D4A853]"] {
+  background-color: #ff2d95 !important;
+}
+[data-theme="synthwave"] [class*="bg-[#DCC7A3]"] {
+  background-color: #ff6db8 !important;
+}
+
+/* ── Border colors ── */
+[data-theme="synthwave"] [class*="border-[#D4A853]"] {
+  border-color: #ff2d95 !important;
+}
+[data-theme="synthwave"] [class*="border-[#DCC7A3]"] {
+  border-color: #ff6db8 !important;
+}
+
+/* ── Ring / Shadow ── */
+[data-theme="synthwave"] [class*="ring-[#D4A853]"] {
+  --tw-ring-color: #ff2d95 !important;
+}
+[data-theme="synthwave"] [class*="shadow-[#D4A853]"] {
+  --tw-shadow-color: #ff2d95 !important;
+}
+
+/* ── Accent for range inputs etc ── */
+[data-theme="synthwave"] [class*="accent-[#DCC7A3]"] {
+  accent-color: #ff2d95 !important;
+}
+
+/* ── Hover variants ── */
+[data-theme="synthwave"] [class*="hover:bg-[#D4A853]"]:hover {
+  background-color: #ff2d95 !important;
+}
+[data-theme="synthwave"] [class*="hover:text-[#D4A853]"]:hover,
+[data-theme="synthwave"] [class*="hover:text-[#E8C98A]"]:hover,
+[data-theme="synthwave"] [class*="hover:text-[#E7D1A4]"]:hover {
+  color: #ff80c4 !important;
+}
+[data-theme="synthwave"] [class*="hover:bg-[#D4A853]"]:hover {
+  background-color: #ff2d95 !important;
+}
+
+/* ── Emerald (locations) → Cyan ── */
+[data-theme="synthwave"] [class*="text-emerald"] {
+  color: #00f0ff !important;
+}
+[data-theme="synthwave"] [class*="bg-emerald"] {
+  background-color: rgba(0, 240, 255, 0.1) !important;
+}
+[data-theme="synthwave"] [class*="border-emerald"] {
+  border-color: rgba(0, 240, 255, 0.2) !important;
+}
+
+/* ── Sky (props) → Purple ── */
+[data-theme="synthwave"] [class*="text-sky"] {
+  color: #b026ff !important;
+}
+[data-theme="synthwave"] [class*="bg-sky"] {
+  background-color: rgba(176, 38, 255, 0.1) !important;
+}
+[data-theme="synthwave"] [class*="border-sky"] {
+  border-color: rgba(176, 38, 255, 0.2) !important;
+}
+
+/* ── Animate spin loaders ── */
+[data-theme="synthwave"] .animate-spin {
+  color: #ff2d95 !important;
+}
+
+/* ── Animate pulse (loading text) ── */
+[data-theme="synthwave"] .animate-pulse {
+  color: #00f0ff !important;
+}
+
+/* ── Override all gold shadow values in arbitrary shadow classes ── */
+[data-theme="synthwave"] [class*="shadow-["] {
+  --tw-shadow-color: rgba(255, 45, 149, 0.15) !important;
+}
+
+/* ── Selected card glow override ── */
+[data-theme="synthwave"] [class*="border-[#DCC7A3]"] {
+  border-color: rgba(0, 240, 255, 0.35) !important;
+}
+
+/* ── Text color overrides for muted gold variants ── */
+[data-theme="synthwave"] [class*="text-[#E4D0AC]"],
+[data-theme="synthwave"] [class*="text-[#8D919B]"] {
+  color: rgba(0, 240, 255, 0.5) !important;
+}
+
+[data-theme="synthwave"] [class*="text-[#E5E0DB]"] {
+  color: #e8d5ff !important;
+}
+
+[data-theme="synthwave"] [class*="text-[#E7E3DC]"] {
+  color: #e0d0ff !important;
+}
+
+[data-theme="synthwave"] [class*="text-[#7F8590]"] {
+  color: rgba(0, 240, 255, 0.35) !important;
+}
+
+/* ── More dark bg overrides ── */
+[data-theme="synthwave"] [class*="bg-[#0D0F12]"] {
+  background-color: #0e0820 !important;
+}
+
+[data-theme="synthwave"] [class*="bg-[#171513]"] {
+  background-color: #110b22 !important;
+}
+
+[data-theme="synthwave"] [class*="bg-[#161310]"],
+[data-theme="synthwave"] [class*="bg-[#0f0d0b]"] {
+  background-color: var(--bg-base) !important;
+}
+
+/* ── Amber warning → neon yellow in synthwave ── */
+[data-theme="synthwave"] [class*="border-amber"] {
+  border-color: rgba(255, 231, 68, 0.2) !important;
+}
+[data-theme="synthwave"] [class*="bg-amber"] {
+  background-color: rgba(255, 231, 68, 0.08) !important;
+}
+[data-theme="synthwave"] [class*="text-amber"],
+[data-theme="synthwave"] [class*="text-[#E8D3A2]"] {
+  color: #ffe744 !important;
+}
+
+/* ── Purple (Fincher button) → brighter neon purple ── */
+[data-theme="synthwave"] [class*="border-[#8b5cf6]"] {
+  border-color: rgba(176, 38, 255, 0.25) !important;
+}
+[data-theme="synthwave"] [class*="bg-[#8b5cf6]"] {
+  background-color: rgba(176, 38, 255, 0.12) !important;
+}
+[data-theme="synthwave"] [class*="text-[#c4b5fd]"] {
+  color: #d480ff !important;
+}
+
+/* ── Override dark backgrounds in synthwave ── */
+[data-theme="synthwave"] [class*="bg-[#0B0C10]"] {
+  background-color: var(--bg-base) !important;
+}
+
+[data-theme="synthwave"] [class*="bg-[#111010]"] {
+  background-color: var(--bg-nav-to) !important;
+}
+
+[data-theme="synthwave"] [class*="bg-[#1a1816]"],
+[data-theme="synthwave"] [class*="bg-[#1A1916]"] {
+  background-color: var(--bg-elevated) !important;
+}
+
+/* ── More background overrides ── */
+[data-theme="synthwave"] [class*="bg-[#0e0e0e]"] {
+  background-color: var(--bg-base) !important;
+}
+
+[data-theme="synthwave"] [class*="bg-[#141210]"],
+[data-theme="synthwave"] [class*="bg-[#181614]"] {
+  background-color: var(--bg-surface) !important;
+}
+
+[data-theme="synthwave"] [class*="bg-[#1a1d24]"] {
+  background-color: var(--bg-elevated) !important;
+}
+
+/* ── Override zinc/neutral dark backgrounds ── */
+[data-theme="synthwave"] .bg-zinc-900,
+[data-theme="synthwave"] .bg-neutral-900 {
+  background-color: var(--bg-surface) !important;
+}
+
+[data-theme="synthwave"] .bg-zinc-950,
+[data-theme="synthwave"] .bg-neutral-950 {
+  background-color: var(--bg-base) !important;
+}
+
+/* ── Synthwave: global overrides for common UI patterns ── */
+
+/* Generic card/surface backgrounds */
+[data-theme="synthwave"] [class*="bg-white/3"],
+[data-theme="synthwave"] [class*="bg-white/[0.02]"],
+[data-theme="synthwave"] [class*="bg-white/[0.03]"],
+[data-theme="synthwave"] [class*="bg-white/[0.04]"] {
+  background-color: rgba(0, 240, 255, 0.03) !important;
+}
+
+[data-theme="synthwave"] [class*="bg-white/5"],
+[data-theme="synthwave"] [class*="bg-white/8"] {
+  background-color: rgba(0, 240, 255, 0.05) !important;
+}
+
+[data-theme="synthwave"] [class*="bg-white/10"],
+[data-theme="synthwave"] [class*="bg-white/12"],
+[data-theme="synthwave"] [class*="bg-white/15"] {
+  background-color: rgba(0, 240, 255, 0.08) !important;
+}
+
+/* Border overrides */
+[data-theme="synthwave"] [class*="border-white/[0.05]"],
+[data-theme="synthwave"] [class*="border-white/[0.06]"] {
+  border-color: rgba(255, 45, 149, 0.08) !important;
+}
+
+[data-theme="synthwave"] [class*="border-white/8"],
+[data-theme="synthwave"] [class*="border-white/10"],
+[data-theme="synthwave"] [class*="border-white/12"] {
+  border-color: rgba(0, 240, 255, 0.10) !important;
+}
+
+[data-theme="synthwave"] [class*="border-white/15"],
+[data-theme="synthwave"] [class*="border-white/20"] {
+  border-color: rgba(0, 240, 255, 0.15) !important;
+}
+
+/* Focus borders */
+[data-theme="synthwave"] [class*="focus:border-white/30"]:focus,
+[data-theme="synthwave"] [class*="focus:border-[#D4A853]"]:focus {
+  border-color: rgba(255, 45, 149, 0.3) !important;
+}
+
+/* Hover background overrides */
+[data-theme="synthwave"] [class*="hover:bg-white/5"]:hover {
+  background-color: rgba(0, 240, 255, 0.05) !important;
+}
+
+[data-theme="synthwave"] [class*="hover:bg-white/10"]:hover {
+  background-color: rgba(0, 240, 255, 0.08) !important;
+}
+
+[data-theme="synthwave"] [class*="hover:border-white/20"]:hover {
+  border-color: rgba(0, 240, 255, 0.15) !important;
+}
+
+/* ── Red danger buttons stay red but more neon ── */
+[data-theme="synthwave"] [class*="border-red-500"] {
+  border-color: rgba(255, 50, 50, 0.3) !important;
+}
+[data-theme="synthwave"] [class*="bg-red-500"] {
+  background-color: rgba(255, 50, 50, 0.1) !important;
+}
+[data-theme="synthwave"] [class*="text-red-400"] {
+  color: #ff5555 !important;
+}
+
+/* ── Synthwave scrollbar ── */
+[data-theme="synthwave"] ::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+[data-theme="synthwave"] ::-webkit-scrollbar-track {
+  background: var(--bg-base);
+}
+
+[data-theme="synthwave"] ::-webkit-scrollbar-thumb {
+  background: rgba(var(--neon-cyan-rgb), 0.2);
+  border-radius: 3px;
+}
+
+[data-theme="synthwave"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(var(--neon-cyan-rgb), 0.35);
+}
+
+/* ══════════════════════════════════════════════════════
+   ARCHITECT: Monochrome wireframe overrides
+   ══════════════════════════════════════════════════════ */
+
+/* ── Architect grid — rendered via #architect-grid DOM element ── */
+#architect-grid {
+  position: fixed;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  overflow: hidden;
+}
+
+#architect-grid .ag-fine {
+  position: absolute;
+  inset: -50% -50%;
+  width: 200%;
+  height: 200%;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px),
+    linear-gradient(rgba(255,255,255,0.055) 1.5px, transparent 1.5px),
+    linear-gradient(90deg, rgba(255,255,255,0.055) 1.5px, transparent 1.5px);
+  background-size: 20px 20px, 20px 20px, 100px 100px, 100px 100px;
+  animation: arch-grid-drift 60s linear infinite, arch-grid-breathe 8s ease-in-out infinite;
+  mask-image: radial-gradient(ellipse 65% 60% at 50% 75%, black 0%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 65% 60% at 50% 75%, black 0%, transparent 100%);
+}
+
+#architect-grid .ag-large {
+  position: absolute;
+  inset: -50% -50%;
+  width: 200%;
+  height: 200%;
+  background-image:
+    linear-gradient(rgba(255,255,255,0.03) 2px, transparent 2px),
+    linear-gradient(90deg, rgba(255,255,255,0.03) 2px, transparent 2px);
+  background-size: 300px 300px;
+  animation: arch-grid-drift-slow 180s linear infinite reverse;
+  mask-image: radial-gradient(ellipse 75% 65% at 50% 70%, black 0%, transparent 100%);
+  -webkit-mask-image: radial-gradient(ellipse 75% 65% at 50% 70%, black 0%, transparent 100%);
+  opacity: 0.8;
+}
+
+@keyframes borderBreath {
+  0%, 100% {
+    opacity: 0.6;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@keyframes fadeInWord {
+  0% {
+    opacity: 0;
+    filter: blur(8px);
+    transform: translateY(8px) scale(0.97);
+  }
+  60% {
+    filter: blur(0px);
+  }
+  100% {
+    opacity: 1;
+    filter: blur(0px);
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes arch-grid-drift {
+  0% { transform: translate(0, 0); }
+  100% { transform: translate(100px, 100px); }
+}
+
+@keyframes arch-grid-drift-slow {
+  0% { transform: translate(0, 0); }
+  100% { transform: translate(300px, 300px); }
+}
+
+@keyframes micPulse {
+  0% { transform: scale(1); opacity: 0.6; }
+  100% { transform: scale(2); opacity: 0; }
+}
+
+@keyframes micDot {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.3; }
+}
+
+@keyframes arch-grid-breathe {
+  0%, 100% { opacity: 0.8; }
+  50% { opacity: 1; }
+}
+
+/* ── Gold accent → pure white ── */
+[data-theme="architect"] [class*="text-[#D4A853]"] {
+  color: #ffffff !important;
+}
+[data-theme="architect"] [class*="text-[#DCC7A3]"],
+[data-theme="architect"] [class*="text-[#E8C98A]"],
+[data-theme="architect"] [class*="text-[#E6C887]"],
+[data-theme="architect"] [class*="text-[#E8C778]"],
+[data-theme="architect"] [class*="text-[#E7D1A4]"],
+[data-theme="architect"] [class*="text-[#E8D7B2]"],
+[data-theme="architect"] [class*="text-[#CBB892]"],
+[data-theme="architect"] [class*="text-[#DAB56A]"],
+[data-theme="architect"] [class*="text-[#DCC07A]"] {
+  color: rgba(255, 255, 255, 0.75) !important;
+}
+
+/* ── Background accents → subtle white, NOT solid fill ── */
+[data-theme="architect"] [class*="bg-[#D4A853]"] {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+}
+[data-theme="architect"] [class*="bg-[#DCC7A3]"] {
+  background-color: rgba(255, 255, 255, 0.06) !important;
+}
+
+/* ── Border accents → clean white lines ── */
+[data-theme="architect"] [class*="border-[#D4A853]"] {
+  border-color: rgba(255, 255, 255, 0.25) !important;
+}
+[data-theme="architect"] [class*="border-[#DCC7A3]"] {
+  border-color: rgba(255, 255, 255, 0.20) !important;
+}
+
+/* ── Ring / Shadow ── */
+[data-theme="architect"] [class*="ring-[#D4A853]"] {
+  --tw-ring-color: rgba(255, 255, 255, 0.25) !important;
+}
+[data-theme="architect"] [class*="shadow-[#D4A853]"],
+[data-theme="architect"] [class*="shadow-["] {
+  --tw-shadow-color: rgba(255, 255, 255, 0.06) !important;
+}
+
+/* ── Accent for range inputs ── */
+[data-theme="architect"] [class*="accent-[#DCC7A3]"] {
+  accent-color: #ffffff !important;
+}
+
+/* ── Hover ── */
+[data-theme="architect"] [class*="hover:bg-[#D4A853]"]:hover {
+  background-color: rgba(255, 255, 255, 0.12) !important;
+}
+[data-theme="architect"] [class*="hover:text-[#D4A853]"]:hover,
+[data-theme="architect"] [class*="hover:text-[#E8C98A]"]:hover,
+[data-theme="architect"] [class*="hover:text-[#E7D1A4]"]:hover {
+  color: #ffffff !important;
+}
+
+/* ── Emerald (locations) → light gray ── */
+[data-theme="architect"] [class*="text-emerald"] {
+  color: rgba(255, 255, 255, 0.60) !important;
+}
+[data-theme="architect"] [class*="bg-emerald"] {
+  background-color: rgba(255, 255, 255, 0.05) !important;
+}
+[data-theme="architect"] [class*="border-emerald"] {
+  border-color: rgba(255, 255, 255, 0.12) !important;
+}
+
+/* ── Sky (props) → mid gray ── */
+[data-theme="architect"] [class*="text-sky"] {
+  color: rgba(255, 255, 255, 0.50) !important;
+}
+[data-theme="architect"] [class*="bg-sky"] {
+  background-color: rgba(255, 255, 255, 0.04) !important;
+}
+[data-theme="architect"] [class*="border-sky"] {
+  border-color: rgba(255, 255, 255, 0.10) !important;
+}
+
+/* ── Amber → white ── */
+[data-theme="architect"] [class*="text-amber"],
+[data-theme="architect"] [class*="text-[#E8D3A2]"] {
+  color: rgba(255, 255, 255, 0.70) !important;
+}
+[data-theme="architect"] [class*="border-amber"] {
+  border-color: rgba(255, 255, 255, 0.15) !important;
+}
+[data-theme="architect"] [class*="bg-amber"] {
+  background-color: rgba(255, 255, 255, 0.04) !important;
+}
+
+/* ── Purple (Fincher) → white variant ── */
+[data-theme="architect"] [class*="border-[#8b5cf6]"] {
+  border-color: rgba(255, 255, 255, 0.20) !important;
+}
+[data-theme="architect"] [class*="bg-[#8b5cf6]"] {
+  background-color: rgba(255, 255, 255, 0.06) !important;
+}
+[data-theme="architect"] [class*="text-[#c4b5fd]"] {
+  color: rgba(255, 255, 255, 0.70) !important;
+}
+
+/* ── Animate ── */
+[data-theme="architect"] .animate-spin {
+  color: rgba(255, 255, 255, 0.60) !important;
+}
+[data-theme="architect"] .animate-pulse {
+  color: rgba(255, 255, 255, 0.50) !important;
+}
+
+/* ── Text variants ── */
+[data-theme="architect"] [class*="text-[#E4D0AC]"],
+[data-theme="architect"] [class*="text-[#8D919B]"] {
+  color: rgba(255, 255, 255, 0.35) !important;
+}
+[data-theme="architect"] [class*="text-[#E5E0DB]"],
+[data-theme="architect"] [class*="text-[#E7E3DC]"] {
+  color: rgba(255, 255, 255, 0.90) !important;
+}
+[data-theme="architect"] [class*="text-[#7F8590]"] {
+  color: rgba(255, 255, 255, 0.30) !important;
+}
+
+/* ── Background overrides → semi-transparent black (grid shows through) ── */
+[data-theme="architect"] [class*="bg-[#0B0C10]"],
+[data-theme="architect"] [class*="bg-[#0e0e0e]"],
+[data-theme="architect"] [class*="bg-[#111010]"],
+[data-theme="architect"] [class*="bg-[#0D0F12]"],
+[data-theme="architect"] [class*="bg-[#161310]"],
+[data-theme="architect"] [class*="bg-[#0f0d0b]"] {
+  background-color: rgba(0,0,0,0.90) !important;
+}
+
+[data-theme="architect"] [class*="bg-[#141210]"],
+[data-theme="architect"] [class*="bg-[#181614]"],
+[data-theme="architect"] [class*="bg-[#171513]"] {
+  background-color: rgba(8,8,8,0.85) !important;
+}
+
+[data-theme="architect"] [class*="bg-[#1a1816]"],
+[data-theme="architect"] [class*="bg-[#1A1916]"],
+[data-theme="architect"] [class*="bg-[#1a1d24]"] {
+  background-color: rgba(17,17,17,0.80) !important;
+}
+
+/* ── Card surfaces → near-transparent on black ── */
+[data-theme="architect"] [class*="bg-white/3"],
+[data-theme="architect"] [class*="bg-white/[0.02]"],
+[data-theme="architect"] [class*="bg-white/[0.03]"],
+[data-theme="architect"] [class*="bg-white/[0.04]"] {
+  background-color: rgba(255, 255, 255, 0.02) !important;
+}
+
+[data-theme="architect"] [class*="bg-white/5"],
+[data-theme="architect"] [class*="bg-white/8"] {
+  background-color: rgba(255, 255, 255, 0.04) !important;
+}
+
+[data-theme="architect"] [class*="bg-white/10"],
+[data-theme="architect"] [class*="bg-white/12"],
+[data-theme="architect"] [class*="bg-white/15"] {
+  background-color: rgba(255, 255, 255, 0.06) !important;
+}
+
+/* ── Borders → crisp white lines ── */
+[data-theme="architect"] [class*="border-white/[0.05]"],
+[data-theme="architect"] [class*="border-white/[0.06]"] {
+  border-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+[data-theme="architect"] [class*="border-white/8"],
+[data-theme="architect"] [class*="border-white/10"],
+[data-theme="architect"] [class*="border-white/12"] {
+  border-color: rgba(255, 255, 255, 0.14) !important;
+}
+
+[data-theme="architect"] [class*="border-white/15"],
+[data-theme="architect"] [class*="border-white/20"] {
+  border-color: rgba(255, 255, 255, 0.22) !important;
+}
+
+/* ── Focus/hover ── */
+[data-theme="architect"] [class*="focus:border-white/30"]:focus,
+[data-theme="architect"] [class*="focus:border-[#D4A853]"]:focus {
+  border-color: rgba(255, 255, 255, 0.45) !important;
+}
+
+[data-theme="architect"] [class*="hover:bg-white/5"]:hover {
+  background-color: rgba(255, 255, 255, 0.05) !important;
+}
+
+[data-theme="architect"] [class*="hover:bg-white/10"]:hover {
+  background-color: rgba(255, 255, 255, 0.08) !important;
+}
+
+/* ── Architect: screenplay — opaque dark page, paper texture ── */
+[data-theme="architect"] .slate-screenplay-editor {
+  color: rgba(255,255,255,0.72) !important;
+  caret-color: rgba(255,255,255,0.50) !important;
+  position: relative;
+  z-index: 2;
+}
+
+/* Make the page paper backgrounds fully opaque in architect */
+[data-theme="architect"] .slate-screenplay-editor ~ div,
+[data-theme="architect"] [style*="pointer-events: none"][style*="height:"][style*="position: absolute"] {
+  z-index: 1;
+}
+
+/* Paper noise overlay */
+[data-theme="architect"] .slate-screenplay-editor::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  opacity: 0.35;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='4' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='256' height='256' filter='url(%23n)' opacity='0.5'/%3E%3C/svg%3E");
+  background-size: 256px 256px;
+}
+
+/* ── Architect scrollbar — thin, minimal ── */
+[data-theme="architect"] ::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+
+[data-theme="architect"] ::-webkit-scrollbar-track {
+  background: #000000;
+}
+
+[data-theme="architect"] ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 0;
+}
+
+[data-theme="architect"] ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.30);
+}
+
+/* ── Architect: sharp corners — EVERYTHING square ── */
+[data-theme="architect"] [class*="rounded-xl"],
+[data-theme="architect"] [class*="rounded-2xl"],
+[data-theme="architect"] [class*="rounded-3xl"],
+[data-theme="architect"] [class*="rounded-lg"],
+[data-theme="architect"] [class*="rounded-["] {
+  border-radius: 2px !important;
+}
+
+[data-theme="architect"] [class*="rounded-md"],
+[data-theme="architect"] [class*="rounded-sm"] {
+  border-radius: 1px !important;
+}
+
+[data-theme="architect"] [class*="rounded-full"] {
+  border-radius: 1px !important;
+}
+
+/* Also override board-specific bg colors — semi-transparent to show grid */
+[data-theme="architect"] [class*="bg-[#111317]"],
+[data-theme="architect"] [class*="bg-[#12151A]"],
+[data-theme="architect"] [class*="bg-[#14171C]"],
+[data-theme="architect"] [class*="bg-[#171A20]"],
+[data-theme="architect"] [class*="bg-[#0E1014]"] {
+  background-color: rgba(5,5,5,0.80) !important;
+}
+
+[data-theme="architect"] [class*="border-[#D8C4A5]"] {
+  border-color: rgba(255, 255, 255, 0.30) !important;
+}
+
+[data-theme="architect"] [class*="text-[#D7CDC1]"] {
+  color: rgba(255, 255, 255, 0.40) !important;
+}
+
+/* ── Print styles ── */
+@media print {
+  /* Hide everything except screenplay content */
+  nav, header, footer,
+  [class*="GlobalNav"],
+  [class*="CommandBar"],
+  [class*="TopInfo"],
+  [class*="Toolbar"],
+  [class*="KeyboardHints"],
+  [class*="ViewMode"],
+  [class*="SceneNavigator"],
+  [class*="AmbientFocus"],
+  [class*="backdrop-blur"],
+  button,
+  input[type="range"] {
+    display: none !important;
+  }
+  /* Show only the editor content */
+  .slate-screenplay-editor {
+    background: white !important;
+    color: black !important;
+    padding: 72px 72px 72px 108px !important;
+    font-family: "Courier New", Courier, monospace !important;
+    font-size: 12pt !important;
+    line-height: 1 !important;
+  }
+  /* Reset page setup */
+  @page {
+    size: letter;
+    margin: 0;
+  }
+  body {
+    background: white !important;
+  }
 }

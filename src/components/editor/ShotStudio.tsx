@@ -50,6 +50,10 @@ interface ShotStudioProps {
   fullscreen?: boolean
   onClose: () => void
   onNavigate?: (shotId: string) => void
+  /** Standalone mode: no Bible injection, clean prompt, no playback/inspector */
+  standalone?: boolean
+  /** Called on close in standalone mode with final prompt & image URL */
+  onSync?: (prompt: string, imageUrl: string | null) => void
 }
 
 // ── Helpers ──
@@ -173,7 +177,7 @@ const IMAGE_GEN_MODELS = [
 
 // ── Component ──
 
-export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onNavigate }: ShotStudioProps) {
+export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onNavigate, standalone, onSync }: ShotStudioProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [isFullscreen, setIsFullscreen] = useState(false)
   const [showUI, setShowUI] = useState(true)
@@ -497,8 +501,11 @@ export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onN
   const flushAndClose = useCallback(() => {
     stopPlayback()
     undoStackRef.current = []
+    if (standalone && onSync && shot) {
+      onSync(shot.imagePrompt || "", shot.thumbnailUrl || null)
+    }
     onClose()
-  }, [stopPlayback, onClose])
+  }, [stopPlayback, onClose, standalone, onSync, shot])
 
   // ── Fullscreen ──
 
@@ -913,13 +920,15 @@ export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onN
 
     const userPrompt = promptDraft.trim() || shot.imagePrompt || shot.caption || shot.label || ""
 
-    const fullPrompt = buildImagePrompt(
-      { ...shot, imagePrompt: userPrompt },
-      characters,
-      locations,
-      projectStyle,
-      bibleProps,
-    )
+    const fullPrompt = standalone
+      ? (projectStyle ? `Art style: ${projectStyle}.\n\n${userPrompt}` : userPrompt)
+      : buildImagePrompt(
+          { ...shot, imagePrompt: userPrompt },
+          characters,
+          locations,
+          projectStyle,
+          bibleProps,
+        )
 
     // Save user prompt to shot
     if (promptDraft.trim()) {
@@ -927,25 +936,32 @@ export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onN
     }
 
     try {
-      const allGenRefs = getShotGenerationReferenceImages(shot, characters, locations)
-      // Filter out disabled refs
-      const refs = disabledRefs.size > 0
-        ? allGenRefs.filter((r) => {
-            // Match against disabled IDs
-            const charMatch = shotChars.find((c) => c.generatedPortraitUrl === r.url || c.referenceImages.some((ri) => ri.url === r.url))
-            if (charMatch && disabledRefs.has(`char-${charMatch.id}`)) return false
-            const locMatch = shotLocs.find((l) => l.generatedImageUrl === r.url || l.referenceImages.some((ri) => ri.url === r.url))
-            if (locMatch && disabledRefs.has(`loc-${locMatch.id}`)) return false
-            const propMatch = shotProps.find((p) => p.generatedImageUrl === r.url || p.referenceImages.some((ri) => ri.url === r.url))
-            if (propMatch && disabledRefs.has(`prop-${propMatch.id}`)) return false
-            // Custom refs
-            const customUrls = shot.customReferenceUrls || []
-            const customIdx = customUrls.indexOf(r.url)
-            if (customIdx >= 0 && disabledRefs.has(`custom-${customIdx}`)) return false
-            return true
-          })
-        : allGenRefs
-      const refDataUrls = await convertReferenceImagesToDataUrls(refs)
+      let refDataUrls: string[] = []
+      if (standalone) {
+        // Standalone: only custom reference URLs
+        const customUrls = (shot.customReferenceUrls || []).filter((u) => u)
+        refDataUrls = await convertReferenceImagesToDataUrls(
+          customUrls.map((url, i) => ({ id: `custom-${i}`, url, kind: "prop" as const, label: `Ref ${i + 1}` }))
+        )
+      } else {
+        const allGenRefs = getShotGenerationReferenceImages(shot, characters, locations, bibleProps)
+        // Filter out disabled refs
+        const refs = disabledRefs.size > 0
+          ? allGenRefs.filter((r) => {
+              const charMatch = shotChars.find((c) => c.generatedPortraitUrl === r.url || c.referenceImages.some((ri) => ri.url === r.url))
+              if (charMatch && disabledRefs.has(`char-${charMatch.id}`)) return false
+              const locMatch = shotLocs.find((l) => l.generatedImageUrl === r.url || l.referenceImages.some((ri) => ri.url === r.url))
+              if (locMatch && disabledRefs.has(`loc-${locMatch.id}`)) return false
+              const propMatch = shotProps.find((p) => p.generatedImageUrl === r.url || p.referenceImages.some((ri) => ri.url === r.url))
+              if (propMatch && disabledRefs.has(`prop-${propMatch.id}`)) return false
+              const customUrls = shot.customReferenceUrls || []
+              const customIdx = customUrls.indexOf(r.url)
+              if (customIdx >= 0 && disabledRefs.has(`custom-${customIdx}`)) return false
+              return true
+            })
+          : allGenRefs
+        refDataUrls = await convertReferenceImagesToDataUrls(refs)
+      }
 
       const apiUrl = selectedModel === "gpt-image" ? "/api/gpt-image" : "/api/nano-banana"
 
@@ -1040,9 +1056,9 @@ export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onN
 
   const previewSrc = shot.thumbnailUrl
 
-  // Panel visibility class — hide everything in edit mode
+  // Panel visibility class — hide in edit mode, show on hover during playback
   const panelClass = (base: string) =>
-    `${base} transition-opacity duration-300 ${showUI && !editMode ? "opacity-100" : "opacity-0 pointer-events-none"}`
+    `${base} transition-opacity duration-300 ${editMode ? "opacity-0 pointer-events-none" : showUI ? "opacity-100" : "opacity-0 pointer-events-none hover:opacity-100 hover:pointer-events-auto"}`
 
   const hasTransform = xFlipH || xFlipV || xRotate !== 0
 
@@ -1096,6 +1112,16 @@ export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onN
             onLoad={handleImageLoad}
             onClick={samMode ? handleSAMClick : undefined}
           />
+          {/* ── Subtitles overlay — shown during playback ── */}
+          {playing && shot?.caption && (
+            <div className="absolute bottom-16 left-4 right-4 flex justify-center pointer-events-none z-20">
+              <div className="rounded-md bg-black/60 px-5 py-2 backdrop-blur-sm max-w-[75%]">
+                <p className="text-center text-[14px] leading-relaxed text-white/90 font-medium" style={{ textShadow: "0 1px 4px rgba(0,0,0,0.8)" }}>
+                  {shot.caption}
+                </p>
+              </div>
+            </div>
+          )}
           {/* SAM mask overlay — exactly matches img because parent is inline-block and img is block */}
           {samOverlay && (
             <>
@@ -1176,7 +1202,7 @@ export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onN
             const allNames = [...charNames, ...locNames, ...propNames].filter(Boolean)
 
             const highlightPrompt = (text: string) => {
-              if (allNames.length === 0) return text
+              if (standalone || allNames.length === 0) return text
               const pattern = new RegExp(`(${allNames.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|")})`, "gi")
               const parts = text.split(pattern)
               return parts.map((part, i) => {
@@ -1187,13 +1213,15 @@ export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onN
               })
             }
 
-            // Unified ref list: bible + custom
-            const rawRefs: Array<{ id: string; url: string | null; label: string; source: "bible" | "custom" }> = [
-              ...shotChars.map((c) => ({ id: `char-${c.id}`, url: c.generatedPortraitUrl, label: c.name, source: "bible" as const })),
-              ...shotLocs.map((l) => ({ id: `loc-${l.id}`, url: l.generatedImageUrl, label: l.name, source: "bible" as const })),
-              ...shotProps.map((p) => ({ id: `prop-${p.id}`, url: p.generatedImageUrl, label: p.name, source: "bible" as const })),
-              ...(shot.customReferenceUrls || []).map((url, i) => ({ id: `custom-${i}`, url, label: "Референс", source: "custom" as const })),
-            ]
+            // Unified ref list: bible + custom (standalone = custom only)
+            const rawRefs: Array<{ id: string; url: string | null; label: string; source: "bible" | "custom" }> = standalone
+              ? (shot.customReferenceUrls || []).map((url, i) => ({ id: `custom-${i}`, url, label: `Ref ${i + 1}`, source: "custom" as const }))
+              : [
+                  ...shotChars.map((c) => ({ id: `char-${c.id}`, url: c.generatedPortraitUrl, label: c.name, source: "bible" as const })),
+                  ...shotLocs.map((l) => ({ id: `loc-${l.id}`, url: l.generatedImageUrl, label: l.name, source: "bible" as const })),
+                  ...shotProps.map((p) => ({ id: `prop-${p.id}`, url: p.generatedImageUrl, label: p.name, source: "bible" as const })),
+                  ...(shot.customReferenceUrls || []).map((url, i) => ({ id: `custom-${i}`, url, label: "Референс", source: "custom" as const })),
+                ]
             // Apply user-defined order if exists
             const allRefs = refOrder
               ? [...rawRefs].sort((a, b) => {
@@ -1203,7 +1231,7 @@ export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onN
                 })
               : rawRefs
             return (
-              <div className={`absolute inset-x-0 bottom-0 transition-opacity duration-300 ${showUI ? "opacity-100" : "opacity-0 pointer-events-none"}`}>
+              <div className={`absolute inset-x-0 bottom-0 transition-opacity duration-300 ${showUI || !playing ? "opacity-100" : "opacity-0 hover:opacity-100"}`}>
                 <div className="group/prompt bg-gradient-to-t from-black/70 via-black/30 to-transparent px-8 pb-5 pt-12">
 
                   {/* ── Inline Reference Strip ── */}
@@ -1405,8 +1433,10 @@ export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onN
                           type="button"
                           onClick={() => {
                             const { censorPrompt } = require("@/lib/cinematic/promptCensor") as typeof import("@/lib/cinematic/promptCensor")
-                            const fullPrompt = buildImagePrompt({ ...shot, imagePrompt: promptDraft || shot.imagePrompt || "" }, characters, locations, projectStyle, bibleProps)
-                            const result = censorPrompt(fullPrompt, shot, characters, locations)
+                            const fullPrompt = standalone
+                              ? (promptDraft || shot.imagePrompt || "")
+                              : buildImagePrompt({ ...shot, imagePrompt: promptDraft || shot.imagePrompt || "" }, characters, locations, projectStyle, bibleProps)
+                            const result = censorPrompt(fullPrompt, shot, standalone ? [] : characters, standalone ? [] : locations)
                             setCensorIssues(result.issues)
                             setCensorOpen(true)
                             if (result.optimizedPrompt && result.optimizedPrompt !== (promptDraft || shot.imagePrompt)) {
@@ -1482,7 +1512,7 @@ export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onN
                     <div className="relative">
                       <p
                         onClick={() => { setPromptEditing(true); setPromptDraft(shot.imagePrompt || "") }}
-                        className="cursor-text font-[system-ui] text-[12px] leading-[1.6] tracking-wide text-white/25 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] transition-colors duration-300 group-hover/prompt:text-white/85"
+                        className="cursor-text font-[system-ui] text-[12px] leading-[1.6] tracking-wide text-white/60 drop-shadow-[0_1px_3px_rgba(0,0,0,0.9)] transition-colors duration-300 group-hover/prompt:text-white/90"
                       >
                         {highlightPrompt(shot.imagePrompt || "Click to write prompt...")}
                       </p>
@@ -1491,7 +1521,10 @@ export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onN
                           type="button"
                           onClick={(e) => {
                             e.stopPropagation()
-                            void navigator.clipboard.writeText(buildImagePrompt(shot, characters, locations, projectStyle, bibleProps))
+                            const textToCopy = standalone
+                              ? (shot.imagePrompt || "")
+                              : buildImagePrompt(shot, characters, locations, projectStyle, bibleProps)
+                            void navigator.clipboard.writeText(textToCopy)
                             const btn = e.currentTarget
                             btn.classList.add("!bg-[#D4A853]/20", "!text-[#D4A853]", "scale-95")
                             setTimeout(() => btn.classList.remove("!bg-[#D4A853]/20", "!text-[#D4A853]", "scale-95"), 400)
@@ -1536,9 +1569,9 @@ export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onN
         />
       )}
 
-      {/* ── Bottom: Player bar / Color Match bar ── */}
-      {shotsWithImages.length > 1 && (
-        <div className={panelClass("absolute bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-xl border border-white/10 bg-black/70 px-3 py-2 backdrop-blur-xl")}>
+      {/* ── Bottom: Player bar / Color Match bar — always visible ── */}
+      {!standalone && shotsWithImages.length > 0 && (
+        <div className="absolute bottom-4 left-1/2 z-50 flex -translate-x-1/2 items-center gap-2 rounded-xl border border-white/10 bg-black/70 px-3 py-2 backdrop-blur-xl transition-opacity duration-300">
           {colorMatchOpen ? (
             <>
               {/* Color match mode: neighbor thumbnails */}
@@ -1678,7 +1711,7 @@ export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onN
       )}
 
       {/* ── Right: Inspector toggle ── */}
-      {inspectorOpen && shot && (
+      {!standalone && inspectorOpen && shot && (
         <div className={panelClass("absolute right-4 top-1/2 z-50 w-72 -translate-y-1/2 rounded-xl border border-white/10 bg-black/70 p-4 backdrop-blur-xl")}>
           <div className="mb-3 flex items-center justify-between">
             <span className="text-[9px] uppercase tracking-[0.18em] text-[#D4A853]/60">Inspector</span>
@@ -1744,14 +1777,16 @@ export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onN
         >
           <Settings size={16} />
         </button>
-        <button
-          type="button"
-          onClick={() => setInspectorOpen((v) => !v)}
-          className={`flex h-9 items-center gap-1 rounded-lg border px-2.5 text-[10px] uppercase tracking-[0.1em] transition-colors ${inspectorOpen ? "border-[#D4A853]/30 bg-[#D4A853]/15 text-[#D4A853]" : "border-white/10 bg-black/50 text-white/50 hover:bg-white/10 hover:text-white"}`}
-          title="Inspector (I)"
-        >
-          i
-        </button>
+        {!standalone && (
+          <button
+            type="button"
+            onClick={() => setInspectorOpen((v) => !v)}
+            className={`flex h-9 items-center gap-1 rounded-lg border px-2.5 text-[10px] uppercase tracking-[0.1em] transition-colors ${inspectorOpen ? "border-[#D4A853]/30 bg-[#D4A853]/15 text-[#D4A853]" : "border-white/10 bg-black/50 text-white/50 hover:bg-white/10 hover:text-white"}`}
+            title="Inspector (I)"
+          >
+            i
+          </button>
+        )}
         <button
           type="button"
           onClick={toggleFullscreen}
@@ -1836,7 +1871,7 @@ export function ShotStudio({ shotId, fullscreen: initialFullscreen, onClose, onN
       )}
 
       {/* ── Scene Bible Panel ── */}
-      {refPickerOpen && shot?.sceneId && currentScene && (
+      {!standalone && refPickerOpen && shot?.sceneId && currentScene && (
         <SceneBibleBubble
           sceneId={shot.sceneId}
           sceneIndex={currentSceneIndex}

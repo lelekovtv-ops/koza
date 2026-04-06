@@ -2,7 +2,7 @@
 
 import Image from "next/image"
 import { Loader2, Plus, Sparkles, Wand2, X } from "lucide-react"
-import { useEffect, useRef, useState } from "react"
+import React, { useCallback, useEffect, useRef, useState } from "react"
 import { useBibleStore } from "@/store/bible"
 import { useBoardStore } from "@/store/board"
 import { trySaveBlob } from "@/lib/fileStorage"
@@ -820,5 +820,108 @@ ${sceneText}
         )}
       </div>
     </div>
+  )
+}
+
+// ── Inline Editable Widgets ───────────────────────────────────
+
+export function InlineSelect({ value, options, onChange }: { value: string; options: readonly string[]; onChange: (v: string) => void }) {
+  const [open, setOpen] = useState(false)
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)} className="cursor-pointer rounded bg-transparent px-0.5 text-left hover:bg-white/5 transition-colors">
+        {value || options[0]}
+      </button>
+    )
+  }
+  return (
+    <select
+      autoFocus
+      value={value}
+      onChange={(e) => { onChange(e.target.value); setOpen(false) }}
+      onBlur={() => setOpen(false)}
+      className="rounded border border-white/10 bg-white/5 px-1 py-0.5 text-[10px] uppercase text-[#ECE5D8] outline-none"
+    >
+      {options.map((opt) => <option key={opt} value={opt} className="bg-[#1a1d24] text-white">{opt}</option>)}
+    </select>
+  )
+}
+
+export function InlineDuration({ value, onChange }: { value: string; onChange: (ms: number) => void }) {
+  const [editing, setEditing] = useState(false)
+  const numericVal = parseFloat(value) || 0
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  useEffect(() => { if (editing) inputRef.current?.focus() }, [editing])
+
+  if (!editing) {
+    return (
+      <button type="button" onClick={() => setEditing(true)} className="cursor-pointer rounded bg-transparent px-0.5 hover:bg-white/5 transition-colors">
+        {value}
+      </button>
+    )
+  }
+  return (
+    <input
+      ref={inputRef}
+      type="number"
+      step="0.1"
+      min="0.5"
+      max="30"
+      defaultValue={numericVal.toFixed(1)}
+      onBlur={(e) => { onChange(parseFloat(e.target.value) * 1000); setEditing(false) }}
+      onKeyDown={(e) => { if (e.key === "Enter") { onChange(parseFloat((e.target as HTMLInputElement).value) * 1000); setEditing(false) } }}
+      className="w-12 rounded border border-white/10 bg-white/5 px-1 py-0.5 text-[10px] text-[#B9AEA0] outline-none"
+    />
+  )
+}
+
+export function InlineText({
+  value,
+  onChange,
+  placeholder,
+  multiline,
+  className,
+}: {
+  value: string
+  onChange: (v: string) => void
+  placeholder?: string
+  multiline?: boolean
+  className?: string
+}) {
+  const [editing, setEditing] = useState(false)
+  const ref = useRef<HTMLTextAreaElement | HTMLInputElement>(null)
+
+  useEffect(() => { if (editing) ref.current?.focus() }, [editing])
+
+  if (!editing) {
+    return (
+      <button type="button" onClick={() => setEditing(true)} className={`w-full cursor-pointer truncate rounded bg-transparent px-0.5 text-left transition-colors hover:bg-white/5 ${className || ""}`}>
+        {value || <span className="text-white/20">{placeholder}</span>}
+      </button>
+    )
+  }
+  if (multiline) {
+    return (
+      <textarea
+        ref={ref as React.RefObject<HTMLTextAreaElement>}
+        rows={2}
+        defaultValue={value}
+        placeholder={placeholder}
+        onBlur={(e) => { onChange(e.target.value); setEditing(false) }}
+        className={`w-full resize-none rounded border border-white/10 bg-white/5 px-2 py-1 text-inherit outline-none placeholder:text-white/20 ${className || ""}`}
+      />
+    )
+  }
+  return (
+    <input
+      ref={ref as React.RefObject<HTMLInputElement>}
+      type="text"
+      defaultValue={value}
+      placeholder={placeholder}
+      onBlur={(e) => { onChange(e.target.value); setEditing(false) }}
+      onKeyDown={(e) => { if (e.key === "Enter") { onChange((e.target as HTMLInputElement).value); setEditing(false) } }}
+      className={`w-full rounded border border-white/10 bg-white/5 px-2 py-1 text-inherit outline-none placeholder:text-white/20 ${className || ""}`}
+    />
   )
 }

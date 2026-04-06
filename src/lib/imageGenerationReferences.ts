@@ -1,5 +1,5 @@
 import type { CharacterEntry, LocationEntry, PropEntry } from "@/lib/bibleParser"
-import { getCharactersForShot, getLocationsForShot } from "@/lib/promptBuilder"
+import { getCharactersForShot, getLocationsForShot, getPropsForShot } from "@/lib/promptBuilder"
 import { GENERATED_CANONICAL_IMAGE_ID } from "@/store/bible"
 import type { TimelineShot } from "@/store/timeline"
 
@@ -126,35 +126,48 @@ export function getShotGenerationReferenceImages(
   shot: TimelineShot,
   characters: CharacterEntry[],
   locations: LocationEntry[],
+  props?: PropEntry[],
 ): GenerationReferenceImage[] {
   const references: GenerationReferenceImage[] = []
   const seenUrls = new Set<string>()
-  const shotCharacters = getCharactersForShot(shot, characters).slice(0, 2)
-  const shotLocations = getLocationsForShot(shot, locations).slice(0, 2)
 
-  for (const character of shotCharacters) {
-    const characterReferences = getCharacterReferenceImages(character, character.generatedPortraitUrl ? 1 : 2)
-    for (const reference of characterReferences) {
-      pushUniqueReference(references, reference, seenUrls, 5)
-    }
-  }
-
-  for (const shotLocation of shotLocations) {
-    for (const reference of getLocationReferenceImages(shotLocation, 2)) {
-      pushUniqueReference(references, reference, seenUrls, 8)
-    }
-  }
-
-  // Custom references added by user in ShotStudio
+  // 1. Custom references FIRST (highest priority — user explicitly added these)
   const customUrls = (shot as TimelineShot & { customReferenceUrls?: string[] }).customReferenceUrls
   if (customUrls) {
     for (const url of customUrls) {
       pushUniqueReference(references, {
         id: `custom-${url.slice(-12)}`,
         url,
-        kind: "character",
+        kind: "prop",
         label: "Custom ref",
       }, seenUrls, 8)
+    }
+  }
+
+  // 2. Props (often the main subject of the shot)
+  if (props) {
+    const shotProps = getPropsForShot(shot, props).slice(0, 2)
+    for (const prop of shotProps) {
+      for (const reference of getPropReferenceImages(prop, 2)) {
+        pushUniqueReference(references, reference, seenUrls, 8)
+      }
+    }
+  }
+
+  // 3. Characters
+  const shotCharacters = getCharactersForShot(shot, characters).slice(0, 2)
+  for (const character of shotCharacters) {
+    const characterReferences = getCharacterReferenceImages(character, character.generatedPortraitUrl ? 1 : 2)
+    for (const reference of characterReferences) {
+      pushUniqueReference(references, reference, seenUrls, 8)
+    }
+  }
+
+  // 4. Locations
+  const shotLocations = getLocationsForShot(shot, locations).slice(0, 2)
+  for (const shotLocation of shotLocations) {
+    for (const reference of getLocationReferenceImages(shotLocation, 2)) {
+      pushUniqueReference(references, reference, seenUrls, 8)
     }
   }
 

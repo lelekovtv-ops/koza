@@ -42,11 +42,16 @@ const getErrorMessage = (error: unknown) => {
 
 export async function POST(req: Request) {
   try {
-    const { prompt, model, referenceImages } = await req.json()
+    const { prompt, model, referenceImages, stylePrompt } = await req.json()
 
     if (!prompt || typeof prompt !== "string") {
       return NextResponse.json({ error: "prompt is required" }, { status: 400 })
     }
+
+    // Compose final prompt: content + style layer (if provided)
+    const finalPrompt = stylePrompt && typeof stylePrompt === "string"
+      ? `${prompt.replace(/\s*16:9\.\s*No text[^.]*\.?\s*$/i, "").trim()}\nStyle: ${stylePrompt}. 16:9. No text, no watermark.`
+      : prompt
 
     const apiKey = process.env.GOOGLE_API_KEY
     if (!apiKey) {
@@ -59,7 +64,7 @@ export async function POST(req: Request) {
     // NB2 and Pro variants use different quality settings
     const modelId = "gemini-2.5-flash-image"
 
-    const maxReferenceCount = modelId === "gemini-2.5-flash-image" ? 3 : 5
+    const maxReferenceCount = 8
 
     const imageReferenceParts = Array.isArray(referenceImages)
       ? referenceImages
@@ -70,7 +75,7 @@ export async function POST(req: Request) {
       : []
 
     const contents = [
-      prompt,
+      finalPrompt,
       ...imageReferenceParts,
     ]
 

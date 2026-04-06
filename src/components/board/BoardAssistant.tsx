@@ -132,7 +132,7 @@ export default function BoardAssistant() {
       <button
         onClick={openAssistant}
         className="fixed bottom-6 right-6 z-[240] flex h-12 w-12 items-center justify-center rounded-full border border-[#E5E0DB] bg-white text-[#2D2A26] shadow-lg transition hover:scale-[1.03] hover:shadow-xl"
-        title="Open KOZA Assistant"
+        title="Open PIECE Assistant"
       >
         <Sparkles size={18} />
       </button>
@@ -150,7 +150,7 @@ export default function BoardAssistant() {
       >
         <div className="flex items-center gap-2">
           <Sparkles size={14} className="text-[#6A8CA8]" />
-          <span className="text-xs font-semibold tracking-wide text-[#2D2A26]">KOZA Assistant</span>
+          <span className="text-xs font-semibold tracking-wide text-[#2D2A26]">PIECE Assistant</span>
         </div>
         <div className="flex items-center gap-1">
           <button
@@ -190,7 +190,7 @@ export default function BoardAssistant() {
       <div className="flex-1 space-y-3 overflow-y-auto bg-[#FFFEFC] p-3">
         {messages.length === 0 ? (
           <div className="flex h-full items-center justify-center text-center text-xs leading-6 text-[#8A8279]">
-            Ask KOZA about story, shots, screenplay, or production planning.
+            Ask PIECE about story, shots, screenplay, or production planning.
           </div>
         ) : (
           messages.map((msg) => (

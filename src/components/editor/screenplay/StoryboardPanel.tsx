@@ -2,11 +2,12 @@
 
 import Image from "next/image"
 import { useRouter } from "next/navigation"
-import { AlertTriangle, BookOpen, Camera, ChevronLeft, ChevronRight, Clapperboard, Copy, Crop, Download, Film, FlipHorizontal2, FlipVertical2, Grid, Image as ImageIcon, List, Loader2, Maximize, Minimize, MoreHorizontal, Pause, Pencil, Play, Plus, RefreshCw, RotateCcw, RotateCw, Settings, SkipBack, SkipForward, Sparkles, Trash2, Video, Wand2, X } from "lucide-react"
+import { AlertTriangle, BookOpen, Camera, ChevronLeft, ChevronRight, Clapperboard, Copy, Crop, Download, Film, FlipHorizontal2, FlipVertical2, Grid, Image as ImageIcon, List, Loader2, Maximize, Minimize, MoreHorizontal, Music, Pause, Pencil, Play, Plus, RefreshCw, RotateCcw, RotateCw, Settings, SkipBack, SkipForward, Sparkles, Trash2, Video, Volume2, Wand2, X } from "lucide-react"
 import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { breakdownScene, buildBreakdownBibleContext, buildScenePromptDrafts, createSceneTimelineShotsFromBreakdown } from "@/features/breakdown"
+import { buildBreakdownBibleContext, buildScenePromptDrafts, createSceneTimelineShotsFromBreakdown } from "@/features/breakdown"
 import { breakdownSceneFincher } from "@/lib/fincher"
-import { getTotalDuration, useTimelineStore } from "@/store/timeline"
+import type { JenkinsShot } from "@/lib/breakdownTypes"
+import { createTimelineShot, getTotalDuration, useTimelineStore } from "@/store/timeline"
 import type { TimelineShot } from "@/store/timeline"
 import { timelineShotToStoryboardView, createShotFromStoryboardDefaults } from "@/lib/storyboardBridge"
 import { useScriptStore } from "@/store/script"
@@ -15,7 +16,6 @@ import { useNavigationStore } from "@/store/navigation"
 import { trySaveBlob } from "@/lib/fileStorage"
 import { applyColorTransfer, imageUrlToCanvas } from "@/lib/colorTransfer"
 import { convertReferenceImagesToDataUrls, getShotGenerationReferenceImages } from "@/lib/imageGenerationReferences"
-import { PromptLab, PromptLabPanel } from "./PromptLab"
 import { buildImagePrompt, buildVideoPrompt, getReferencedBibleEntries } from "@/lib/promptBuilder"
 import { ImageEditOverlay } from "@/components/ui/ImageEditOverlay"
 import { ShotStudio } from "@/components/editor/ShotStudio"
@@ -27,1092 +27,32 @@ import { useBreakdownConfigStore } from "@/store/breakdownConfig"
 import { useReEditConfigStore } from "@/store/reEditConfig"
 import { devlog } from "@/store/devlog"
 import { useLibraryStore } from "@/store/library"
+import { useDialogueStore } from "@/store/dialogue"
+import { useVoiceTrackStore } from "@/store/voiceTrack"
+import { useSpeech } from "@/hooks/useSpeech"
+import { MoodSynth, detectMoodFromText, type Mood } from "@/lib/moodSynth"
+import { buildFullTimingMap, buildSceneTimingMap, mapShotsToBlocks, placeShotsOnTimeline, placeVoiceClips } from "@/lib/placementEngine"
+import { syncBus } from "@/lib/syncBus"
+import { enrichBlocksFromBreakdown } from "@/features/breakdown/enrichFromBreakdown"
+import { BlockCanvas } from "@/components/editor/canvas/BlockCanvas"
+import { useBlockCanvasStore } from "@/store/blockCanvas"
 import { useProjectsStore } from "@/store/projects"
 import { useProjectProfilesStore } from "@/store/projectProfiles"
 import { slugify, type CharacterEntry, type LocationEntry, type PropEntry } from "@/lib/bibleParser"
-import { generateBibleImageFromModal, EditableDuration, SceneBibleBubble } from "./StoryboardShared"
+import { generateBibleImageFromModal, EditableDuration, SceneBibleBubble, InlineSelect, InlineDuration, InlineText } from "./StoryboardShared"
+import { InspectorView } from "./views/InspectorView"
+import { EmbeddedTrackView } from "./EmbeddedTrackView"
+import { DirectorShotCard, DirectorFieldVisibilityControl, generateShotImage } from "./DirectorShotCard"
+import { getAccentColors } from "@/lib/themeColors"
+import {
+  SHOT_SIZE_OPTIONS, CAMERA_MOTION_OPTIONS, IMAGE_GEN_MODELS,
+  DIRECTOR_ASSISTANT_SYSTEM, DIRECTOR_ASSISTANT_MAX_LINES, DIRECTOR_UPDATE_DEBOUNCE_MS, MAX_DIRECTOR_SHOTS_PER_SCENE,
+  DIRECTOR_FIELD_VISIBILITY_OPTIONS,
+  applyLucBessonProfileToScene, formatSummaryTime, sanitizeDirectorAssistantText, mergeDirectorNotes, readStreamedText, buildSceneContextText,
+  type EditableShotField, type DirectorFieldVisibility,
+} from "./storyboardUtils"
 
-const SHOT_SIZE_OPTIONS = ["WIDE", "MEDIUM", "CLOSE", "EXTREME CLOSE", "OVER SHOULDER", "POV", "INSERT", "AERIAL", "TWO SHOT"] as const
-const CAMERA_MOTION_OPTIONS = ["Static", "Pan Left", "Pan Right", "Pan Up", "Tilt Down", "Push In", "Pull Out", "Track Left", "Track Right", "Track Around", "Dolly In", "Crane Up", "Crane Down", "Drone In", "Handheld", "Steadicam"] as const
 
-// ViewMode type is now imported from navigation store via StoryboardViewMode
-type EditableShotField = "caption" | "directorNote" | "cameraNote" | "imagePrompt" | "videoPrompt"
-type DirectorFieldVisibility = "all" | "action" | "director" | "camera"
-
-const DIRECTOR_FIELD_VISIBILITY_OPTIONS: Array<{ value: DirectorFieldVisibility; label: string; description: string }> = [
-  { value: "all", label: "Show All", description: "Action, Director, and Camera" },
-  { value: "action", label: "Action Only", description: "Keep only the action line" },
-  { value: "director", label: "Director Only", description: "Keep only director notes" },
-  { value: "camera", label: "Camera Only", description: "Keep only camera notes" },
-]
-
-const DIRECTOR_ASSISTANT_SYSTEM = [
-  "You are a Director Assistant inside a cinematic storyboard system.",
-  "Your role is to help a human director develop shots, not replace them.",
-  "You receive a single shot Action plus optional scene context and optional bible context.",
-  "Your job is to enhance the action, clarify visual behavior, strengthen intention, and keep it cinematic and natural.",
-  "Return short director notes only.",
-  "Use 2 to 4 short lines maximum.",
-  "Each line should express intention, focus, emotional direction, or visual meaning.",
-  "Use clear language, visual thinking, and subtle emotion.",
-  "Do not rewrite the action.",
-  "Do not create multiple shots.",
-  "Do not invent new actions.",
-  "Do not describe camera.",
-  "Do not use technical terms.",
-  "Do not explain your reasoning.",
-  "Preserve the user's original intent.",
-  "If bible context is relevant, integrate it naturally without forcing it.",
-].join("\n")
-
-const DIRECTOR_ASSISTANT_MAX_LINES = 4
-const DIRECTOR_UPDATE_DEBOUNCE_MS = 250
-const MAX_DIRECTOR_SHOTS_PER_SCENE = 30
-
-const IMAGE_GEN_MODELS = [
-  { id: "gpt-image", label: "GPT Image", price: "$0.04" },
-  { id: "nano-banana", label: "NB1", price: "$0.039" },
-  { id: "nano-banana-2", label: "NB2", price: "$0.045" },
-  { id: "nano-banana-pro", label: "NB Pro", price: "$0.13" },
-] as const
-
-function mergeProfileText(existing: string, incoming: string): string {
-  const nextIncoming = incoming.trim()
-  const nextExisting = existing.trim()
-
-  if (!nextIncoming) {
-    return nextExisting
-  }
-
-  if (!nextExisting) {
-    return nextIncoming
-  }
-
-  if (nextExisting.includes(nextIncoming)) {
-    return nextExisting
-  }
-
-  return `${nextExisting}\n\n${nextIncoming}`.trim()
-}
-
-function applyLucBessonProfileToScene({
-  lucBessonProfile,
-  targetScene,
-  selectedSceneContext,
-  setProjectStyle,
-  updateDirectorVision,
-  replaceSceneShots,
-}: {
-  lucBessonProfile: NonNullable<ReturnType<typeof useProjectProfilesStore.getState>["lucBessonByProjectId"][string]>
-  targetScene: { id: string; title: string; blockIds: string[] }
-  selectedSceneContext: string
-  setProjectStyle: (value: string) => void
-  updateDirectorVision: (value: string) => void
-  replaceSceneShots: (
-    sceneId: string,
-    sceneText: string,
-    sceneBlockIds: string[],
-    jenkinsShots: Array<{
-      label: string
-      type: "image"
-      duration: number
-      notes: string
-      shotSize?: string
-      cameraMotion?: string
-      caption?: string
-      directorNote?: string
-      cameraNote?: string
-      videoPrompt?: string
-      imagePrompt?: string
-      visualDescription?: string
-    }>,
-  ) => number
-}) {
-  useBibleStore.setState((state) => {
-    const nextCharacters = [...state.characters]
-    const nextLocations = [...state.locations]
-
-    lucBessonProfile.characterOverrides.forEach((override) => {
-      const entryId = slugify(override.name)
-      const existingIndex = nextCharacters.findIndex((entry) => entry.id === entryId)
-
-      if (existingIndex >= 0) {
-        const current = nextCharacters[existingIndex]
-        nextCharacters[existingIndex] = {
-          ...current,
-          description: mergeProfileText(current.description, override.description),
-          appearancePrompt: mergeProfileText(current.appearancePrompt, override.appearancePrompt),
-          sceneIds: current.sceneIds.includes(targetScene.id) ? current.sceneIds : [...current.sceneIds, targetScene.id],
-        }
-        return
-      }
-
-      nextCharacters.push({
-        id: entryId,
-        name: override.name,
-        description: override.description,
-        referenceImages: [],
-        canonicalImageId: null,
-        generatedPortraitUrl: null,
-        portraitBlobKey: null,
-        appearancePrompt: override.appearancePrompt,
-        sceneIds: [targetScene.id],
-        dialogueCount: 0,
-      } satisfies CharacterEntry)
-    })
-
-    lucBessonProfile.locationOverrides.forEach((override) => {
-      const entryId = slugify(override.name)
-      const existingIndex = nextLocations.findIndex((entry) => entry.id === entryId)
-
-      if (existingIndex >= 0) {
-        const current = nextLocations[existingIndex]
-        nextLocations[existingIndex] = {
-          ...current,
-          description: mergeProfileText(current.description, override.description),
-          appearancePrompt: mergeProfileText(current.appearancePrompt, override.appearancePrompt),
-          sceneIds: current.sceneIds.includes(targetScene.id) ? current.sceneIds : [...current.sceneIds, targetScene.id],
-        }
-        return
-      }
-
-      nextLocations.push({
-        id: entryId,
-        name: override.name,
-        fullHeading: override.name,
-        intExt: "INT",
-        timeOfDay: "",
-        description: override.description,
-        referenceImages: [],
-        canonicalImageId: null,
-        generatedImageUrl: null,
-        imageBlobKey: null,
-        appearancePrompt: override.appearancePrompt,
-        sceneIds: [targetScene.id],
-      } satisfies LocationEntry)
-    })
-
-    return {
-      characters: nextCharacters,
-      locations: nextLocations,
-    }
-  })
-
-  if (lucBessonProfile.stylePrompt.trim()) {
-    setProjectStyle(lucBessonProfile.stylePrompt.trim())
-  }
-
-  if (lucBessonProfile.directorVisionPrompt.trim()) {
-    updateDirectorVision(lucBessonProfile.directorVisionPrompt.trim())
-  }
-
-  replaceSceneShots(
-    targetScene.id,
-    lucBessonProfile.sceneText.trim() || selectedSceneContext || targetScene.title,
-    targetScene.blockIds,
-    lucBessonProfile.shots.map((shot) => ({
-      label: shot.label,
-      type: "image" as const,
-      duration: 3200,
-      notes: shot.refReason,
-      shotSize: "",
-      cameraMotion: "",
-      caption: shot.visualDescription,
-      directorNote: shot.directorNote,
-      cameraNote: shot.cameraNote,
-      videoPrompt: "",
-      imagePrompt: shot.imagePrompt,
-      visualDescription: shot.visualDescription,
-    })),
-  )
-}
-
-function formatSummaryTime(ms: number): string {
-  const totalSeconds = Math.max(0, ms) / 1000
-  const hours = Math.floor(totalSeconds / 3600)
-  const minutes = Math.floor((totalSeconds % 3600) / 60)
-  const seconds = Math.floor(totalSeconds % 60)
-  const tenths = Math.floor((totalSeconds * 10) % 10)
-
-  if (hours > 0) {
-    return `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${tenths}`
-  }
-
-  return `${String(minutes).padStart(2, "0")}:${String(seconds).padStart(2, "0")}.${tenths}`
-}
-
-// ── Inline Editable Components ──────────────────────────────────
-
-function InlineSelect({ value, options, onChange }: { value: string; options: readonly string[]; onChange: (v: string) => void }) {
-  const [open, setOpen] = useState(false)
-  if (!open) {
-    return (
-      <button type="button" onClick={() => setOpen(true)} className="cursor-pointer rounded bg-transparent px-0.5 text-left hover:bg-white/5 transition-colors">
-        {value || options[0]}
-      </button>
-    )
-  }
-  return (
-    <select
-      autoFocus
-      value={value}
-      onChange={(e) => { onChange(e.target.value); setOpen(false) }}
-      onBlur={() => setOpen(false)}
-      className="rounded border border-white/10 bg-white/5 px-1 py-0.5 text-[10px] uppercase text-[#ECE5D8] outline-none"
-    >
-      {options.map((opt) => <option key={opt} value={opt} className="bg-[#1a1d24] text-white">{opt}</option>)}
-    </select>
-  )
-}
-
-function InlineDuration({ value, onChange }: { value: string; onChange: (ms: number) => void }) {
-  const [editing, setEditing] = useState(false)
-  const numericVal = parseFloat(value) || 0
-  const inputRef = useRef<HTMLInputElement>(null)
-
-  useEffect(() => { if (editing) inputRef.current?.focus() }, [editing])
-
-  if (!editing) {
-    return (
-      <button type="button" onClick={() => setEditing(true)} className="cursor-pointer rounded bg-transparent px-0.5 hover:bg-white/5 transition-colors">
-        {value}
-      </button>
-    )
-  }
-  return (
-    <input
-      ref={inputRef}
-      type="number"
-      step="0.1"
-      min="0.5"
-      max="30"
-      defaultValue={numericVal.toFixed(1)}
-      onBlur={(e) => { onChange(parseFloat(e.target.value) * 1000); setEditing(false) }}
-      onKeyDown={(e) => { if (e.key === "Enter") { onChange(parseFloat((e.target as HTMLInputElement).value) * 1000); setEditing(false) } }}
-      className="w-12 rounded border border-white/10 bg-white/5 px-1 py-0.5 text-[10px] text-[#B9AEA0] outline-none"
-    />
-  )
-}
-
-function InlineText({
-  value,
-  onChange,
-  placeholder,
-  multiline,
-  className,
-}: {
-  value: string
-  onChange: (v: string) => void
-  placeholder?: string
-  multiline?: boolean
-  className?: string
-}) {
-  const [editing, setEditing] = useState(false)
-  const ref = useRef<HTMLTextAreaElement | HTMLInputElement>(null)
-
-  useEffect(() => { if (editing) ref.current?.focus() }, [editing])
-
-  if (!editing) {
-    return (
-      <button type="button" onClick={() => setEditing(true)} className={`w-full cursor-pointer truncate rounded bg-transparent px-0.5 text-left transition-colors hover:bg-white/5 ${className || ""}`}>
-        {value || <span className="text-white/20">{placeholder}</span>}
-      </button>
-    )
-  }
-  if (multiline) {
-    return (
-      <textarea
-        ref={ref as React.RefObject<HTMLTextAreaElement>}
-        rows={2}
-        defaultValue={value}
-        placeholder={placeholder}
-        onBlur={(e) => { onChange(e.target.value); setEditing(false) }}
-        className={`w-full resize-none rounded border border-white/10 bg-white/5 px-2 py-1 text-inherit outline-none placeholder:text-white/20 ${className || ""}`}
-      />
-    )
-  }
-  return (
-    <input
-      ref={ref as React.RefObject<HTMLInputElement>}
-      type="text"
-      defaultValue={value}
-      placeholder={placeholder}
-      onBlur={(e) => { onChange(e.target.value); setEditing(false) }}
-      onKeyDown={(e) => { if (e.key === "Enter") { onChange((e.target as HTMLInputElement).value); setEditing(false) } }}
-      className={`w-full rounded border border-white/10 bg-white/5 px-2 py-1 text-inherit outline-none placeholder:text-white/20 ${className || ""}`}
-    />
-  )
-}
-
-function sanitizeDirectorAssistantText(value: string): string {
-  return value
-    .split(/\r?\n/)
-    .map((line) => line.trim().replace(/^[-*•]\s+/, "").replace(/^\d+\.\s+/, ""))
-    .filter(Boolean)
-    .slice(0, DIRECTOR_ASSISTANT_MAX_LINES)
-    .join("\n")
-}
-
-function mergeDirectorNotes(existing: string, addition: string): string {
-  const current = existing.trim()
-  const next = addition.trim()
-
-  if (!next) return current
-  if (!current) return next
-  if (current.includes(next)) return current
-
-  return `${current}\n${next}`
-}
-
-async function readStreamedText(response: Response): Promise<string> {
-  if (!response.body) {
-    return await response.text()
-  }
-
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let fullText = ""
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    fullText += decoder.decode(value, { stream: true })
-  }
-
-  fullText += decoder.decode()
-  return fullText
-}
-
-function buildSceneContextText(sceneId: string | null, scenes: ReturnType<typeof useScenesStore.getState>["scenes"], scriptBlocks: ReturnType<typeof useScriptStore.getState>["blocks"]): string {
-  if (!sceneId) return ""
-
-  const scene = scenes.find((entry) => entry.id === sceneId)
-  if (!scene) return ""
-
-  const excerpt = scene.blockIds
-    .slice(0, 6)
-    .map((blockId) => scriptBlocks.find((block) => block.id === blockId)?.text?.trim())
-    .filter(Boolean)
-    .join(" ")
-    .slice(0, 500)
-
-  return [
-    `Scene: ${scene.title}`,
-    excerpt ? `Excerpt: ${excerpt}` : "",
-  ].filter(Boolean).join("\n")
-}
-
-function DebouncedTextarea({
-  value,
-  onCommit,
-  placeholder,
-  rows = 3,
-  className,
-  autoFocusRequested = false,
-  dataFocusId,
-  autoGrow = false,
-}: {
-  value: string
-  onCommit: (value: string) => void
-  placeholder?: string
-  rows?: number
-  className?: string
-  autoFocusRequested?: boolean
-  dataFocusId?: string
-  autoGrow?: boolean
-}) {
-  const [draft, setDraft] = useState(value)
-  const [isEditing, setIsEditing] = useState(false)
-  const lastCommittedRef = useRef(value)
-  const timerRef = useRef<number | null>(null)
-  const textareaRef = useRef<HTMLTextAreaElement>(null)
-  const draftRef = useRef(value)
-  const onCommitRef = useRef(onCommit)
-
-  useEffect(() => {
-    draftRef.current = draft
-  }, [draft])
-
-  useEffect(() => {
-    onCommitRef.current = onCommit
-  }, [onCommit])
-
-  const scheduleCommit = useCallback((nextValue: string) => {
-    if (timerRef.current !== null) {
-      window.clearTimeout(timerRef.current)
-    }
-
-    timerRef.current = window.setTimeout(() => {
-      lastCommittedRef.current = nextValue
-      onCommit(nextValue)
-      timerRef.current = null
-    }, DIRECTOR_UPDATE_DEBOUNCE_MS)
-  }, [onCommit])
-
-  const flush = useCallback(() => {
-    if (draft === lastCommittedRef.current) return
-    if (timerRef.current !== null) {
-      window.clearTimeout(timerRef.current)
-      timerRef.current = null
-    }
-    lastCommittedRef.current = draft
-    onCommit(draft)
-  }, [draft, onCommit])
-
-  useEffect(() => {
-    if (isEditing) return
-    setDraft(value)
-    draftRef.current = value
-    lastCommittedRef.current = value
-  }, [isEditing, value])
-
-  useEffect(() => {
-    return () => {
-      if (timerRef.current !== null) {
-        window.clearTimeout(timerRef.current)
-        timerRef.current = null
-      }
-
-      if (draftRef.current !== lastCommittedRef.current) {
-        onCommitRef.current(draftRef.current)
-      }
-    }
-  }, [])
-
-  useEffect(() => {
-    if (!autoFocusRequested) return
-
-    const node = textareaRef.current
-    if (!node) return
-
-    const rafId = window.requestAnimationFrame(() => {
-      node.focus()
-      const length = node.value.length
-      node.setSelectionRange(length, length)
-    })
-
-    return () => window.cancelAnimationFrame(rafId)
-  }, [autoFocusRequested])
-
-  useEffect(() => {
-    const node = textareaRef.current
-    if (!node) return
-
-    if (!autoGrow) {
-      node.style.height = ""
-      return
-    }
-
-    node.style.height = "0px"
-    node.style.height = `${node.scrollHeight}px`
-  }, [autoGrow, draft, isEditing, value])
-
-  return (
-    <textarea
-      ref={textareaRef}
-      rows={rows}
-      value={isEditing ? draft : value}
-      placeholder={placeholder}
-      data-focus-id={dataFocusId}
-      onFocus={() => {
-        if (isEditing) return
-        setDraft(value)
-        lastCommittedRef.current = value
-        setIsEditing(true)
-      }}
-      onChange={(event) => {
-        const nextValue = event.target.value
-        setDraft(nextValue)
-        scheduleCommit(nextValue)
-      }}
-      onBlur={() => {
-        flush()
-        setIsEditing(false)
-      }}
-      className={className}
-    />
-  )
-}
-
-function DirectorFieldVisibilityControl({
-  value,
-  onChange,
-}: {
-  value: DirectorFieldVisibility
-  onChange: (value: DirectorFieldVisibility) => void
-}) {
-  const [open, setOpen] = useState(false)
-  const containerRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!open) return
-
-    const handlePointerDown = (event: PointerEvent) => {
-      if (!containerRef.current?.contains(event.target as Node)) {
-        setOpen(false)
-      }
-    }
-
-    window.addEventListener("pointerdown", handlePointerDown)
-    return () => window.removeEventListener("pointerdown", handlePointerDown)
-  }, [open])
-
-  const activeOption = DIRECTOR_FIELD_VISIBILITY_OPTIONS.find((option) => option.value === value) ?? DIRECTOR_FIELD_VISIBILITY_OPTIONS[0]
-
-  return (
-    <div ref={containerRef} className="relative">
-      <button
-        type="button"
-        onClick={() => setOpen((current) => !current)}
-        className="flex h-9 items-center gap-2 rounded-xl border border-white/8 bg-white/4 px-3 text-left text-[#D7CDC1] transition-colors hover:bg-white/6"
-        aria-haspopup="menu"
-        aria-expanded={open}
-      >
-        <List size={14} className="text-[#9FA4AE]" />
-        <div className="leading-none">
-          <p className="text-[9px] uppercase tracking-[0.18em] text-[#8D919B]">Fields</p>
-          <p className="mt-1 text-[11px] text-[#E7E3DC]">{activeOption.label}</p>
-        </div>
-      </button>
-
-      {open ? (
-        <div className="absolute right-0 top-[calc(100%+8px)] z-20 w-64 overflow-hidden rounded-2xl border border-white/8 bg-[#171A20]/96 p-1.5 shadow-[0_24px_60px_rgba(0,0,0,0.35)] backdrop-blur-xl">
-          {DIRECTOR_FIELD_VISIBILITY_OPTIONS.map((option) => {
-            const isActive = option.value === value
-            return (
-              <button
-                key={option.value}
-                type="button"
-                onClick={() => {
-                  onChange(option.value)
-                  setOpen(false)
-                }}
-                className={`flex w-full items-start gap-3 rounded-xl px-3 py-2.5 text-left transition-colors ${isActive ? "bg-white/7 text-[#E7E3DC]" : "text-[#D7CDC1] hover:bg-white/5"}`}
-              >
-                <span className={`mt-0.5 h-2.5 w-2.5 shrink-0 rounded-full ${isActive ? "bg-white/60" : "bg-white/12"}`} />
-                <span className="min-w-0">
-                  <span className="block text-[11px] uppercase tracking-[0.16em]">{option.label}</span>
-                  <span className="mt-1 block text-[11px] normal-case tracking-normal text-[#8D919B]">{option.description}</span>
-                </span>
-              </button>
-            )
-          })}
-        </div>
-      ) : null}
-    </div>
-  )
-}
-
-function DirectorShotCard({
-  shot,
-  index,
-  selected,
-  canDuplicate,
-  isEnhancing,
-  autoFocusAction,
-  showThumbnail,
-  fieldVisibility,
-  cardRef,
-  onSelect,
-  onUpdate,
-  onEnhance,
-  onBuild,
-  isBuilding,
-  bibleChars,
-  bibleLocs,
-  bibleProps,
-  onOpenBible,
-  onSmartScan,
-  isScanning,
-  onGenerate,
-  isGenerating,
-  onOpenStudio,
-  onDelete,
-  onDuplicate,
-}: {
-  shot: TimelineShot
-  index: number
-  selected: boolean
-  canDuplicate: boolean
-  isEnhancing: boolean
-  isBuilding: boolean
-  isScanning: boolean
-  autoFocusAction: boolean
-  showThumbnail: boolean
-  fieldVisibility: DirectorFieldVisibility
-  bibleChars: CharacterEntry[]
-  bibleLocs: LocationEntry[]
-  bibleProps: PropEntry[]
-  cardRef?: (node: HTMLElement | null) => void
-  onSelect: () => void
-  onUpdate: (patch: Partial<TimelineShot>) => void
-  onEnhance: () => void
-  onBuild: () => void
-  onOpenBible: () => void
-  onSmartScan: () => void
-  onGenerate: () => void
-  isGenerating: boolean
-  onOpenStudio: () => void
-  onDelete: () => void
-  onDuplicate: () => void
-}) {
-  const previewSrc = shot.thumbnailUrl || shot.svg || null
-  const [promptExpanded, setPromptExpanded] = useState(false)
-  const [showFullPrompt, setShowFullPrompt] = useState(false)
-  const showAction = fieldVisibility === "all" || fieldVisibility === "action"
-  const showDirector = fieldVisibility === "all" || fieldVisibility === "director"
-  const showCamera = fieldVisibility === "all" || fieldVisibility === "camera"
-  const isSingleFieldMode = fieldVisibility !== "all"
-  const isSplitCompactFields = !showThumbnail && !isSingleFieldMode
-  const singleFieldConfig = fieldVisibility === "action"
-    ? {
-        label: "Action",
-        value: shot.caption,
-        placeholder: "Describe the shot action...",
-        textClassName: "text-[#ECE5D8]",
-        onCommit: (value: string) => onUpdate({ caption: value }),
-        autoFocusRequested: autoFocusAction,
-        dataFocusId: `director-action-${shot.id}`,
-      }
-    : fieldVisibility === "director"
-      ? {
-          label: "Director",
-          value: shot.directorNote,
-          placeholder: "Director notes...",
-          textClassName: "text-[#D8D0C3]",
-          onCommit: (value: string) => onUpdate({ directorNote: value }),
-          autoFocusRequested: false,
-          dataFocusId: undefined,
-        }
-      : {
-          label: "Camera",
-          value: shot.cameraNote,
-          placeholder: "DP notes...",
-          textClassName: "text-[#D8D0C3]",
-          onCommit: (value: string) => onUpdate({ cameraNote: value }),
-          autoFocusRequested: false,
-          dataFocusId: undefined,
-        }
-  const previewPanel = showThumbnail ? (
-    <div
-      className={`relative overflow-hidden rounded-xl border border-white/8 bg-[#0E1014] ${previewSrc ? "cursor-pointer" : ""} ${isSingleFieldMode ? "h-full aspect-video shrink-0" : "w-72 shrink-0 self-start aspect-video"}`}
-      onClick={(e) => { if (previewSrc) { e.stopPropagation(); onOpenStudio() } }}
-    >
-      {previewSrc ? (
-        <Image
-          src={previewSrc}
-          alt=""
-          fill
-          unoptimized
-          className="object-cover transition-transform hover:scale-105"
-        />
-      ) : (
-        <div className="flex h-full w-full items-center justify-center bg-[radial-gradient(circle_at_top,rgba(255,255,255,0.05),transparent_58%),linear-gradient(180deg,#151922_0%,#0E1014_100%)] px-3 text-center">
-          <div>
-            <p className="text-[9px] uppercase tracking-[0.16em] text-[#8D919B]">Shot {String(index + 1).padStart(2, "0")}</p>
-            <p className="mt-1 text-[10px] text-[#C3B8AA]">No thumbnail</p>
-          </div>
-        </div>
-      )}
-    </div>
-  ) : null
-
-  return (
-    <article
-      ref={cardRef}
-      data-director-shot-id={shot.id}
-      className={`rounded-[18px] border p-3 text-[#E5E0DB] transition-[border-color,background,box-shadow] duration-100 ease-out ${selected ? "border-[#DCC7A3]/45 bg-[linear-gradient(180deg,rgba(255,255,255,0.07)_0%,rgba(255,255,255,0.04)_100%)] shadow-[0_0_0_1px_rgba(220,199,163,0.16),0_0_0_6px_rgba(212,168,83,0.08),0_24px_52px_rgba(0,0,0,0.24)]" : "border-white/8 bg-white/3 shadow-[0_20px_45px_rgba(0,0,0,0.18)] hover:border-white/10 hover:bg-white/4 hover:shadow-[0_22px_48px_rgba(0,0,0,0.2)]"}`}
-      onClick={onSelect}
-    >
-      <div className="flex items-center justify-between gap-3">
-        <p className={`text-[10px] uppercase tracking-[0.18em] ${selected ? "text-[#E4D0AC]" : "text-[#8D919B]"}`}>Shot {String(index + 1).padStart(2, "0")}</p>
-
-        <div className="flex items-center gap-1">
-          <button
-            type="button"
-            onClick={(event) => { event.stopPropagation(); onEnhance() }}
-            disabled={isEnhancing || !shot.caption.trim()}
-            className="flex h-8 items-center gap-1 rounded-md border border-white/10 bg-white/4 px-2 text-[10px] uppercase tracking-[0.14em] text-[#D7CDC1] transition-colors hover:bg-white/7 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {isEnhancing ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />}
-            Enhance
-          </button>
-          <button
-            type="button"
-            onClick={(event) => { event.stopPropagation(); onBuild() }}
-            disabled={isBuilding || !shot.caption.trim()}
-            className="flex h-8 items-center gap-1 rounded-md border border-[#D4A853]/20 bg-[#D4A853]/8 px-2 text-[10px] uppercase tracking-[0.14em] text-[#D4A853] transition-colors hover:bg-[#D4A853]/15 disabled:cursor-not-allowed disabled:opacity-40"
-          >
-            {isBuilding ? <Loader2 size={12} className="animate-spin" /> : <Wand2 size={12} />}
-            Build
-          </button>
-          <button
-            type="button"
-            onClick={(event) => { event.stopPropagation(); onDuplicate() }}
-            disabled={!canDuplicate}
-            className="flex h-8 w-8 items-center justify-center rounded-md border border-white/10 bg-white/4 text-white/55 transition-colors hover:bg-white/7 hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
-            aria-label="Duplicate shot"
-          >
-            <Copy size={13} />
-          </button>
-          <button
-            type="button"
-            onClick={(event) => { event.stopPropagation(); onDelete() }}
-            className="flex h-8 w-8 items-center justify-center rounded-md border border-red-400/20 bg-red-400/6 text-red-200/80 transition-colors hover:bg-red-400/10 hover:text-red-100"
-            aria-label="Delete shot"
-          >
-            <Trash2 size={13} />
-          </button>
-        </div>
-      </div>
-
-      {isSingleFieldMode ? (
-        <div className={`mt-3 flex h-40 items-stretch ${showThumbnail ? "gap-4" : "gap-0"}`}>
-          <div className="min-w-0 flex-1 rounded-2xl border border-white/8 bg-white/3 px-3 py-3">
-            <div className="mb-2 flex items-center justify-between gap-3">
-              <span className="text-[11px] uppercase tracking-[0.18em] text-[#8D919B]">{singleFieldConfig.label}</span>
-            </div>
-            <DebouncedTextarea
-              value={singleFieldConfig.value}
-              onCommit={singleFieldConfig.onCommit}
-              placeholder={singleFieldConfig.placeholder}
-              rows={6}
-              autoFocusRequested={singleFieldConfig.autoFocusRequested}
-              dataFocusId={singleFieldConfig.dataFocusId}
-              className={`h-full min-h-0 w-full resize-none overflow-y-auto bg-transparent px-0 py-0 text-[14px] leading-6 outline-none placeholder:text-white/20 ${singleFieldConfig.textClassName}`}
-            />
-          </div>
-
-          {previewPanel}
-        </div>
-      ) : (
-        <div className={`mt-2.5 flex items-start ${showThumbnail ? "gap-4" : "gap-0"}`}>
-          <div className="min-w-0 flex-1">
-            <div className="flex flex-col gap-1.5">
-            {!isSingleFieldMode && showAction ? (
-            <div className={`flex gap-3 rounded-xl border px-3 transition-[border-color,background-color] duration-100 ease-out ${selected ? "border-[#DCC7A3]/22 bg-white/5" : "border-white/8 bg-white/3"} ${isSplitCompactFields ? "items-start py-2" : "items-center py-1.5 min-h-10"}`}>
-              <span className={`w-20 shrink-0 text-[11px] uppercase tracking-[0.18em] text-[#8D919B] ${isSplitCompactFields ? "pt-1" : ""}`}>Action</span>
-              <DebouncedTextarea
-                value={shot.caption}
-                onCommit={(value) => onUpdate({ caption: value })}
-                placeholder="Describe the shot action..."
-                rows={1}
-                autoFocusRequested={autoFocusAction}
-                dataFocusId={`director-action-${shot.id}`}
-                autoGrow={isSplitCompactFields}
-                className={`w-full bg-transparent px-0 py-0 text-[13px] leading-5 text-[#ECE5D8] outline-none placeholder:text-white/20 ${isSplitCompactFields ? "min-h-5 resize-none overflow-hidden" : "h-6 resize-none overflow-hidden"}`}
-              />
-            </div>
-            ) : null}
-
-            {!isSingleFieldMode && showDirector ? (
-            <div className={`flex gap-3 rounded-xl border px-3 transition-[border-color,background-color] duration-100 ease-out ${selected ? "border-[#DCC7A3]/22 bg-white/5" : "border-white/8 bg-white/3"} ${isSplitCompactFields ? "items-start py-2" : "items-center py-1.5 min-h-10"}`}>
-              <span className={`w-20 shrink-0 text-[11px] uppercase tracking-[0.18em] text-[#8D919B] ${isSplitCompactFields ? "pt-1" : ""}`}>Director</span>
-              <DebouncedTextarea
-                value={shot.directorNote}
-                onCommit={(value) => onUpdate({ directorNote: value })}
-                placeholder="Director notes..."
-                rows={1}
-                autoGrow={isSplitCompactFields}
-                className={`w-full bg-transparent px-0 py-0 text-[13px] leading-5 text-[#D8D0C3] outline-none placeholder:text-white/20 ${isSplitCompactFields ? "min-h-5 resize-none overflow-hidden" : "h-6 resize-none overflow-hidden"}`}
-              />
-            </div>
-            ) : null}
-
-            {!isSingleFieldMode && showCamera ? (
-            <div className={`flex gap-3 rounded-xl border px-3 transition-[border-color,background-color] duration-100 ease-out ${selected ? "border-[#DCC7A3]/22 bg-white/5" : "border-white/8 bg-white/3"} ${isSplitCompactFields ? "items-start py-2" : "items-center py-1.5 min-h-10"}`}>
-              <span className={`w-20 shrink-0 text-[11px] uppercase tracking-[0.18em] text-[#8D919B] ${isSplitCompactFields ? "pt-1" : ""}`}>Camera</span>
-              <DebouncedTextarea
-                value={shot.cameraNote}
-                onCommit={(value) => onUpdate({ cameraNote: value })}
-                placeholder="DP notes..."
-                rows={1}
-                autoGrow={isSplitCompactFields}
-                className={`w-full bg-transparent px-0 py-0 text-[13px] leading-5 text-[#D8D0C3] outline-none placeholder:text-white/20 ${isSplitCompactFields ? "min-h-5 resize-none overflow-hidden" : "h-6 resize-none overflow-hidden"}`}
-              />
-            </div>
-            ) : null}
-
-            {/* ── Bible pills: toggle entities for this shot ── */}
-            {!isSingleFieldMode && (() => {
-              const excluded = new Set(shot.excludedBibleIds ?? [])
-              const allEntries = [
-                ...bibleChars.map((c) => ({ id: `char-${c.id}`, label: c.name, type: "char" as const, imageUrl: c.generatedPortraitUrl, prompt: c.appearancePrompt })),
-                ...bibleLocs.map((l) => ({ id: `loc-${l.id}`, label: l.name, type: "loc" as const, imageUrl: l.generatedImageUrl, prompt: l.appearancePrompt })),
-                ...bibleProps.map((p) => ({ id: `prop-${p.id}`, label: p.name, type: "prop" as const, imageUrl: p.generatedImageUrl, prompt: p.appearancePrompt })),
-              ]
-              if (allEntries.length === 0) return null
-              return (
-                <div className="mt-1.5 flex flex-wrap items-center gap-1">
-                  {allEntries.map((entry) => {
-                    const isOff = excluded.has(entry.id)
-                    return (
-                      <div key={entry.id} className="group/pill relative">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation()
-                            const next = new Set(excluded)
-                            if (isOff) next.delete(entry.id)
-                            else next.add(entry.id)
-                            onUpdate({ excludedBibleIds: Array.from(next) })
-                          }}
-                          className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] transition-colors ${
-                            isOff
-                              ? "bg-white/3 text-white/20 line-through"
-                              : entry.type === "char" ? "bg-[#D4A853]/10 text-[#D4A853]/80"
-                              : entry.type === "loc" ? "bg-emerald-500/10 text-emerald-400/70"
-                              : "bg-sky-500/10 text-sky-400/70"
-                          }`}
-                        >
-                          {entry.imageUrl && <span className="inline-block h-1.5 w-1.5 rounded-full bg-current opacity-60" />}
-                          {entry.label}
-                        </button>
-                        {/* Hover preview */}
-                        <div className="pointer-events-none absolute bottom-full left-1/2 z-50 mb-1.5 -translate-x-1/2 rounded-lg border border-white/10 bg-black/90 p-1.5 opacity-0 shadow-xl backdrop-blur-xl transition-opacity group-hover/pill:opacity-100">
-                          {entry.imageUrl ? (
-                            <img src={entry.imageUrl} alt={entry.label} className="h-16 w-16 rounded-md object-cover" />
-                          ) : (
-                            <div className="flex h-16 w-16 items-center justify-center rounded-md bg-white/5 text-[8px] text-white/30">No image</div>
-                          )}
-                          <p className="mt-1 max-w-[120px] truncate text-center text-[8px] text-white/50">{entry.prompt || entry.label}</p>
-                        </div>
-                      </div>
-                    )
-                  })}
-                  {/* Smart Scan — find props from shot text */}
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); onSmartScan() }}
-                    disabled={isScanning || !shot.caption.trim()}
-                    className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/8 text-white/25 transition-colors hover:bg-[#D4A853]/10 hover:text-[#D4A853]/60 disabled:opacity-30"
-                    title="Smart Scan — найти пропсы в тексте шота"
-                  >
-                    {isScanning ? <Loader2 size={9} className="animate-spin" /> : <Sparkles size={9} />}
-                  </button>
-                  {/* Open Bible for this scene */}
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); onOpenBible() }}
-                    className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/8 text-white/25 transition-colors hover:bg-white/8 hover:text-white/50"
-                    title="Открыть библию сцены"
-                  >
-                    <BookOpen size={9} />
-                  </button>
-                </div>
-              )
-            })()}
-            </div>
-          </div>
-
-          {previewPanel}
-        </div>
-      )}
-
-      {/* ── Expandable prompt block ── */}
-      {!isSingleFieldMode && shot.imagePrompt && (
-        <div className="mt-1.5">
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); setPromptExpanded((v) => !v) }}
-            className="flex w-full items-center gap-1.5 rounded-lg px-2 py-1 text-[9px] uppercase tracking-[0.12em] text-white/25 transition-colors hover:bg-white/3 hover:text-white/40"
-          >
-            <ChevronRight size={10} className={`transition-transform ${promptExpanded ? "rotate-90" : ""}`} />
-            Prompt
-            <span className="ml-auto text-[8px] tabular-nums text-white/15">{shot.imagePrompt.length} chars</span>
-          </button>
-          {promptExpanded && (() => {
-            const fullPrompt = buildImagePrompt(shot, bibleChars, bibleLocs, useBoardStore.getState().projectStyle, bibleProps)
-            const displayPrompt = showFullPrompt ? fullPrompt : shot.imagePrompt
-            return (
-              <div className="mt-1 rounded-xl border border-white/6 bg-white/2 px-3 py-2">
-                {showFullPrompt ? (
-                  <DebouncedTextarea
-                    value={fullPrompt}
-                    onCommit={(value) => onUpdate({ imagePrompt: value })}
-                    rows={4}
-                    autoGrow
-                    className="w-full resize-none bg-transparent font-[system-ui] text-[11px] leading-[1.6] text-white/60 outline-none placeholder:text-white/20"
-                    placeholder="Full prompt..."
-                  />
-                ) : (
-                  <DebouncedTextarea
-                    value={shot.imagePrompt}
-                    onCommit={(value) => onUpdate({ imagePrompt: value })}
-                    rows={3}
-                    autoGrow
-                    className="w-full resize-none bg-transparent font-[system-ui] text-[11px] leading-[1.6] text-white/50 outline-none placeholder:text-white/20"
-                    placeholder="Image prompt..."
-                  />
-                )}
-                <div className="mt-2 flex items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); onGenerate() }}
-                    disabled={isGenerating}
-                    className="flex h-7 items-center gap-1 rounded-md bg-[#D4A853]/15 px-3 text-[9px] uppercase tracking-[0.12em] text-[#D4A853] transition-colors hover:bg-[#D4A853]/25 disabled:opacity-40"
-                  >
-                    {isGenerating ? <Loader2 size={10} className="animate-spin" /> : <Wand2 size={10} />}
-                    Generate
-                  </button>
-                  <button
-                    type="button"
-                    onClick={(e) => { e.stopPropagation(); setShowFullPrompt((v) => !v) }}
-                    className={`flex h-7 items-center rounded-md px-2 text-[9px] uppercase tracking-[0.12em] transition-colors ${showFullPrompt ? "bg-white/8 text-white/50" : "text-white/20 hover:text-white/40"}`}
-                  >
-                    {showFullPrompt ? "Base" : "Full"}
-                  </button>
-                  {showFullPrompt && (
-                    <button
-                      type="button"
-                      onClick={(e) => { e.stopPropagation(); onUpdate({ imagePrompt: fullPrompt, bakedPrompt: true }); setShowFullPrompt(false) }}
-                      className="flex h-7 items-center rounded-md px-2 text-[9px] uppercase tracking-[0.12em] text-white/20 transition-colors hover:text-white/40"
-                    >
-                      Bake
-                    </button>
-                  )}
-                  {shot.videoPrompt && (
-                    <span className="text-[8px] text-white/15">+ video prompt</span>
-                  )}
-                  <span className="ml-auto text-[8px] tabular-nums text-white/15">{displayPrompt.length} chars</span>
-                </div>
-              </div>
-            )
-          })()}
-        </div>
-      )}
-    </article>
-  )
-}
-
-// ── AI Image Generation ─────────────────────────────────────────
-
-async function generateShotImage(
-  shot: TimelineShot,
-): Promise<{ objectUrl: string; blobKey: string | null }> {
-  const { characters, locations, props: bibleProps } = useBibleStore.getState()
-  const { selectedImageGenModel, projectStyle } = useBoardStore.getState()
-  const selectedModel = selectedImageGenModel || "nano-banana-2"
-  const start = Date.now()
-  const group = `generate-${shot.id}`
-  const references = getShotGenerationReferenceImages(shot, characters, locations)
-  const referenceImages = await convertReferenceImagesToDataUrls(references)
-  const { characters: mentionedChars, location } = getReferencedBibleEntries(shot, characters, locations, bibleProps)
-  const charRefs = mentionedChars
-    .map((character) => `${character.name}: ${character.appearancePrompt || character.description || "no description"}`)
-    .join("\n")
-  const locRef = location?.appearancePrompt || location?.description || location?.name || ""
-
-  devlog.image("image_start", `Generate: ${shot.label}`, "", {
-    shotId: shot.id,
-    shotSize: shot.shotSize,
-    model: selectedModel,
-  }, group)
-
-  const referenceInstruction = referenceImages.length > 0
-    ? "Use the provided reference images as hard visual anchors. Preserve the exact face identity, hair, costume silhouette, proportions, and environment design from those references. Do not redesign recurring characters or locations."
-    : ""
-  const prompt = [
-    buildImagePrompt(shot, characters, locations, projectStyle, bibleProps),
-    referenceInstruction,
-  ].filter(Boolean).join("\n\n")
-
-  devlog.image("image_prompt", "Image prompt", prompt, {
-    promptLength: prompt.length,
-  }, group)
-
-  devlog.image("image_bible_inject", "Bible data injected", `Characters: ${charRefs || "none"}\nLocation: ${locRef || "none"}`, {
-    characterCount: mentionedChars.length,
-    hasLocation: !!locRef,
-  }, group)
-
-  devlog.image("image_style_inject", "Style", projectStyle, {}, group)
-
-  let apiUrl: string
-  let body: { prompt: string; model?: string; referenceImages?: string[] }
-
-  if (selectedModel === "gpt-image") {
-    apiUrl = "/api/gpt-image"
-    body = { prompt, referenceImages }
-  } else {
-    apiUrl = "/api/nano-banana"
-    body = { prompt, model: selectedModel, referenceImages }
-  }
-
-  devlog.image("image_api_call", `API call: ${apiUrl}`, JSON.stringify(body, null, 2), {
-    model: selectedModel,
-    endpoint: apiUrl,
-  }, group)
-
-  try {
-    const response = await fetch(apiUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    })
-
-    if (!response.ok) {
-      const err = await response.json().catch(() => ({}))
-      throw new Error((err as { error?: string }).error || `Generation failed: ${response.status}`)
-    }
-
-    const contentType = response.headers.get("content-type") || ""
-    if (contentType.includes("application/json")) {
-      const err = await response.json()
-      throw new Error((err as { error?: string }).error || "API returned JSON instead of image")
-    }
-
-    const blob = await response.blob()
-    if (blob.size < 1000) {
-      throw new Error(`Image too small (${blob.size} bytes), likely an error response`)
-    }
-    const blobKey = `shot-thumb-${shot.id}-${Date.now()}`
-    const persisted = await trySaveBlob(blobKey, blob)
-
-    const projectId = useProjectsStore.getState().activeProjectId || "global"
-    const objectUrl = URL.createObjectURL(blob)
-
-    useLibraryStore.getState().addFile({
-      id: blobKey,
-      name: `${shot.label || "Shot"} — generated.png`,
-      type: "image",
-      mimeType: "image/png",
-      size: blob.size,
-      url: objectUrl,
-      thumbnailUrl: objectUrl,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-      tags: ["generated", "storyboard"],
-      projectId,
-      folder: "/storyboard",
-      origin: "generated",
-    })
-
-    devlog.image("image_result", `Generated in ${Date.now() - start}ms`, "", {
-      timing: Date.now() - start,
-      blobSize: blob.size,
-      model: selectedModel,
-      persisted,
-    }, group)
-
-    if (!persisted) {
-      devlog.warn("Image cache unavailable", "The image was generated, but local blob persistence failed. The preview will work until reload.", {
-        shotId: shot.id,
-        model: selectedModel,
-      })
-    }
-
-    console.log(`[KOZA] Image generated in ${Date.now() - start}ms via ${selectedModel}`)
-
-    return { objectUrl, blobKey: persisted ? blobKey : null }
-  } catch (error) {
-    devlog.image("image_error", "Generation failed", String(error), {
-      shotId: shot.id,
-      model: selectedModel,
-    }, group)
-    throw error
-  }
-}
 
 interface StoryboardPanelProps {
   isOpen: boolean
@@ -1196,12 +136,12 @@ export function StoryboardPanel({
   const [editingShotDraft, setEditingShotDraft] = useState("")
   const [generatingIds, setGeneratingIds] = useState<Set<string>>(new Set())
   const [failedIds, setFailedIds] = useState<Set<string>>(new Set())
-  const [promptLabShotId, setPromptLabShotId] = useState<string | null>(null)
   const [enhancingIds, setEnhancingIds] = useState<Set<string>>(new Set())
   const [buildingPromptIds, setBuildingPromptIds] = useState<Set<string>>(new Set())
   const [scanningIds, setScanningIds] = useState<Set<string>>(new Set())
   const [pendingActionFocusShotId, setPendingActionFocusShotId] = useState<string | null>(null)
   const [isSplitScreen, setIsSplitScreen] = useState(false)
+  // canvasShotId removed — now using useBlockCanvasStore
   const [directorFieldVisibility, setDirectorFieldVisibility] = useState<DirectorFieldVisibility>("all")
   const [scriptFontSize] = useState(16)
   const [breakdownWarning, setBreakdownWarning] = useState<string | null>(null)
@@ -1226,6 +166,21 @@ export function StoryboardPanel({
   const bibleProps = useBibleStore((state) => state.props)
   const updateDirectorVision = useBibleStore((state) => state.updateDirectorVision)
   const [bibleBubbleSceneId, setBibleBubbleSceneId] = useState<string | null>(null)
+
+  // ── Shared: navigate to a shot (selects scene, shot, scrolls script, seeks timeline) ──
+  const navigateToShot = useCallback((shot: TimelineShot) => {
+    if (shot.sceneId) selectScene(shot.sceneId)
+    selectShot(shot.id)
+    if (shot.parentBlockId) {
+      requestScrollToBlock(shot.parentBlockId)
+    }
+    const idx = shots.findIndex((s) => s.id === shot.id)
+    if (idx >= 0) {
+      const startMs = shots.slice(0, idx).reduce((sum, s) => sum + s.duration, 0)
+      useTimelineStore.getState().seekTo(startMs)
+    }
+  }, [shots, selectScene, selectShot, requestScrollToBlock])
+
   const cardScale = 90
   // Sort shots by scene order then by shot order within scene
   const sortedShots = useMemo(() => {
@@ -1311,8 +266,8 @@ export function StoryboardPanel({
   const [editInstruction, setEditInstruction] = useState("")
   const [editingIds, setEditingIds] = useState<Set<string>>(new Set())
   const editInputRef = useRef<HTMLInputElement>(null)
-  const breakdownConfig = useBreakdownConfigStore((s) => s.global)
-  const setBreakdownGlobalConfig = useBreakdownConfigStore((s) => s.setGlobal)
+  const breakdownConfig = {} as Record<string, string>
+  const setBreakdownGlobalConfig = (_config: Record<string, string>) => {}
   const selectedScene = useMemo(() => scenes.find((scene) => scene.id === selectedSceneId) ?? null, [scenes, selectedSceneId])
   const inspectorShots = useMemo(
     () => (selectedSceneId ? shotsBySceneId.get(selectedSceneId) ?? [] : shots),
@@ -1342,11 +297,29 @@ export function StoryboardPanel({
     if (!isExpanded) {
       onToggleExpanded()
       setIsSplitScreen(true)
-      return
+    } else {
+      setIsSplitScreen((current) => !current)
     }
 
-    setIsSplitScreen((current) => !current)
-  }, [isExpanded, onToggleExpanded])
+    // Scroll script to the block at current playhead position
+    const time = useTimelineStore.getState().currentTime
+    if (time > 0) {
+      // Find which block the playhead is on by matching timeline shots
+      const tlShots = useTimelineStore.getState().shots
+      let acc = 0
+      for (const shot of tlShots) {
+        if (time >= acc && time < acc + shot.duration && shot.parentBlockId) {
+          // Find the scene for this block and select it
+          const scene = scenes.find((s) => s.blockIds.includes(shot.parentBlockId!))
+          if (scene) {
+            selectScene(scene.id)
+          }
+          break
+        }
+        acc += shot.duration
+      }
+    }
+  }, [isExpanded, onToggleExpanded, scenes, selectScene])
 
   const startEditingShotField = useCallback((shot: TimelineShot, field: EditableShotField, value: string) => {
     setEditingShotField({ shotId: shot.id, field })
@@ -1370,35 +343,102 @@ export function StoryboardPanel({
     sceneId: string,
     sceneText: string,
     sceneBlockIds: string[],
-    jenkinsShots: Array<{
-      label: string
-      type: "image"
-      duration: number
-      notes: string
-      shotSize?: string
-      cameraMotion?: string
-      caption?: string
-      directorNote?: string
-      cameraNote?: string
-      videoPrompt?: string
-      imagePrompt?: string
-      visualDescription?: string
-    }>,
+    jenkinsShots: JenkinsShot[],
   ) => {
+    // Get scene blocks for placement engine
+    const allBlocks = useScriptStore.getState().blocks
+    const sceneBlocks = sceneBlockIds
+      .map((id) => allBlocks.find((b) => b.id === id))
+      .filter((b) => b != null)
+
+    const existingSceneShots = useTimelineStore.getState().shots.filter((s) => s.sceneId === sceneId)
     const preservedShots = useTimelineStore.getState().shots.filter((shot) => shot.sceneId !== sceneId)
-    const replacementShots = createSceneTimelineShotsFromBreakdown({
+
+    const newBreakdownShots = createSceneTimelineShotsFromBreakdown({
       sceneId,
       sceneText,
       sceneBlockIds,
-    }, jenkinsShots)
+    }, jenkinsShots, sceneBlocks)
 
-    reorderShots([...preservedShots, ...replacementShots])
+    // Merge strategy: update existing shots, add new ones
+    const mergedShots: typeof newBreakdownShots = []
+
+    for (let i = 0; i < newBreakdownShots.length; i++) {
+      const newShot = newBreakdownShots[i]
+      const existingShot = existingSceneShots[i]
+
+      if (existingShot) {
+        // Update existing shot — preserve user edits (thumbnails, locked state, custom refs)
+        mergedShots.push(createTimelineShot({
+          ...existingShot,
+          // Update from breakdown
+          label: newShot.label,
+          shotSize: newShot.shotSize,
+          cameraMotion: newShot.cameraMotion,
+          caption: newShot.caption,
+          directorNote: newShot.directorNote,
+          cameraNote: newShot.cameraNote,
+          imagePrompt: existingShot.locked ? existingShot.imagePrompt : newShot.imagePrompt,
+          videoPrompt: existingShot.locked ? existingShot.videoPrompt : newShot.videoPrompt,
+          visualDescription: newShot.visualDescription,
+          duration: existingShot.locked ? existingShot.duration : newShot.duration,
+          blockRange: newShot.blockRange,
+          sourceText: newShot.sourceText,
+          // Preserve user data
+          thumbnailUrl: existingShot.thumbnailUrl,
+          thumbnailBlobKey: existingShot.thumbnailBlobKey,
+          originalUrl: existingShot.originalUrl,
+          originalBlobKey: existingShot.originalBlobKey,
+          generationHistory: existingShot.generationHistory,
+          activeHistoryIndex: existingShot.activeHistoryIndex,
+          customReferenceUrls: existingShot.customReferenceUrls,
+          excludedBibleIds: existingShot.excludedBibleIds,
+          locked: existingShot.locked,
+          notes: existingShot.notes,
+        }))
+      } else {
+        // New shot from breakdown
+        mergedShots.push(newShot)
+      }
+    }
+
+    // Log merge info
+    const updated = Math.min(existingSceneShots.length, newBreakdownShots.length)
+    const added = Math.max(0, newBreakdownShots.length - existingSceneShots.length)
+    const removed = Math.max(0, existingSceneShots.length - newBreakdownShots.length)
+    console.log(`[KOZA] Breakdown merge: ${updated} updated, ${added} added, ${removed} removed`)
+
+    reorderShots([...preservedShots, ...mergedShots])
     selectScene(sceneId)
     setViewMode("board")
-    setExpandedShotId(replacementShots[0]?.id ?? null)
+    setExpandedShotId(mergedShots[0]?.id ?? null)
     setExpandedSceneShotIds((current) => new Set(current).add(sceneId))
 
-    return replacementShots.length
+    // Auto-generate voice clips using placement engine
+    const dialogueLines = useDialogueStore.getState().lines
+    if (dialogueLines.length > 0) {
+      const allShots = useTimelineStore.getState().shots
+      const voiceStore = useVoiceTrackStore.getState()
+      if (sceneBlocks.length > 0) {
+        const timingMap = buildSceneTimingMap(sceneId, sceneBlocks, 0)
+        const shotInputs = mergedShots.map((s: { id: string; label: string; caption: string; directorNote: string; notes: string }) => ({
+          id: s.id,
+          label: s.label,
+          caption: s.caption,
+          directorNote: s.directorNote,
+          notes: s.notes,
+        }))
+        const mapped = mapShotsToBlocks(shotInputs, timingMap)
+        const placed = placeShotsOnTimeline(mapped, timingMap)
+        const placedVoice = placeVoiceClips([timingMap], placed)
+        voiceStore.generateFromPlacement(placedVoice, placed, sceneId)
+      } else {
+        const shotRefs = allShots.map((s, i) => ({ id: s.id, sceneId: s.sceneId, order: i }))
+        voiceStore.generateFromDialogue(dialogueLines, shotRefs)
+      }
+    }
+
+    return mergedShots.length
   }, [reorderShots, selectScene])
 
   const handleJenkinsBreakdown = useCallback(async () => {
@@ -1407,7 +447,8 @@ export function StoryboardPanel({
     setJenkinsLoading(true)
     try {
       const bible = buildBreakdownBibleContext(characters, locations, bibleProps)
-      const { shots: jenkinsShots, diagnostics } = await breakdownSceneFincher(text, { bible, style: projectStyle })
+      const dirProfile = useBibleStore.getState().directorProfile
+      const { shots: jenkinsShots, diagnostics } = await breakdownSceneFincher(text, { bible, style: projectStyle, directorSystemPrompt: dirProfile?.systemPrompt })
 
       if (diagnostics.usedFallback && shots.length > 0) {
         const warning = "Breakdown switched to fallback mode. Existing storyboard shots were preserved to avoid overwriting the stronger result."
@@ -1446,7 +487,7 @@ export function StoryboardPanel({
     }
   }, [scenario, jenkinsLoading, addShot, characters, locations, projectStyle, shots])
 
-  const handleSceneBreakdown = useCallback(async (scene: { id: string; blockIds: string[]; title: string }) => {
+  const handleSceneBreakdown = useCallback(async (scene: { id: string; blockIds: string[]; title: string; estimatedDurationMs?: number }) => {
     if (workflowProfile === "legacy-luc-besson" && lucBessonProfile) {
       applyLucBessonProfileToScene({
         lucBessonProfile,
@@ -1461,6 +502,21 @@ export function StoryboardPanel({
     }
 
     if (breakdownLoadingSceneId) return
+
+    // Check if scene already has shots with generated content — soft confirm
+    const existingSceneShots = shots.filter((s) => s.sceneId === scene.id)
+    const hasGeneratedContent = existingSceneShots.some((s) => s.thumbnailUrl || s.locked)
+    if (hasGeneratedContent) {
+      const lockedCount = existingSceneShots.filter((s) => s.locked).length
+      const withImages = existingSceneShots.filter((s) => s.thumbnailUrl).length
+      const parts = [
+        `${existingSceneShots.length} шотов`,
+        withImages > 0 ? `${withImages} с картинками` : "",
+        lockedCount > 0 ? `${lockedCount} locked` : "",
+      ].filter(Boolean).join(", ")
+      if (!confirm(`Обновить ${parts}?\n\nКартинки и locked промпты сохранятся.`)) return
+    }
+
     setBreakdownLoadingSceneId(scene.id)
 
     // Animated progress stages
@@ -1497,10 +553,58 @@ export function StoryboardPanel({
         return
       }
       const bible = buildBreakdownBibleContext(characters, locations, bibleProps)
+      const directorProfile = useBibleStore.getState().directorProfile
+
+      // Build timeline segments from scene blocks for the AI
+      const sceneBlockData = scene.blockIds
+        .map((bid) => scriptBlocks.find((b) => b.id === bid))
+        .filter((b) => b != null)
+
+      const timelineSegments: import("@/lib/fincher").TimelineSegment[] = []
+      let segTimeMs = 0
+      let segChar: string | null = null
+      const DIALOGUE_WPM = 155
+      const ACTION_WPM = 100
+
+      for (const blk of sceneBlockData) {
+        const txt = blk.text.trim()
+        if (!txt) { segChar = null; continue }
+
+        if (blk.type === "scene_heading") {
+          segChar = null
+          const dur = 2500
+          timelineSegments.push({ startMs: segTimeMs, endMs: segTimeMs + dur, type: "heading", text: txt })
+          segTimeMs += dur
+        } else if (blk.type === "character") {
+          segChar = txt.replace(/\s*\(.*\)\s*$/, "").trim()
+        } else if (blk.type === "parenthetical") {
+          // skip
+        } else if (blk.type === "dialogue" && segChar) {
+          const words = txt.split(/\s+/).filter(Boolean).length
+          const dur = Math.max(800, Math.round((words / DIALOGUE_WPM) * 60_000) + 300)
+          const isVO = /V\.?O\.?/i.test(segChar)
+          timelineSegments.push({ startMs: segTimeMs, endMs: segTimeMs + dur, type: "voice", speaker: segChar, text: txt, isVO })
+          segTimeMs += dur
+        } else if (blk.type === "transition") {
+          segChar = null
+          timelineSegments.push({ startMs: segTimeMs, endMs: segTimeMs + 1500, type: "transition", text: txt })
+          segTimeMs += 1500
+        } else {
+          segChar = null
+          const words = txt.split(/\s+/).filter(Boolean).length
+          const dur = Math.max(1500, Math.round((words / ACTION_WPM) * 60_000))
+          timelineSegments.push({ startMs: segTimeMs, endMs: segTimeMs + dur, type: "action", text: txt })
+          segTimeMs += dur
+        }
+      }
+
       const { shots: jenkinsShots, diagnostics } = await breakdownSceneFincher(sceneText, {
         sceneId: scene.id,
         bible,
         style: projectStyle,
+        directorSystemPrompt: directorProfile?.systemPrompt,
+        sceneDurationMs: scene.estimatedDurationMs || segTimeMs || undefined,
+        timelineSegments,
       })
       clearInterval(progressTimer)
 
@@ -1517,7 +621,52 @@ export function StoryboardPanel({
 
       replaceSceneShots(scene.id, sceneText, scene.blockIds, jenkinsShots)
 
-      if (useBreakdownConfigStore.getState().autoPromptBuild) {
+      // Enrich blocks with production fields from breakdown
+      const sceneBlocksFull = scene.blockIds
+        .map((bid) => scriptBlocks.find((b) => b.id === bid))
+        .filter((b): b is typeof scriptBlocks[number] => b != null)
+
+      if (sceneBlocksFull.length > 0) {
+        const enrichResult = enrichBlocksFromBreakdown({
+          sceneId: scene.id,
+          sceneBlocks: sceneBlocksFull,
+          shots: jenkinsShots,
+        })
+
+        // Update blocks with production fields
+        const { updateBlockProduction } = useScriptStore.getState()
+        for (const enrichedBlock of enrichResult.enrichedBlocks) {
+          const original = sceneBlocksFull.find((b) => b.id === enrichedBlock.id)
+          if (original && enrichedBlock !== original) {
+            updateBlockProduction(enrichedBlock.id, {
+              visual: enrichedBlock.visual,
+              shotGroupId: enrichedBlock.shotGroupId,
+              durationMs: enrichedBlock.durationMs,
+            }, "system")
+          }
+        }
+
+        // Save shot groups (deprecated)
+        const { setShotGroups, shotGroups: existingSG } = useScriptStore.getState()
+        const otherSceneSG = existingSG.filter((sg) => sg.sceneId !== scene.id)
+        setShotGroups([...otherSceneSG, ...enrichResult.shotGroups])
+
+        // Save child shots (new parent-child model)
+        if (enrichResult.shots.length > 0) {
+          const { shots: existingShots, setShots } = useScriptStore.getState()
+          // Remove existing shots for blocks in this scene, keep others
+          const sceneBlockIds = new Set(scene.blockIds)
+          const otherShots = existingShots.filter((s) => !sceneBlockIds.has(s.parentBlockId))
+          setShots([...otherShots, ...enrichResult.shots])
+        }
+      }
+
+      // Only run promptBuilder if NO pipeline preset is active
+      // (pipeline presets already generate their own prompts — don't overwrite)
+      const pipelinePreset = useBreakdownConfigStore.getState().activePipelinePreset
+      const hasPipelinePrompts = pipelinePreset && pipelinePreset.modules.length > 0
+
+      if (useBreakdownConfigStore.getState().autoPromptBuild && !hasPipelinePrompts) {
         const sceneShots = useTimelineStore.getState().shots.filter((s) => s.sceneId === scene.id).sort((a, b) => a.order - b.order)
         if (sceneShots.length > 0) {
           const promptDrafts = buildScenePromptDrafts(sceneShots, characters, locations, projectStyle, bibleProps)
@@ -1557,14 +706,23 @@ export function StoryboardPanel({
     setPromptLoadingSceneId(scene.id)
 
     try {
-      const promptDrafts = buildScenePromptDrafts(sceneShots, characters, locations, projectStyle, bibleProps)
+      // If pipeline preset is active and shots already have prompts from pipeline — skip overwrite
+      const pipelinePreset = useBreakdownConfigStore.getState().activePipelinePreset
+      const hasPipelinePrompts = pipelinePreset && pipelinePreset.modules.length > 0
+      const allHavePrompts = hasPipelinePrompts && sceneShots.every((s) => s.imagePrompt && s.imagePrompt.length > 20)
 
-      promptDrafts.forEach((draft) => {
-        updateShot(draft.shotId, {
-          imagePrompt: draft.imagePrompt,
-          videoPrompt: draft.videoPrompt,
+      if (allHavePrompts) {
+        // Prompts from pipeline already exist — don't overwrite
+        console.log("[StoryboardPanel] Pipeline prompts preserved, skipping promptBuilder")
+      } else {
+        const promptDrafts = buildScenePromptDrafts(sceneShots, characters, locations, projectStyle, bibleProps)
+        promptDrafts.forEach((draft) => {
+          updateShot(draft.shotId, {
+            imagePrompt: draft.imagePrompt,
+            videoPrompt: draft.videoPrompt,
+          })
         })
-      })
+      }
 
       selectScene(scene.id)
       setViewMode("board")
@@ -1578,7 +736,7 @@ export function StoryboardPanel({
 
   const handleLucBessonBreakdown = useCallback(() => {
     if (!lucBessonProfile) {
-      setBreakdownWarning("Luc Besson профиль ещё не подключён из configurator")
+      setBreakdownWarning("Luc Besson профиль ещё не подключён")
       return
     }
 
@@ -1652,6 +810,68 @@ export function StoryboardPanel({
   const handleSceneQuickAdd = useCallback((scene: { id: string; headingBlockId: string }) => {
     createShotForScene(scene)
   }, [createShotForScene])
+
+  const [breakdownShotId, setBreakdownShotId] = useState<string | null>(null)
+
+  const handleBreakdownShot = useCallback(async (shotId: string) => {
+    const shot = useTimelineStore.getState().shots.find((s) => s.id === shotId)
+    if (!shot || breakdownShotId) return
+
+    const text = shot.sourceText || shot.caption
+    if (!text.trim()) return
+
+    setBreakdownShotId(shotId)
+    try {
+      const bible = buildBreakdownBibleContext(characters, locations, bibleProps)
+      const dirProfile = useBibleStore.getState().directorProfile
+      const { shots: jenkinsShots } = await breakdownSceneFincher(text, {
+        bible,
+        style: projectStyle,
+        directorSystemPrompt: dirProfile?.systemPrompt,
+      })
+
+      if (jenkinsShots.length <= 1) {
+        // AI didn't split — nothing to do
+        setBreakdownShotId(null)
+        return
+      }
+
+      // Replace the single shot with multiple shots at the same position
+      const allShots = useTimelineStore.getState().shots
+      const shotIndex = allShots.findIndex((s) => s.id === shotId)
+      const newShots = jenkinsShots.map((js, i) => createTimelineShot({
+        label: `${shot.label}.${i + 1}`,
+        shotSize: js.shotSize ?? "",
+        cameraMotion: js.cameraMotion ?? "",
+        duration: js.duration,
+        caption: js.caption ?? "",
+        directorNote: js.directorNote ?? "",
+        cameraNote: js.cameraNote ?? "",
+        imagePrompt: js.imagePrompt ?? "",
+        videoPrompt: js.videoPrompt ?? "",
+        visualDescription: js.visualDescription ?? "",
+        notes: js.notes,
+        type: js.type,
+        sceneId: shot.sceneId,
+        blockRange: shot.blockRange,
+        locked: false,
+        autoSynced: false,
+        sourceText: text,
+      }))
+
+      // Splice: remove original, insert new shots at same position
+      const updated = [...allShots]
+      updated.splice(shotIndex, 1, ...newShots)
+      reorderShots(updated)
+
+      // Select first new shot
+      if (newShots[0]) selectShot(newShots[0].id)
+    } catch (error) {
+      console.error("Shot breakdown error:", error)
+    } finally {
+      setBreakdownShotId(null)
+    }
+  }, [breakdownShotId, characters, locations, bibleProps, projectStyle, reorderShots, selectShot])
 
   const handleGenerateImage = useCallback(async (shotId: string) => {
     const shot = useTimelineStore.getState().shots.find((s) => s.id === shotId)
@@ -2169,7 +1389,7 @@ ${shotText}
     ghost.style.width = `${el.offsetWidth}px`
     ghost.style.opacity = "0.85"
     ghost.style.transform = "scale(1.04) rotate(1.5deg)"
-    ghost.style.boxShadow = "0 30px 60px rgba(0,0,0,0.5), 0 0 0 1px rgba(212,168,83,0.3)"
+    ghost.style.boxShadow = `0 30px 60px rgba(0,0,0,0.5), 0 0 0 1px ${getAccentColors().shadowGlow}`
     ghost.style.borderRadius = "14px"
     ghost.style.position = "fixed"
     ghost.style.top = "-9999px"
@@ -2217,9 +1437,14 @@ ${shotText}
   const sceneTitle = selectedScene?.title || "Storyboard Workspace"
   const isDirectorWorkflow = viewMode === "scenes" || viewMode === "director"
   const isDuoMode = isExpanded && isSplitScreen
-  const panelChrome = backgroundColor === "#0B0C10"
-    ? "linear-gradient(180deg, rgba(16,18,24,0.98) 0%, rgba(12,13,18,0.98) 100%)"
-    : `linear-gradient(180deg, ${backgroundColor} 0%, #0E1016 100%)`
+  const activeTheme = typeof document !== "undefined" ? document.documentElement.getAttribute("data-theme") : null
+  const panelChrome = activeTheme === "synthwave"
+    ? "linear-gradient(180deg, rgba(17,11,34,0.98) 0%, rgba(10,6,20,0.98) 100%)"
+    : activeTheme === "architect"
+      ? "linear-gradient(180deg, rgba(0,0,0,0.82) 0%, rgba(0,0,0,0.75) 100%)"
+      : backgroundColor === "#0B0C10"
+        ? "linear-gradient(180deg, rgba(16,18,24,0.98) 0%, rgba(12,13,18,0.98) 100%)"
+        : `linear-gradient(180deg, ${backgroundColor} 0%, #0E1016 100%)`
 
   const parsedScenesContent = (
     <div className="flex flex-col gap-1.5 rounded-[18px] border border-white/8 bg-white/3 p-3">
@@ -2282,7 +1507,7 @@ ${shotText}
                       className="h-full rounded-lg"
                       style={{
                         width: `${breakdownStage.progress * 100}%`,
-                        background: "linear-gradient(90deg, rgba(212,168,83,0.08) 0%, rgba(212,168,83,0.18) 60%, rgba(212,168,83,0.06) 100%)",
+                        background: `linear-gradient(90deg, ${getAccentColors().glowGradient(0.08)} 0%, ${getAccentColors().glowGradient(0.18)} 60%, ${getAccentColors().glowGradient(0.06)} 100%)`,
                         transition: "width 1.2s cubic-bezier(0.22, 1, 0.36, 1)",
                       }}
                     />
@@ -2308,6 +1533,7 @@ ${shotText}
                     <div className="mt-1 flex items-center gap-3 text-[10px] text-[#7F8590]">
                       <span>{scene.blockIds.length} blocks</span>
                       <span>{relatedShots.length} shots</span>
+                      <span>{Math.round(scene.estimatedDurationMs / 1000)}s</span>
                       {relatedShots.length > 0 ? <span>{isShotsExpanded ? "shots open" : "double click to open"}</span> : null}
                     </div>
                   )}
@@ -2381,43 +1607,100 @@ ${shotText}
 
               {relatedShots.length > 0 && isShotsExpanded ? (
                 <div className="ml-5 flex flex-col gap-3 border-l border-white/8 pl-3">
-                  {relatedShots.map((shot, index) => (
-                    <DirectorShotCard
-                      key={shot.id}
-                      shot={shot}
-                      index={index}
-                      selected={selectedShotId === shot.id}
-                      canDuplicate={relatedShots.length < MAX_DIRECTOR_SHOTS_PER_SCENE}
-                      isEnhancing={enhancingIds.has(shot.id)}
-                      isBuilding={buildingPromptIds.has(shot.id)}
-                      autoFocusAction={pendingActionFocusShotId === shot.id}
-                      showThumbnail={!isDuoMode}
-                      fieldVisibility={directorFieldVisibility}
-                      bibleChars={characters.filter((c) => c.sceneIds.includes(scene.id))}
-                      bibleLocs={locations.filter((l) => l.sceneIds.includes(scene.id))}
-                      bibleProps={bibleProps.filter((p) => p.sceneIds.includes(scene.id))}
-                      cardRef={bindDirectorShotCardRef(shot.id)}
-                      onSelect={() => {
-                        selectScene(scene.id)
-                        selectShot(shot.id)
-                      }}
-                      onUpdate={(patch) => handleDirectorShotUpdate(shot.id, patch)}
-                      onEnhance={() => void handleEnhanceDirectorShot(shot)}
-                      onBuild={() => void handleBuildShotPrompt(shot)}
-                      onOpenBible={() => setBibleBubbleSceneId(scene.id)}
-                      onSmartScan={() => void handleShotSmartScan(shot)}
-                      isScanning={scanningIds.has(shot.id)}
-                      onGenerate={() => void handleGenerateImage(shot.id)}
-                      isGenerating={generatingIds.has(shot.id)}
-                      onOpenStudio={() => {
-                        if (shot.thumbnailUrl) {
-                          setLightbox({ src: shot.thumbnailUrl, shotId: shot.id })
-                        }
-                      }}
-                      onDelete={() => removeShot(shot.id)}
-                      onDuplicate={() => handleDuplicateSceneShot(shot)}
-                    />
-                  ))}
+                  {(() => {
+                    // Group shots by parentBlockId for block→shot hierarchy
+                    const blockGroups = new Map<string, TimelineShot[]>()
+                    const ungrouped: TimelineShot[] = []
+                    for (const shot of relatedShots) {
+                      if (shot.parentBlockId) {
+                        const group = blockGroups.get(shot.parentBlockId) || []
+                        group.push(shot)
+                        blockGroups.set(shot.parentBlockId, group)
+                      } else {
+                        ungrouped.push(shot)
+                      }
+                    }
+
+                    const renderShotCard = (shot: TimelineShot, index: number) => (
+                      <DirectorShotCard
+                        key={shot.id}
+                        shot={shot}
+                        index={index}
+                        selected={selectedShotId === shot.id}
+                        canDuplicate={relatedShots.length < MAX_DIRECTOR_SHOTS_PER_SCENE}
+                        isEnhancing={enhancingIds.has(shot.id)}
+                        isBuilding={buildingPromptIds.has(shot.id)}
+                        autoFocusAction={pendingActionFocusShotId === shot.id}
+                        showThumbnail={!isDuoMode}
+                        fieldVisibility={directorFieldVisibility}
+                        bibleChars={characters.filter((c) => c.sceneIds.includes(scene.id))}
+                        bibleLocs={locations.filter((l) => l.sceneIds.includes(scene.id))}
+                        bibleProps={bibleProps.filter((p) => p.sceneIds.includes(scene.id))}
+                        cardRef={bindDirectorShotCardRef(shot.id)}
+                        onSelect={() => navigateToShot(shot)}
+                        onUpdate={(patch) => handleDirectorShotUpdate(shot.id, patch)}
+                        onEnhance={() => void handleEnhanceDirectorShot(shot)}
+                        onBuild={() => void handleBuildShotPrompt(shot)}
+                        onOpenBible={() => setBibleBubbleSceneId(scene.id)}
+                        onSmartScan={() => void handleShotSmartScan(shot)}
+                        isScanning={scanningIds.has(shot.id)}
+                        onGenerate={() => void handleGenerateImage(shot.id)}
+                        isGenerating={generatingIds.has(shot.id)}
+                        onOpenStudio={() => {
+                          if (shot.thumbnailUrl) {
+                            setLightbox({ src: shot.thumbnailUrl, shotId: shot.id })
+                          }
+                        }}
+                        onDelete={() => {
+                          // If shot has parentBlockId, remove through scriptStore (preserves block)
+                          if (shot.parentBlockId) {
+                            useScriptStore.getState().removeShotFromBlock(shot.id)
+                          } else {
+                            removeShot(shot.id)
+                          }
+                        }}
+                        onDuplicate={() => handleDuplicateSceneShot(shot)}
+                      />
+                    )
+
+                    let globalIndex = 0
+                    return (
+                      <>
+                        {/* Block-grouped shots */}
+                        {Array.from(blockGroups.entries()).map(([blockId, blockShots]) => {
+                          const block = scriptBlocks.find((b) => b.id === blockId)
+                          const blockLabel = block
+                            ? `${block.type === "scene_heading" ? "🎬" : block.type === "dialogue" ? "💬" : block.type === "action" ? "▶" : "◆"} ${block.text.slice(0, 50)}${block.text.length > 50 ? "…" : ""}`
+                            : blockId.slice(0, 12)
+                          return (
+                            <div key={blockId} className="flex flex-col gap-2">
+                              {/* Block header */}
+                              <div className="flex items-center gap-2 px-1 py-1">
+                                <div className="h-px flex-1 bg-white/6" />
+                                <span className="text-[9px] uppercase tracking-[0.1em] text-[#7F8590] max-w-[200px] truncate" title={block?.text}>
+                                  {blockLabel}
+                                </span>
+                                <span className="text-[9px] text-white/20">{blockShots.length} shot{blockShots.length !== 1 ? "s" : ""}</span>
+                                <div className="h-px flex-1 bg-white/6" />
+                              </div>
+                              {/* Shots within block */}
+                              {blockShots.map((shot) => {
+                                const card = renderShotCard(shot, globalIndex)
+                                globalIndex++
+                                return card
+                              })}
+                            </div>
+                          )
+                        })}
+                        {/* Ungrouped shots (legacy, no parentBlockId) */}
+                        {ungrouped.map((shot) => {
+                          const card = renderShotCard(shot, globalIndex)
+                          globalIndex++
+                          return card
+                        })}
+                      </>
+                    )
+                  })()}
                 </div>
               ) : null}
             </div>
@@ -2429,56 +1712,56 @@ ${shotText}
 
   const workspaceChrome = (
     <div className={isDuoMode ? "sticky top-0 z-30 bg-[#0E1016]" : ""}>
-      <div className="border-b border-white/6 px-5 py-3 text-[#E5E0DB]">
-        <div className="flex flex-wrap items-center justify-between gap-4 text-[#9FA4AE]">
-          <div className="flex flex-wrap items-center gap-2.5">
+      <div className="border-b border-white/6 px-3 py-2 text-[#E5E0DB]">
+        <div className="flex items-center gap-3 text-[#9FA4AE] overflow-x-auto scrollbar-none">
+          <div className="flex items-center gap-1 shrink-0">
             <button
               type="button"
               onClick={() => setViewMode("scenes")}
-              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] uppercase tracking-[0.14em] transition-colors ${isDirectorWorkflow ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
+              className={`flex items-center gap-1 rounded-md px-2 py-1 text-[11px] uppercase tracking-[0.1em] transition-colors whitespace-nowrap ${isDirectorWorkflow ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
             >
-              <Camera size={13} />
+              <Camera size={12} />
               Director Cut
             </button>
             <button
               type="button"
               onClick={() => setViewMode("board")}
-              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] uppercase tracking-[0.14em] transition-colors ${viewMode === "board" ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
+              className={`flex items-center gap-1 rounded-md px-2 py-1 text-[11px] uppercase tracking-[0.1em] transition-colors whitespace-nowrap ${viewMode === "board" ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
             >
-              <Grid size={13} />
+              <Grid size={12} />
               Board
             </button>
             <button
               type="button"
               onClick={() => setViewMode("list")}
-              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] uppercase tracking-[0.14em] transition-colors ${viewMode === "list" ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
+              className={`flex items-center gap-1 rounded-md px-2 py-1 text-[11px] uppercase tracking-[0.1em] transition-colors whitespace-nowrap ${viewMode === "list" ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
             >
-              <List size={13} />
+              <List size={12} />
               Shot List
             </button>
             <button
               type="button"
               onClick={() => setViewMode("inspector")}
-              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] uppercase tracking-[0.14em] transition-colors ${viewMode === "inspector" ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
+              className={`flex items-center gap-1 rounded-md px-2 py-1 text-[11px] uppercase tracking-[0.1em] transition-colors whitespace-nowrap ${viewMode === "inspector" ? "bg-white/8 text-white" : "text-white/40 hover:text-white/60"}`}
             >
-              <BookOpen size={13} />
+              <BookOpen size={12} />
               Inspector
             </button>
             <button
               type="button"
-              onClick={() => setViewMode("prompt")}
-              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-[12px] uppercase tracking-[0.14em] transition-colors ${viewMode === "prompt" ? "bg-[#D4A853]/15 border border-[#D4A853]/30 text-[#E6C887]" : "text-white/40 hover:text-white/60"}`}
+              onClick={() => setViewMode("tracks")}
+              className={`flex items-center gap-1 rounded-md px-2 py-1 text-[11px] uppercase tracking-[0.1em] transition-colors whitespace-nowrap ${viewMode === "tracks" ? "bg-emerald-500/15 border border-emerald-500/30 text-emerald-300" : "text-white/40 hover:text-white/60"}`}
             >
-              <Wand2 size={13} />
-              Prompt Lab
+              <Film size={12} />
+              Tracks
             </button>
           </div>
 
-          <div className="flex items-center gap-2.5 text-[12px] uppercase tracking-[0.16em] text-[#7F8590]">
+          <div className="flex items-center gap-2 text-[11px] uppercase tracking-[0.1em] text-[#7F8590] shrink-0 ml-auto">
             <span>{scenes.length} scenes</span>
-            <span className="h-3.5 w-px bg-white/8" />
+            <span className="h-3 w-px bg-white/8" />
             <span>{frames.length} frames</span>
-            <span className="h-3.5 w-px bg-white/8" />
+            <span className="h-3 w-px bg-white/8" />
             <span>{formatSummaryTime(totalShotDurationMs)}</span>
           </div>
         </div>
@@ -2513,11 +1796,10 @@ ${shotText}
     )}
     <aside
       aria-hidden={!isOpen}
-      className="absolute inset-y-0 right-0 z-3 overflow-hidden transition-[width,transform,opacity] duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]"
+      className="absolute inset-0 z-3 overflow-hidden transition-[width,transform,opacity] duration-700 ease-[cubic-bezier(0.22,1,0.36,1)]"
       style={{
         width: isOpen ? resolvedPanelWidth : 0,
         minWidth: isOpen ? resolvedPanelWidth : 0,
-        height: "100%",
         opacity: isOpen ? 1 : 0,
         transform: isOpen ? "translateX(0)" : "translateX(108%)",
         pointerEvents: isOpen ? "auto" : "none",
@@ -2526,7 +1808,6 @@ ${shotText}
       <div
         className="relative flex h-full w-full flex-col overflow-hidden border-l border-white/10"
         style={{
-          height: "100%",
           background: panelChrome,
           boxShadow: "inset 0 1px 0 rgba(255,255,255,0.03)",
         }}
@@ -2541,41 +1822,40 @@ ${shotText}
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={handleJenkinsBreakdown}
-              disabled={jenkinsLoading || !scenario.trim()}
-              className="flex items-center gap-2 rounded-lg border border-[#D4A853]/20 bg-[#D4A853]/8 px-4 py-2 text-[12px] uppercase tracking-[0.12em] text-[#D4A853] transition-colors hover:bg-[#D4A853]/14 disabled:opacity-35"
+              onClick={handleToggleSplitScreen}
+              className={`flex items-center gap-2 rounded-lg border px-4 py-2 text-[12px] uppercase tracking-[0.12em] transition-colors ${
+                isDuoMode
+                  ? "border-violet-500/30 bg-violet-500/12 text-violet-300"
+                  : "border-white/10 bg-white/4 text-white/50 hover:bg-white/8 hover:text-white/70"
+              }`}
             >
-              {jenkinsLoading ? <Loader2 size={14} className="animate-spin" /> : <Clapperboard size={14} />}
-              Breakdown
+              <Pencil size={14} />
+              Script
             </button>
-            {lucBessonProfile && (
-              <button
-                type="button"
-                onClick={handleLucBessonBreakdown}
-                className="flex items-center gap-2 rounded-lg border border-[#8b5cf6]/20 bg-[#8b5cf6]/8 px-4 py-2 text-[12px] uppercase tracking-[0.12em] text-[#c4b5fd] transition-colors hover:bg-[#8b5cf6]/14"
-              >
-                <Wand2 size={14} />
-                Fincher
-              </button>
-            )}
+            <a
+              href="/bible"
+              className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/4 px-4 py-2 text-[12px] uppercase tracking-[0.12em] text-white/50 transition-colors hover:bg-white/8 hover:text-white/70"
+            >
+              <BookOpen size={14} />
+              Bible
+            </a>
 
-            {/* Model selector */}
-            <div className="flex items-center rounded-lg border border-white/8 bg-white/4">
-              {IMAGE_GEN_MODELS.map((model) => (
-                <button
-                  key={model.id}
-                  type="button"
-                  onClick={() => setSelectedImageGenModel(model.id)}
-                  title={`${model.label} ${model.price}`}
-                  className={`px-2.5 py-1.5 text-[11px] font-medium transition-all ${
-                    selectedImageGenModel === model.id
-                      ? "bg-white/8 text-[#D4A853]"
-                      : "text-white/25 hover:text-white/50"
-                  }`}
-                >
-                  {model.label}
-                </button>
-              ))}
+            {/* Model selector dropdown */}
+            <div className="relative">
+              <select
+                value={selectedImageGenModel || "nano-banana-2"}
+                onChange={(e) => setSelectedImageGenModel(e.target.value)}
+                className="appearance-none rounded-lg border border-white/8 bg-white/4 py-2 pl-3 pr-7 text-[11px] font-medium text-white/60 outline-none transition-colors hover:bg-white/8 hover:text-white/80"
+              >
+                {IMAGE_GEN_MODELS.map((model) => (
+                  <option key={model.id} value={model.id} className="bg-[#1a1d24] text-white">
+                    {model.label} {model.price}
+                  </option>
+                ))}
+              </select>
+              <div className="pointer-events-none absolute inset-y-0 right-1.5 flex items-center">
+                <ChevronRight size={12} className="rotate-90 text-white/25" />
+              </div>
             </div>
 
             <ProjectStylePicker projectStyle={projectStyle} setProjectStyle={setProjectStyle} />
@@ -2583,19 +1863,6 @@ ${shotText}
 
           {/* Right — utility */}
           <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={handleToggleSplitScreen}
-              className={`flex h-8 items-center gap-1.5 rounded-lg border px-2.5 text-[10px] uppercase tracking-[0.1em] transition-colors ${
-                isDuoMode
-                  ? "border-[#D4A853]/25 bg-[#D4A853]/10 text-[#D4A853]"
-                  : "border-white/8 text-white/25 hover:text-white/50"
-              }`}
-              title="Split Screen"
-            >
-              <Film size={13} />
-              Split
-            </button>
             <button
               type="button"
               onClick={() => setConfigPanelOpen((v) => !v)}
@@ -2607,14 +1874,6 @@ ${shotText}
               title="Config"
             >
               <Settings size={16} />
-            </button>
-            <button
-              type="button"
-              onClick={onClose}
-              className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/8 text-white/25 transition-colors hover:text-white/50"
-              title="Close"
-            >
-              <X size={16} />
             </button>
           </div>
         </div>
@@ -2657,21 +1916,32 @@ ${shotText}
 
         {!isDuoMode ? workspaceChrome : null}
 
-        <div className={isDuoMode ? "flex-1 overflow-hidden" : "flex-1 overflow-y-auto px-5 py-5"} style={isDuoMode ? undefined : { overscrollBehaviorY: "contain" }}>
+        <div className={isDuoMode ? "flex-1 min-h-0 overflow-hidden" : "flex-1 min-h-0 overflow-y-auto px-5 py-5"} style={isDuoMode ? undefined : { overscrollBehaviorY: "contain" }}>
           {isDuoMode ? (
-          <div className="flex h-full">
-            <div className="w-1/2 overflow-hidden border-r border-white/8">
+          <div className="flex h-full w-full">
+            <div className="shrink-0 overflow-y-auto border-r border-white/8" style={{ width: "33.333%", minWidth: 280, maxWidth: "33.333%" }}>
               <ScriptViewer
                 selectedSceneId={selectedSceneId}
                 onSceneClick={(sceneId) => {
                   selectScene(selectedSceneId === sceneId ? null : sceneId)
+                  // Click-to-seek: find first shot of this scene and scroll timeline to it
+                  const sceneShots = shots.filter((s) => s.sceneId === sceneId).sort((a, b) => a.order - b.order)
+                  if (sceneShots[0]) {
+                    selectShot(sceneShots[0].id)
+                    // Seek timeline to shot position
+                    const shotIndex = shots.findIndex((s) => s.id === sceneShots[0].id)
+                    if (shotIndex >= 0) {
+                      const startMs = shots.slice(0, shotIndex).reduce((sum, s) => sum + s.duration, 0)
+                      useTimelineStore.getState().seekTo(startMs)
+                    }
+                  }
                 }}
                 fontSize={scriptFontSize}
               />
             </div>
-            <div className="w-1/2 overflow-y-auto" style={{ overscrollBehaviorY: "contain" }}>
+            <div className="flex flex-1 flex-col overflow-y-auto" style={{ overscrollBehaviorY: "contain" }}>
               {workspaceChrome}
-              <div className="px-4 py-4">
+              <div className="flex-1 px-4 py-4">
                 {isDirectorWorkflow ? (
                 directorWorkspaceContent
                 ) : viewMode === "board" ? shots.length === 0 ? (
@@ -2684,7 +1954,7 @@ ${shotText}
                   className="grid min-h-full"
                   style={{
                     gap: cardGap,
-                    gridTemplateColumns: "minmax(0, 1fr)",
+                    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
                     alignContent: "start",
                     transition: "gap 240ms ease, grid-template-columns 240ms ease",
                   }}
@@ -2697,7 +1967,7 @@ ${shotText}
                     return (
                     <Fragment key={frame.id}>
                       <div
-                        className={`group relative overflow-hidden rounded-[14px] border bg-[#111317] p-2 shadow-[0_20px_45px_rgba(0,0,0,0.28)] transition-all duration-200 ${recentInsertedFrameId === frame.id ? "storyboard-card-enter" : ""} ${selectedShotId === shot?.id ? "border-[#D4A853]/40 ring-1 ring-[#D4A853]/20" : "border-white/6"} ${dropTargetIndex === index || dropTargetIndex === index + 1 ? "border-[#D8C4A5]/40 shadow-[0_0_0_1px_rgba(216,196,165,0.18),0_20px_45px_rgba(0,0,0,0.34)]" : "hover:-translate-y-px hover:border-white/10 hover:bg-[#14171C]"}`}
+                        className={`group relative rounded-[14px] border bg-[#111317] p-2 shadow-[0_20px_45px_rgba(0,0,0,0.28)] transition-all duration-200 ${recentInsertedFrameId === frame.id ? "storyboard-card-enter" : ""} ${selectedShotId === shot?.id ? "border-[#D4A853]/40 ring-1 ring-[#D4A853]/20" : "border-white/6"} ${dropTargetIndex === index || dropTargetIndex === index + 1 ? "border-[#D8C4A5]/40 shadow-[0_0_0_1px_rgba(216,196,165,0.18),0_20px_45px_rgba(0,0,0,0.34)]" : "hover:-translate-y-px hover:border-white/10 hover:bg-[#14171C]"}`}
                         draggable
                         onDragStart={(e) => handleDragStart(frame.id, e)}
                         onDragEnd={handleDragEnd}
@@ -2724,7 +1994,7 @@ ${shotText}
                           <div
                             className="relative overflow-hidden rounded-[10px] border border-white/8 bg-[#0E1014] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
                             style={{ aspectRatio: "16 / 8.7" }}
-                            onClick={() => { if (shot) selectShot(shot.id) }}
+                            onClick={() => { if (shot) navigateToShot(shot) }}
                             onDoubleClick={() => { if (previewSrc && shot) { setLightbox({ src: previewSrc, shotId: shot.id }); setLightboxTransform({ flipH: false, flipV: false, rotate: 0 }) } }}
                           >
                             {previewSrc ? (
@@ -2756,6 +2026,22 @@ ${shotText}
                                 </div>
                               )}
                             </div>
+                            {/* Canvas button — top right corner of card */}
+                            {shot && (
+                              <button
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation()
+                                  const blockId = shot.blockRange?.[0] || shot.id
+                                  useBlockCanvasStore.getState().openBlock(blockId, shot.id)
+                                }}
+                                className="absolute right-2.5 top-2.5 flex items-center gap-1 rounded-md border border-cyan-500/25 bg-black/40 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-cyan-300/70 backdrop-blur-sm transition-all hover:bg-cyan-500/15 hover:text-cyan-200"
+                                title="Open in Canvas"
+                              >
+                                <Grid size={10} />
+                                <span className="hidden sm:inline">Canvas</span>
+                              </button>
+                            )}
 
                             {shot && (shot.generationHistory?.length ?? 0) > 1 && !isGenerating && (() => {
                               const total = shot.generationHistory.length
@@ -2835,11 +2121,24 @@ ${shotText}
                                 </button>
                                 <button
                                   type="button"
-                                  onClick={() => shot && setPromptLabShotId(shot.id)}
-                                  className="flex items-center gap-1.5 rounded-lg border border-[#D4A853]/30 bg-[#D4A853]/15 px-3.5 py-2 text-[12px] uppercase tracking-[0.14em] text-[#E6C887] backdrop-blur-sm transition-colors hover:bg-[#D4A853]/25"
+                                  onClick={() => shot && handleBreakdownShot(shot.id)}
+                                  disabled={breakdownShotId === shot?.id}
+                                  className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/15 px-3.5 py-2 text-[12px] uppercase tracking-[0.14em] text-emerald-300 backdrop-blur-sm transition-colors hover:bg-emerald-500/25 disabled:opacity-40"
                                 >
-                                  <Wand2 size={13} />
-                                  Edit
+                                  {breakdownShotId === shot?.id ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                                  Split
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    if (!shot) return
+                                    const blockId = shot.blockRange?.[0] || shot.id
+                                    useBlockCanvasStore.getState().openBlock(blockId, shot.id)
+                                  }}
+                                  className="flex items-center gap-1.5 rounded-lg border border-cyan-500/30 bg-cyan-500/10 px-3.5 py-2 text-[12px] uppercase tracking-[0.14em] text-cyan-300 backdrop-blur-sm transition-colors hover:bg-cyan-500/20"
+                                >
+                                  <Grid size={13} />
+                                  Canvas
                                 </button>
                                 {shot?.thumbnailUrl && (
                                   <button
@@ -2908,102 +2207,38 @@ ${shotText}
                   </button>
                 </div>
                 ) : viewMode === "inspector" ? (
-                <div className="flex flex-col gap-2">
-                  {inspectorShots.length === 0 ? (
-                    <div className="flex min-h-full flex-col items-center justify-center py-16 text-center">
-                      <BookOpen size={28} className="mb-3 text-white/15" />
-                      <p className="text-[12px] text-[#7F8590]">No shots to inspect yet.</p>
-                    </div>
-                  ) : (
-                    inspectorShots.map((shot, index) => {
-                      const isExpanded = expandedShotId === shot.id
-                      const resolvedShot = editingShotField?.shotId === shot.id
-                        ? { ...shot, [editingShotField.field]: editingShotDraft }
-                        : shot
-                      const imagePrompt = buildImagePrompt(resolvedShot, characters, locations, projectStyle, bibleProps)
-                      const videoPrompt = buildVideoPrompt(resolvedShot, characters, locations, projectStyle, bibleProps)
-                      const refs = getReferencedBibleEntries(resolvedShot, characters, locations)
-                      const previewSrc = shot.thumbnailUrl || shot.svg || null
-                      const durationLabel = null // replaced by EditableDuration
-
-                      return (
-                        <div key={shot.id} className={`mb-2 overflow-hidden rounded-xl border transition-colors ${isExpanded ? "border-white/15 bg-white/3" : "border-white/8 bg-white/2 hover:bg-white/4"}`}>
-                          <button type="button" onClick={() => setExpandedShotId(isExpanded ? null : shot.id)} className="flex w-full items-center gap-3 px-3 py-3 text-left">
-                            <div className="relative h-9 w-16 overflow-hidden rounded-md border border-white/8 bg-white/3">
-                              {previewSrc ? (
-                                <Image src={previewSrc} alt="" fill unoptimized className="object-cover" />
-                              ) : (
-                                <div className="flex h-full w-full items-center justify-center text-[9px] uppercase tracking-[0.16em] text-white/25">No Img</div>
-                              )}
-                            </div>
-                            <div className="w-8 shrink-0 text-[16px] font-medium tracking-[0.14em] text-[#E7E3DC]">{String(index + 1).padStart(2, "0")}</div>
-                            <div className="min-w-0 flex-1">
-                              <p className="truncate text-[13px] font-medium text-[#E7E3DC]">{shot.label || `Shot ${index + 1}`}</p>
-                              <p className="mt-1 flex items-center gap-1 truncate text-[10px] text-white/35">{shot.shotSize || "WIDE"} · {shot.cameraMotion || "Static"} · <EditableDuration durationMs={shot.duration} onChange={(ms) => updateShot(shot.id, { duration: ms })} /></p>
-                            </div>
-                            <div className={`shrink-0 text-[16px] text-white/40 transition-transform ${isExpanded ? "rotate-90" : "rotate-0"}`}>▸</div>
-                          </button>
-                          {isExpanded ? (
-                            <div className="grid gap-3 border-t border-white/8 px-3 pb-3 pt-2">
-                              <section className="grid gap-1.5">
-                                <div className="flex items-center gap-2"><BookOpen size={12} className="text-white/35" /><p className="text-[10px] uppercase tracking-wider text-white/30">Литературный</p></div>
-                                {editingShotField?.shotId === shot.id && editingShotField.field === "caption" ? (
-                                  <textarea autoFocus rows={4} value={editingShotDraft} onChange={(event) => setEditingShotDraft(event.target.value)} onBlur={() => commitEditingShotField(shot.id)} className="w-full resize-y rounded-lg bg-white/3 p-3 text-[13px] text-white/80 outline-none ring-1 ring-inset ring-white/10" />
-                                ) : (
-                                  <button type="button" onClick={() => startEditingShotField(shot, "caption", shot.caption || "")} className="w-full rounded-lg bg-white/3 p-3 text-left text-[13px] text-white/80 transition-colors hover:bg-white/4"><span className="whitespace-pre-wrap">{resolvedShot.caption || shot.label || "Нет описания кадра."}</span></button>
-                                )}
-                              </section>
-                              <section className="grid gap-1.5">
-                                <div className="flex items-center gap-2"><Clapperboard size={12} className="text-white/35" /><p className="text-[10px] uppercase tracking-wider text-white/30">Режиссёрский</p></div>
-                                {editingShotField?.shotId === shot.id && editingShotField.field === "directorNote" ? (
-                                  <textarea autoFocus rows={4} value={editingShotDraft} onChange={(event) => setEditingShotDraft(event.target.value)} onBlur={() => commitEditingShotField(shot.id)} className="w-full resize-y rounded-lg bg-white/3 p-3 text-[12px] leading-5 text-white/60 outline-none ring-1 ring-inset ring-white/10" />
-                                ) : (
-                                  <button type="button" onClick={() => startEditingShotField(shot, "directorNote", shot.directorNote || "")} className="w-full rounded-lg bg-white/3 p-3 text-left text-[12px] leading-5 text-white/60 transition-colors hover:bg-white/4"><span className="whitespace-pre-wrap">{resolvedShot.directorNote || "Нет режиссёрской заметки."}</span></button>
-                                )}
-                              </section>
-                              <section className="grid gap-1.5">
-                                <div className="flex items-center gap-2"><Camera size={12} className="text-amber-400/70" /><p className="text-[10px] uppercase tracking-wider text-white/30">Операторский</p></div>
-                                {editingShotField?.shotId === shot.id && editingShotField.field === "cameraNote" ? (
-                                  <textarea autoFocus rows={5} value={editingShotDraft} onChange={(event) => setEditingShotDraft(event.target.value)} onBlur={() => commitEditingShotField(shot.id)} className="w-full resize-y rounded-lg bg-white/3 p-3 font-mono text-[12px] leading-5 text-amber-400/70 outline-none ring-1 ring-inset ring-white/10" />
-                                ) : (
-                                  <button type="button" onClick={() => startEditingShotField(shot, "cameraNote", shot.cameraNote || "")} className="w-full rounded-lg bg-white/3 p-3 text-left font-mono text-[12px] leading-5 text-amber-400/70 transition-colors hover:bg-white/4"><span className="whitespace-pre-wrap">{resolvedShot.cameraNote || "Нет операторской заметки."}</span></button>
-                                )}
-                              </section>
-                              <section className="grid gap-1.5">
-                                <div className="flex items-center gap-2"><ImageIcon size={12} className="text-white/35" /><p className="text-[10px] uppercase tracking-wider text-white/30">Промпт картинки</p><span className="rounded-full border border-[#D4A853]/35 bg-[#D4A853]/12 px-2 py-0.5 text-[9px] uppercase tracking-[0.16em] text-[#E8D7B2]">EN</span></div>
-                                {editingShotField?.shotId === shot.id && editingShotField.field === "imagePrompt" ? (
-                                  <textarea autoFocus rows={7} value={editingShotDraft} onChange={(event) => setEditingShotDraft(event.target.value)} onBlur={() => commitEditingShotField(shot.id)} className="w-full resize-y rounded-lg bg-white/2 p-3 font-mono text-[11px] leading-5 text-white/40 outline-none ring-1 ring-inset ring-white/10" />
-                                ) : (
-                                  <button type="button" onClick={() => startEditingShotField(shot, "imagePrompt", shot.imagePrompt || imagePrompt)} className="w-full rounded-lg bg-white/2 p-3 text-left font-mono text-[11px] leading-5 text-white/40 transition-colors hover:bg-white/4"><span className="whitespace-pre-wrap">{imagePrompt}</span></button>
-                                )}
-                              </section>
-                              <section className="grid gap-1.5 opacity-60">
-                                <div className="flex items-center gap-2"><Film size={12} className="text-white/35" /><p className="text-[10px] uppercase tracking-wider text-white/30">Промпт видео</p><span className="rounded-full border border-[#D4A853]/35 bg-[#D4A853]/12 px-2 py-0.5 text-[9px] uppercase tracking-[0.16em] text-[#E8D7B2]">EN</span><span className="rounded-full border border-white/12 bg-white/4 px-2 py-0.5 text-[9px] uppercase tracking-[0.16em] text-white/40">будущее</span></div>
-                                {editingShotField?.shotId === shot.id && editingShotField.field === "videoPrompt" ? (
-                                  <textarea autoFocus rows={6} value={editingShotDraft} onChange={(event) => setEditingShotDraft(event.target.value)} onBlur={() => commitEditingShotField(shot.id)} className="w-full resize-y rounded-lg bg-white/2 p-3 font-mono text-[11px] leading-5 text-white/30 outline-none ring-1 ring-inset ring-white/10" />
-                                ) : (
-                                  <button type="button" onClick={() => startEditingShotField(shot, "videoPrompt", shot.videoPrompt || videoPrompt)} className="w-full rounded-lg bg-white/2 p-3 text-left font-mono text-[11px] leading-5 text-white/30 transition-colors hover:bg-white/4"><span className="whitespace-pre-wrap">{videoPrompt}</span></button>
-                                )}
-                              </section>
-                              <section className="grid gap-1.5">
-                                <p className="text-[10px] uppercase tracking-wider text-white/30">Библия — референсы</p>
-                                <div className="grid gap-2 rounded-lg bg-white/3 p-3">
-                                  {refs.characters.length === 0 && !refs.location ? <p className="text-[12px] text-white/35">Нет связанных bible entries для этого шота.</p> : null}
-                                  {refs.characters.map((character) => (
-                                    <div key={character.id} className="flex items-center gap-3"><div className="relative h-8 w-8 overflow-hidden rounded-md border border-white/10 bg-white/4">{character.generatedPortraitUrl ? <Image src={character.generatedPortraitUrl} alt={character.name} fill unoptimized className="object-cover" /> : <div className="flex h-full w-full items-center justify-center text-[9px] uppercase tracking-[0.14em] text-white/25">{character.name.slice(0, 2)}</div>}</div><div><p className="text-[12px] text-[#E7E3DC]">{character.name}</p><p className="text-[11px] text-white/35">portrait · ref ×{character.referenceImages.length}</p></div></div>
-                                  ))}
-                                  {refs.location ? <div className="flex items-center gap-3"><div className="relative h-8 w-8 overflow-hidden rounded-md border border-white/10 bg-white/4">{refs.location.generatedImageUrl ? <Image src={refs.location.generatedImageUrl} alt={refs.location.name} fill unoptimized className="object-cover" /> : <div className="flex h-full w-full items-center justify-center text-[9px] uppercase tracking-[0.14em] text-white/25">LOC</div>}</div><div><p className="text-[12px] text-[#E7E3DC]">{refs.location.name}</p><p className="text-[11px] text-white/35">{refs.location.intExt} · ref ×{refs.location.referenceImages.length}</p></div></div> : null}
-                                </div>
-                              </section>
-                            </div>
-                          ) : null}
-                        </div>
-                      )
-                    })
-                  )}
+                <InspectorView
+                  shots={inspectorShots}
+                  expandedShotId={expandedShotId}
+                  onToggleExpand={(id) => setExpandedShotId(expandedShotId === id ? null : id)}
+                  editingShotField={editingShotField}
+                  editingShotDraft={editingShotDraft}
+                  onStartEdit={startEditingShotField}
+                  onCommitEdit={commitEditingShotField}
+                  onDraftChange={setEditingShotDraft}
+                  onUpdateShot={(id, patch) => updateShot(id, patch)}
+                  characters={characters}
+                  locations={locations}
+                  bibleProps={bibleProps}
+                  projectStyle={projectStyle}
+                />
+                ) : viewMode === "pieces" ? (
+                <div className="-mx-4 -my-4 flex h-full bg-[#0A0A09]">
+                  <div className="w-1/4 min-w-[260px] overflow-y-auto border-r border-white/6 bg-[#0E0E0D]">
+                    <ScriptViewer
+                      selectedSceneId={selectedSceneId}
+                      onSceneClick={(sceneId) => selectScene(selectedSceneId === sceneId ? null : sceneId)}
+                      fontSize={scriptFontSize}
+                    />
+                  </div>
+                  <div className="flex-1 overflow-hidden">
+                    <EmbeddedTrackView blocks={scriptBlocks} scenes={scenes} shots={sortedShots} />
+                  </div>
                 </div>
-                ) : viewMode === "prompt" ? (
-                <div className="-mx-4 -my-4 h-full"><PromptLab /></div>
+                ) : viewMode === "tracks" ? (
+                <div className="-mx-4 -my-4 h-full">
+                  <EmbeddedTrackView blocks={scriptBlocks} scenes={scenes} shots={sortedShots} />
+                </div>
                 ) : (
                 <div className="overflow-x-auto">
                   <table className="w-full text-left text-[11px] text-[#D7CDC1]">
@@ -3089,9 +2324,27 @@ ${shotText}
                   }}
                 >
                   <div className="relative flex h-full flex-col text-[#E5E0DB]">
+                    {/* Canvas button — card level, outside image overflow */}
+                    {shot && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          e.preventDefault()
+                          const blockId = shot.blockRange?.[0] || shot.id
+                          useBlockCanvasStore.getState().openBlock(blockId, shot.id)
+                        }}
+                        className="absolute right-3 top-3 z-10 flex items-center gap-1 rounded-md border border-cyan-500/30 bg-black/60 px-2 py-1 text-[10px] uppercase tracking-[0.14em] text-cyan-300 backdrop-blur-sm transition-all hover:bg-cyan-500/20 hover:text-cyan-100 pointer-events-auto cursor-pointer"
+                        title="Open in Canvas"
+                      >
+                        <Grid size={10} />
+                        Canvas
+                      </button>
+                    )}
                     <div
                       className="relative overflow-hidden rounded-[10px] border border-white/8 bg-[#0E1014] shadow-[inset_0_1px_0_rgba(255,255,255,0.06)]"
                       style={{ aspectRatio: "16 / 8.7" }}
+                      onClick={() => { if (shot) navigateToShot(shot) }}
                       onDoubleClick={() => { if (previewSrc && shot) { setLightbox({ src: previewSrc, shotId: shot.id }); setLightboxTransform({ flipH: false, flipV: false, rotate: 0 }) } }}
                     >
                       {previewSrc ? (
@@ -3123,6 +2376,7 @@ ${shotText}
                           </div>
                         )}
                       </div>
+                      {/* Canvas button removed from here — moved to card level below */}
 
                       {shot && (shot.generationHistory?.length ?? 0) > 1 && !isGenerating && (() => {
                         const total = shot.generationHistory.length
@@ -3202,11 +2456,12 @@ ${shotText}
                           </button>
                           <button
                             type="button"
-                            onClick={() => shot && setPromptLabShotId(shot.id)}
-                            className="flex items-center gap-1.5 rounded-lg border border-[#D4A853]/30 bg-[#D4A853]/15 px-3.5 py-2 text-[12px] uppercase tracking-[0.14em] text-[#E6C887] backdrop-blur-sm transition-colors hover:bg-[#D4A853]/25"
+                            onClick={() => shot && handleBreakdownShot(shot.id)}
+                            disabled={breakdownShotId === shot?.id}
+                            className="flex items-center gap-1.5 rounded-lg border border-emerald-500/30 bg-emerald-500/15 px-3.5 py-2 text-[12px] uppercase tracking-[0.14em] text-emerald-300 backdrop-blur-sm transition-colors hover:bg-emerald-500/25 disabled:opacity-40"
                           >
-                            <Wand2 size={13} />
-                            Edit
+                            {breakdownShotId === shot?.id ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                            Split
                           </button>
                           {shot?.thumbnailUrl && (
                             <button
@@ -3274,241 +2529,35 @@ ${shotText}
             </button>
           </div>
           ) : viewMode === "inspector" ? (
-          <div className="flex flex-col gap-2">
-            {inspectorShots.length === 0 ? (
-              <div className="flex min-h-full flex-col items-center justify-center py-16 text-center">
-                <BookOpen size={28} className="mb-3 text-white/15" />
-                <p className="text-[12px] text-[#7F8590]">No shots to inspect yet.</p>
-              </div>
-            ) : (
-              inspectorShots.map((shot, index) => {
-                const isExpanded = expandedShotId === shot.id
-                const resolvedShot = editingShotField?.shotId === shot.id
-                  ? { ...shot, [editingShotField.field]: editingShotDraft }
-                  : shot
-                const imagePrompt = buildImagePrompt(resolvedShot, characters, locations, projectStyle, bibleProps)
-                const videoPrompt = buildVideoPrompt(resolvedShot, characters, locations, projectStyle, bibleProps)
-                const refs = getReferencedBibleEntries(resolvedShot, characters, locations)
-                const previewSrc = shot.thumbnailUrl || shot.svg || null
-                return (
-                  <div
-                    key={shot.id}
-                    className={`mb-2 overflow-hidden rounded-xl border transition-colors ${isExpanded ? "border-white/15 bg-white/3" : "border-white/8 bg-white/2 hover:bg-white/4"}`}
-                  >
-                    <button
-                      type="button"
-                      onClick={() => setExpandedShotId(isExpanded ? null : shot.id)}
-                      className="flex w-full items-center gap-3 px-3 py-3 text-left"
-                    >
-                      <div className="relative h-9 w-16 overflow-hidden rounded-md border border-white/8 bg-white/3">
-                        {previewSrc ? (
-                          <Image src={previewSrc} alt="" fill unoptimized className="object-cover" />
-                        ) : (
-                          <div className="flex h-full w-full items-center justify-center text-[9px] uppercase tracking-[0.16em] text-white/25">
-                            No Img
-                          </div>
-                        )}
-                      </div>
-                      <div className="w-8 shrink-0 text-[16px] font-medium tracking-[0.14em] text-[#E7E3DC]">
-                        {String(index + 1).padStart(2, "0")}
-                      </div>
-                      <div className="min-w-0 flex-1">
-                        <p className="truncate text-[13px] font-medium text-[#E7E3DC]">
-                          {shot.label || `Shot ${index + 1}`}
-                        </p>
-                        <p className="mt-1 flex items-center gap-1 truncate text-[10px] text-white/35">
-                          {shot.shotSize || "WIDE"} · {shot.cameraMotion || "Static"} · <EditableDuration durationMs={shot.duration} onChange={(ms) => updateShot(shot.id, { duration: ms })} />
-                        </p>
-                      </div>
-                      <div className={`shrink-0 text-[16px] text-white/40 transition-transform ${isExpanded ? "rotate-90" : "rotate-0"}`}>
-                        ▸
-                      </div>
-                    </button>
-
-                    {isExpanded ? (
-                      <div className="grid gap-3 border-t border-white/8 px-3 pb-3 pt-2">
-                        <section className="grid gap-1.5">
-                          <div className="flex items-center gap-2">
-                            <BookOpen size={12} className="text-white/35" />
-                            <p className="text-[10px] uppercase tracking-wider text-white/30">Литературный</p>
-                          </div>
-                          {editingShotField?.shotId === shot.id && editingShotField.field === "caption" ? (
-                            <textarea
-                              autoFocus
-                              rows={4}
-                              value={editingShotDraft}
-                              onChange={(event) => setEditingShotDraft(event.target.value)}
-                              onBlur={() => commitEditingShotField(shot.id)}
-                              className="w-full resize-y rounded-lg bg-white/3 p-3 text-[13px] text-white/80 outline-none ring-1 ring-inset ring-white/10"
-                            />
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => startEditingShotField(shot, "caption", shot.caption || "")}
-                              className="w-full rounded-lg bg-white/3 p-3 text-left text-[13px] text-white/80 transition-colors hover:bg-white/4"
-                            >
-                              <span className="whitespace-pre-wrap">{resolvedShot.caption || shot.label || "Нет описания кадра."}</span>
-                            </button>
-                          )}
-                        </section>
-
-                        <section className="grid gap-1.5">
-                          <div className="flex items-center gap-2">
-                            <Clapperboard size={12} className="text-white/35" />
-                            <p className="text-[10px] uppercase tracking-wider text-white/30">Режиссёрский</p>
-                          </div>
-                          {editingShotField?.shotId === shot.id && editingShotField.field === "directorNote" ? (
-                            <textarea
-                              autoFocus
-                              rows={4}
-                              value={editingShotDraft}
-                              onChange={(event) => setEditingShotDraft(event.target.value)}
-                              onBlur={() => commitEditingShotField(shot.id)}
-                              className="w-full resize-y rounded-lg bg-white/3 p-3 text-[12px] leading-5 text-white/60 outline-none ring-1 ring-inset ring-white/10"
-                            />
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => startEditingShotField(shot, "directorNote", shot.directorNote || "")}
-                              className="w-full rounded-lg bg-white/3 p-3 text-left text-[12px] leading-5 text-white/60 transition-colors hover:bg-white/4"
-                            >
-                              <span className="whitespace-pre-wrap">{resolvedShot.directorNote || "Нет режиссёрской заметки."}</span>
-                            </button>
-                          )}
-                        </section>
-
-                        <section className="grid gap-1.5">
-                          <div className="flex items-center gap-2">
-                            <Camera size={12} className="text-amber-400/70" />
-                            <p className="text-[10px] uppercase tracking-wider text-white/30">Операторский</p>
-                          </div>
-                          {editingShotField?.shotId === shot.id && editingShotField.field === "cameraNote" ? (
-                            <textarea
-                              autoFocus
-                              rows={5}
-                              value={editingShotDraft}
-                              onChange={(event) => setEditingShotDraft(event.target.value)}
-                              onBlur={() => commitEditingShotField(shot.id)}
-                              className="w-full resize-y rounded-lg bg-white/3 p-3 font-mono text-[12px] leading-5 text-amber-400/70 outline-none ring-1 ring-inset ring-white/10"
-                            />
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => startEditingShotField(shot, "cameraNote", shot.cameraNote || "")}
-                              className="w-full rounded-lg bg-white/3 p-3 text-left font-mono text-[12px] leading-5 text-amber-400/70 transition-colors hover:bg-white/4"
-                            >
-                              <span className="whitespace-pre-wrap">{resolvedShot.cameraNote || "Нет операторской заметки."}</span>
-                            </button>
-                          )}
-                        </section>
-
-                        <section className="grid gap-1.5">
-                          <div className="flex items-center gap-2">
-                            <ImageIcon size={12} className="text-white/35" />
-                            <p className="text-[10px] uppercase tracking-wider text-white/30">Промпт картинки</p>
-                            <span className="rounded-full border border-[#D4A853]/35 bg-[#D4A853]/12 px-2 py-0.5 text-[9px] uppercase tracking-[0.16em] text-[#E8D7B2]">EN</span>
-                          </div>
-                          {editingShotField?.shotId === shot.id && editingShotField.field === "imagePrompt" ? (
-                            <textarea
-                              autoFocus
-                              rows={7}
-                              value={editingShotDraft}
-                              onChange={(event) => setEditingShotDraft(event.target.value)}
-                              onBlur={() => commitEditingShotField(shot.id)}
-                              className="w-full resize-y rounded-lg bg-white/2 p-3 font-mono text-[11px] leading-5 text-white/40 outline-none ring-1 ring-inset ring-white/10"
-                            />
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => startEditingShotField(shot, "imagePrompt", shot.imagePrompt || imagePrompt)}
-                              className="w-full rounded-lg bg-white/2 p-3 text-left font-mono text-[11px] leading-5 text-white/40 transition-colors hover:bg-white/4"
-                            >
-                              <span className="whitespace-pre-wrap">{imagePrompt}</span>
-                            </button>
-                          )}
-                        </section>
-
-                        <section className="grid gap-1.5 opacity-60">
-                          <div className="flex items-center gap-2">
-                            <Film size={12} className="text-white/35" />
-                            <p className="text-[10px] uppercase tracking-wider text-white/30">Промпт видео</p>
-                            <span className="rounded-full border border-[#D4A853]/35 bg-[#D4A853]/12 px-2 py-0.5 text-[9px] uppercase tracking-[0.16em] text-[#E8D7B2]">EN</span>
-                            <span className="rounded-full border border-white/12 bg-white/4 px-2 py-0.5 text-[9px] uppercase tracking-[0.16em] text-white/40">будущее</span>
-                          </div>
-                          {editingShotField?.shotId === shot.id && editingShotField.field === "videoPrompt" ? (
-                            <textarea
-                              autoFocus
-                              rows={6}
-                              value={editingShotDraft}
-                              onChange={(event) => setEditingShotDraft(event.target.value)}
-                              onBlur={() => commitEditingShotField(shot.id)}
-                              className="w-full resize-y rounded-lg bg-white/2 p-3 font-mono text-[11px] leading-5 text-white/30 outline-none ring-1 ring-inset ring-white/10"
-                            />
-                          ) : (
-                            <button
-                              type="button"
-                              onClick={() => startEditingShotField(shot, "videoPrompt", shot.videoPrompt || videoPrompt)}
-                              className="w-full rounded-lg bg-white/2 p-3 text-left font-mono text-[11px] leading-5 text-white/30 transition-colors hover:bg-white/4"
-                            >
-                              <span className="whitespace-pre-wrap">{videoPrompt}</span>
-                            </button>
-                          )}
-                        </section>
-
-                        <section className="grid gap-1.5">
-                          <p className="text-[10px] uppercase tracking-wider text-white/30">Библия — референсы</p>
-                          <div className="grid gap-2 rounded-lg bg-white/3 p-3">
-                            {refs.characters.length === 0 && !refs.location ? (
-                              <p className="text-[12px] text-white/35">Нет связанных bible entries для этого шота.</p>
-                            ) : null}
-
-                            {refs.characters.map((character) => (
-                              <div key={character.id} className="flex items-center gap-3">
-                                <div className="relative h-8 w-8 overflow-hidden rounded-md border border-white/10 bg-white/4">
-                                  {character.generatedPortraitUrl ? (
-                                    <Image src={character.generatedPortraitUrl} alt={character.name} fill unoptimized className="object-cover" />
-                                  ) : (
-                                    <div className="flex h-full w-full items-center justify-center text-[9px] uppercase tracking-[0.14em] text-white/25">
-                                      {character.name.slice(0, 2)}
-                                    </div>
-                                  )}
-                                </div>
-                                <div>
-                                  <p className="text-[12px] text-[#E7E3DC]">{character.name}</p>
-                                  <p className="text-[11px] text-white/35">portrait · ref ×{character.referenceImages.length}</p>
-                                </div>
-                              </div>
-                            ))}
-
-                            {refs.location ? (
-                              <div className="flex items-center gap-3">
-                                <div className="relative h-8 w-8 overflow-hidden rounded-md border border-white/10 bg-white/4">
-                                  {refs.location.generatedImageUrl ? (
-                                    <Image src={refs.location.generatedImageUrl} alt={refs.location.name} fill unoptimized className="object-cover" />
-                                  ) : (
-                                    <div className="flex h-full w-full items-center justify-center text-[9px] uppercase tracking-[0.14em] text-white/25">
-                                      LOC
-                                    </div>
-                                  )}
-                                </div>
-                                <div>
-                                  <p className="text-[12px] text-[#E7E3DC]">{refs.location.name}</p>
-                                  <p className="text-[11px] text-white/35">{refs.location.intExt} · ref ×{refs.location.referenceImages.length}</p>
-                                </div>
-                              </div>
-                            ) : null}
-                          </div>
-                        </section>
-
-                      </div>
-                    ) : null}
-                  </div>
-                )
-              })
-            )}
+          <InspectorView
+            shots={inspectorShots}
+            expandedShotId={expandedShotId}
+            onToggleExpand={(id) => setExpandedShotId(expandedShotId === id ? null : id)}
+            editingShotField={editingShotField}
+            editingShotDraft={editingShotDraft}
+            onStartEdit={startEditingShotField}
+            onCommitEdit={commitEditingShotField}
+            onDraftChange={setEditingShotDraft}
+            onUpdateShot={(id, patch) => updateShot(id, patch)}
+            characters={characters}
+            locations={locations}
+            bibleProps={bibleProps}
+            projectStyle={projectStyle}
+          />
+          ) : viewMode === "pieces" ? (
+          <div className="-mx-5 -my-5 flex h-full items-start justify-center overflow-y-auto bg-[#0A0A09]">
+            <div className="my-8 w-full max-w-[680px] rounded-xl border border-white/6 bg-[#111110] px-10 py-8 shadow-[0_8px_40px_rgba(0,0,0,0.5)]">
+              <ScriptViewer
+                selectedSceneId={selectedSceneId}
+                onSceneClick={(sceneId) => selectScene(selectedSceneId === sceneId ? null : sceneId)}
+                fontSize={scriptFontSize}
+              />
+            </div>
           </div>
-          ) : viewMode === "prompt" ? (
-          <div className="-mx-4 -my-4 h-full"><PromptLab /></div>
+          ) : viewMode === "tracks" ? (
+          <div className="-mx-5 -my-5 h-full">
+            <EmbeddedTrackView blocks={scriptBlocks} scenes={scenes} shots={sortedShots} />
+          </div>
           ) : (
           /* Shot List (table) view */
           <div className="overflow-x-auto">
@@ -3637,10 +2686,6 @@ ${shotText}
         )
       })()}
 
-      {/* ─── Prompt Lab Bottom Panel ─── */}
-      {promptLabShotId && (
-        <PromptLabPanel shotId={promptLabShotId} onClose={() => setPromptLabShotId(null)} />
-      )}
 
       {/* Shot Studio (replaces old lightbox) */}
       {lightbox && (
@@ -3656,6 +2701,9 @@ ${shotText}
           }}
         />
       )}
+
+      {/* Block Canvas — node graph editor per shot */}
+      <BlockCanvas />
 
     </aside>
     </>

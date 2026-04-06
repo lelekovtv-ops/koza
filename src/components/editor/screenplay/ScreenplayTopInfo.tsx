@@ -1,5 +1,6 @@
-import React from "react"
+import React, { useMemo } from "react"
 import type { ScreenplayColors } from "./screenplayUiTypes"
+import type { Block } from "@/lib/screenplayFormat"
 
 interface ScreenplayTopInfoProps {
   focusMode: boolean
@@ -7,7 +8,8 @@ interface ScreenplayTopInfoProps {
   sceneCount: number
   pageCount: number
   zoomPercent: number
-  setZoomPercent: React.Dispatch<React.SetStateAction<number>>
+  setZoomPercent: (zoom: number) => void
+  blocks?: Block[]
 }
 
 export function ScreenplayTopInfo({
@@ -17,7 +19,16 @@ export function ScreenplayTopInfo({
   pageCount,
   zoomPercent,
   setZoomPercent,
+  blocks,
 }: ScreenplayTopInfoProps) {
+  const stats = useMemo(() => {
+    if (!blocks || blocks.length === 0) return null
+    const allText = blocks.map((b) => b.text).join(" ")
+    const words = allText.split(/\s+/).filter((w) => w.length > 0).length
+    const runtime = Math.max(1, Math.round(pageCount * 1)) // 1 page ≈ 1 min
+    return { words, runtime }
+  }, [blocks, pageCount])
+
   if (focusMode) return null
 
   return (
@@ -30,7 +41,7 @@ export function ScreenplayTopInfo({
           color: colors.text,
         }}
       >
-        {sceneCount} scenes · {pageCount} pages
+        {sceneCount} scenes · {pageCount} pages{stats ? ` · ${stats.words.toLocaleString()} words · ~${stats.runtime} min` : ""}
       </div>
       <div
         className="flex items-center gap-2 rounded-lg px-2 py-1"
@@ -45,7 +56,7 @@ export function ScreenplayTopInfo({
         <input
           type="range"
           min={50}
-          max={140}
+          max={200}
           step={5}
           value={zoomPercent}
           onChange={(e) => setZoomPercent(Number(e.target.value))}

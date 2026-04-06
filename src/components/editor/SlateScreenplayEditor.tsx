@@ -31,7 +31,7 @@ import {
 import { withHistory } from "slate-history"
 import { useBoardStore } from "@/store/board"
 import { useScriptStore } from "@/store/script"
-import { makeBlock, type BlockType } from "@/lib/screenplayFormat"
+import { makeBlock, type Block, type BlockType } from "@/lib/screenplayFormat"
 import { withScreenplay } from "./screenplay/withScreenplay"
 import { handleTabBehavior } from "./screenplay/screenplayTabBehavior"
 import {
@@ -42,6 +42,7 @@ import {
 } from "./screenplay/screenplayKeyboardBehavior"
 import { createRenderElement, createRenderLeaf } from "./screenplay/screenplayRenderers"
 import { palette, focusPalette } from "./screenplay/screenplayTheme"
+import { useThemeStore } from "@/store/theme"
 import {
   findSlugSuggestion,
   getCurrentElementEntry,
@@ -81,10 +82,11 @@ import {
   SCREENPLAY_SCENE_HEADING_MARGIN_TOP_PX,
   SCREENPLAY_CHARACTER_MARGIN_TOP_PX,
   SCREENPLAY_TRANSITION_MARGIN_TOP_PX,
-  SCREENPLAY_ACTION_AFTER_SCENE_HEADING_MARGIN_TOP_PX,
   SCREENPLAY_ACTION_AFTER_ACTION_MARGIN_TOP_PX,
-  SCREENPLAY_TEXT_AREA_HEIGHT_PX,
+  SCREENPLAY_EDITOR_PADDING,
 } from "./screenplay/screenplayLayoutConstants"
+import { calculatePageBreaks } from "./screenplay/screenplayPageBreaks"
+import { useBibleStore } from "@/store/bible"
 import type { ScreenplayColors } from "./screenplay/screenplayUiTypes"
 import type {
   ScreenplayElement,
@@ -92,8 +94,11 @@ import type {
 } from "@/lib/screenplayTypes"
 import { createScreenplayElement } from "@/lib/screenplayTypes"
 import { useScenesStore } from "@/store/scenes"
+import { useScreenplaySettings, PAPER_THEMES } from "@/store/screenplaySettings"
 import { useNavigationStore } from "@/store/navigation"
 import { useBlockLockStatus } from "@/hooks/useBlockLockStatus"
+import { useTimelineStore } from "@/store/timeline"
+import { buildFullTimingMap } from "@/lib/placementEngine"
 
 // ─── Types ───────────────────────────────────────────────
 
@@ -317,6 +322,258 @@ function getPointFromCaretSnapshot(editor: Editor, snapshot: CaretSnapshot): Poi
   return getPointFromAbsoluteOffset(editor, snapshot.absoluteOffset)
 }
 
+// ─── Spread Preview (read-only two-page book view) ──────
+
+interface SpreadPreviewProps {
+  blocks: Block[]
+  colors: ScreenplayColors
+  isDark: boolean
+  appTheme: string
+  focusMode: boolean
+  paperBg: string
+  paperText: string
+}
+
+function SpreadPreview({ blocks, colors, isDark, appTheme, focusMode, paperBg, paperText }: SpreadPreviewProps) {
+  const [spreadIdx, setSpreadIdx] = useState(0) // index of left page (always even)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  const textColor = focusMode ? "rgba(255,255,255,0.85)" : appTheme === "architect" ? colors.text : paperText
+
+  // Render blocks identically to screenplayRenderers.tsx:
+  // Container provides page padding (left/right), blocks add ch-based indents
+  const renderBlock = useCallback((block: Block, bi: number) => {
+    const base: React.CSSProperties = {
+      fontFamily: "'Courier Prime', 'Courier New', monospace",
+      fontSize: SCREENPLAY_FONT_SIZE_PX,
+      lineHeight: `${SCREENPLAY_LINE_HEIGHT_PX}px`,
+      color: textColor,
+      whiteSpace: "pre-wrap",
+      wordBreak: "break-word",
+    }
+    switch (block.type) {
+      case "scene_heading":
+        return <div key={block.id} style={{ ...base, fontWeight: "bold", textTransform: "uppercase", color: colors.scene, marginTop: SCREENPLAY_SCENE_HEADING_MARGIN_TOP_PX }}>{block.text}</div>
+      case "character":
+        return <div key={block.id} style={{ ...base, fontWeight: "bold", textTransform: "uppercase", paddingLeft: `${SCREENPLAY_CHARACTER_INDENT_CH}ch`, marginTop: SCREENPLAY_CHARACTER_MARGIN_TOP_PX, color: colors.character }}>{block.text}</div>
+      case "dialogue":
+        return <div key={block.id} style={{ ...base, paddingLeft: `${SCREENPLAY_DIALOGUE_INDENT_LEFT_CH}ch`, paddingRight: `${SCREENPLAY_DIALOGUE_INDENT_RIGHT_CH}ch` }}>{block.text}</div>
+      case "parenthetical":
+        return <div key={block.id} style={{ ...base, fontStyle: "italic", paddingLeft: `${SCREENPLAY_PARENTHETICAL_INDENT_CH}ch`, color: colors.parenthetical }}>{block.text}</div>
+      case "transition":
+        return <div key={block.id} style={{ ...base, textAlign: "right", textTransform: "uppercase", marginTop: SCREENPLAY_TRANSITION_MARGIN_TOP_PX, color: colors.transition }}>{block.text}</div>
+      default:
+        return <div key={block.id} style={{ ...base, marginTop: SCREENPLAY_ACTION_AFTER_ACTION_MARGIN_TOP_PX }}>{block.text}</div>
+    }
+  }, [colors, textColor])
+
+  // Distribute blocks across pages by estimating heights
+  const pages = useMemo(() => {
+    const textAreaH = SCREENPLAY_PAGE_HEIGHT_PX - SCREENPLAY_PAGE_PADDING_TOP_PX - SCREENPLAY_PAGE_PADDING_BOTTOM_PX
+    const contentW = SCREENPLAY_PAGE_WIDTH_PX - SCREENPLAY_PAGE_PADDING_LEFT_PX - SCREENPLAY_PAGE_PADDING_RIGHT_PX
+    const charsPerLine = Math.max(20, Math.floor(contentW / (SCREENPLAY_FONT_SIZE_PX * 0.6)))
+    const result: Block[][] = []
+    let currentPage: Block[] = []
+    let currentH = 0
+
+    for (let i = 0; i < blocks.length; i++) {
+      const b = blocks[i]
+      // Estimate block height
+      let blockW = contentW
+      if (b.type === "dialogue") blockW = contentW - (SCREENPLAY_DIALOGUE_INDENT_LEFT_CH + SCREENPLAY_DIALOGUE_INDENT_RIGHT_CH) * (SCREENPLAY_FONT_SIZE_PX * 0.6)
+      else if (b.type === "character") blockW = contentW - SCREENPLAY_CHARACTER_INDENT_CH * (SCREENPLAY_FONT_SIZE_PX * 0.6)
+      const effCharsPerLine = Math.max(10, Math.floor(blockW / (SCREENPLAY_FONT_SIZE_PX * 0.6)))
+      const lines = Math.max(1, Math.ceil((b.text.length || 1) / effCharsPerLine))
+      let marginTop = SCREENPLAY_ACTION_AFTER_ACTION_MARGIN_TOP_PX
+      if (b.type === "scene_heading") marginTop = SCREENPLAY_SCENE_HEADING_MARGIN_TOP_PX
+      else if (b.type === "character") marginTop = SCREENPLAY_CHARACTER_MARGIN_TOP_PX
+      else if (b.type === "transition") marginTop = SCREENPLAY_TRANSITION_MARGIN_TOP_PX
+      const blockH = (currentPage.length === 0 ? 0 : marginTop) + lines * SCREENPLAY_LINE_HEIGHT_PX
+
+      if (currentH + blockH > textAreaH && currentPage.length > 0) {
+        result.push(currentPage)
+        currentPage = [b]
+        currentH = lines * SCREENPLAY_LINE_HEIGHT_PX
+      } else {
+        currentPage.push(b)
+        currentH += blockH
+      }
+    }
+    if (currentPage.length > 0) result.push(currentPage)
+    return result
+  }, [blocks])
+
+  const totalPages = pages.length
+  const pairCount = Math.ceil(totalPages / 2)
+
+  // Keyboard navigation
+  useEffect(() => {
+    const el = containerRef.current
+    if (!el) return
+    el.focus()
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "ArrowRight" || e.key === "ArrowDown" || e.key === " ") {
+        e.preventDefault()
+        setSpreadIdx((prev) => Math.min(prev + 2, (pairCount - 1) * 2))
+      } else if (e.key === "ArrowLeft" || e.key === "ArrowUp") {
+        e.preventDefault()
+        setSpreadIdx((prev) => Math.max(prev - 2, 0))
+      } else if (e.key === "Home") {
+        e.preventDefault()
+        setSpreadIdx(0)
+      } else if (e.key === "End") {
+        e.preventDefault()
+        setSpreadIdx((pairCount - 1) * 2)
+      }
+    }
+    el.addEventListener("keydown", handler)
+    return () => el.removeEventListener("keydown", handler)
+  }, [pairCount])
+
+  // Click zones — left half goes back, right half goes forward
+  const handleClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect()
+    const x = e.clientX - rect.left
+    if (x < rect.width / 2) {
+      setSpreadIdx((prev) => Math.max(prev - 2, 0))
+    } else {
+      setSpreadIdx((prev) => Math.min(prev + 2, (pairCount - 1) * 2))
+    }
+  }, [pairCount])
+
+  const renderPage = useCallback((pageIdx: number, previewScale: number) => {
+    const pageW = SCREENPLAY_PAGE_WIDTH_PX * previewScale
+    const pageH = SCREENPLAY_PAGE_HEIGHT_PX * previewScale
+
+    if (pageIdx >= pages.length) {
+      return <div style={{ width: pageW, height: pageH }} />
+    }
+
+    const isLight = paperBg === "#FFFFFF" || paperBg === "#FFF8F0" || paperBg === "#F5F0E8"
+    const pageBg = focusMode ? "rgba(0,0,0,0.35)" : appTheme === "architect" ? colors.surfaceBg : paperBg
+    const pageNumColor = isLight && !focusMode ? "rgba(0,0,0,0.3)" : colors.muted
+    const pageBorder = focusMode ? "none" : isLight ? "1px solid rgba(0,0,0,0.08)" : "1px solid rgba(255,255,255,0.06)"
+    const pageBlocks = pages[pageIdx]
+
+    return (
+      <div style={{
+        width: pageW, height: pageH, backgroundColor: pageBg, overflow: "hidden", position: "relative", borderRadius: 2,
+        border: pageBorder,
+        boxShadow: focusMode ? "0 0 40px rgba(0,0,0,0.4)" : isLight ? "0 2px 12px rgba(0,0,0,0.12)" : "0 4px 20px rgba(0,0,0,0.3)",
+      }}>
+        <div style={{ position: "absolute", top: 8, right: 12, fontSize: 11, color: pageNumColor, zIndex: 2, fontFamily: "'Courier Prime', monospace" }}>
+          {pageIdx + 1}.
+        </div>
+        <div style={{
+          transform: `scale(${previewScale})`,
+          transformOrigin: "top left",
+          width: SCREENPLAY_PAGE_WIDTH_PX,
+          height: SCREENPLAY_PAGE_HEIGHT_PX,
+          overflow: "hidden",
+          pointerEvents: "none",
+          padding: SCREENPLAY_EDITOR_PADDING,
+          boxSizing: "border-box",
+        }}>
+          {pageBlocks.map(renderBlock)}
+        </div>
+      </div>
+    )
+  }, [pages, colors, renderBlock, paperBg, focusMode, appTheme])
+
+  const leftIdx = spreadIdx
+  const rightIdx = spreadIdx + 1
+  const currentPair = Math.floor(spreadIdx / 2)
+
+  return (
+    <div
+      ref={containerRef}
+      tabIndex={0}
+      className="relative flex-1 flex flex-col items-center justify-center outline-none"
+      style={{
+        backgroundColor: focusMode ? "transparent" : appTheme === "architect" ? "#080808" : isDark ? "#201E1B" : "#EDEDED",
+        cursor: "pointer",
+        userSelect: "none",
+      }}
+      onClick={handleClick}
+    >
+      {/* Two pages side by side — fill available height */}
+      <div style={{ display: "flex", gap: 4, filter: "drop-shadow(0 4px 20px rgba(0,0,0,0.35))" }}>
+        {(() => {
+          // Calculate scale to fit both pages in viewport
+          const maxH = typeof window !== "undefined" ? window.innerHeight - 120 : 800
+          const maxW = typeof window !== "undefined" ? window.innerWidth - 160 : 1200
+          const scaleH = maxH / SCREENPLAY_PAGE_HEIGHT_PX
+          const scaleW = maxW / (SCREENPLAY_PAGE_WIDTH_PX * 2 + 4)
+          const previewScale = Math.min(scaleH, scaleW, 0.85)
+          return (
+            <>
+              {renderPage(leftIdx, previewScale)}
+              {renderPage(rightIdx, previewScale)}
+            </>
+          )
+        })()}
+      </div>
+
+      {/* Page indicator + nav dots */}
+      <div style={{
+        position: "absolute",
+        bottom: 16,
+        left: "50%",
+        transform: "translateX(-50%)",
+        display: "flex",
+        alignItems: "center",
+        gap: 8,
+        padding: "6px 14px",
+        borderRadius: 20,
+        background: "rgba(0,0,0,0.5)",
+        backdropFilter: "blur(8px)",
+        fontSize: 12,
+        color: "rgba(255,255,255,0.6)",
+        fontFamily: "system-ui, sans-serif",
+      }}>
+        {/* Left arrow */}
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setSpreadIdx((prev) => Math.max(prev - 2, 0)) }}
+          style={{ background: "none", border: "none", color: spreadIdx > 0 ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.15)", cursor: spreadIdx > 0 ? "pointer" : "default", fontSize: 14, padding: "0 4px" }}
+        >
+          ‹
+        </button>
+
+        {/* Dots */}
+        {Array.from({ length: pairCount }).map((_, i) => (
+          <button
+            key={i}
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setSpreadIdx(i * 2) }}
+            style={{
+              width: i === currentPair ? 16 : 6,
+              height: 6,
+              borderRadius: 3,
+              background: i === currentPair ? "#D4A853" : "rgba(255,255,255,0.25)",
+              border: "none",
+              cursor: "pointer",
+              padding: 0,
+              transition: "all 0.2s",
+            }}
+          />
+        ))}
+
+        {/* Right arrow */}
+        <button
+          type="button"
+          onClick={(e) => { e.stopPropagation(); setSpreadIdx((prev) => Math.min(prev + 2, (pairCount - 1) * 2)) }}
+          style={{ background: "none", border: "none", color: spreadIdx < (pairCount - 1) * 2 ? "rgba(255,255,255,0.7)" : "rgba(255,255,255,0.15)", cursor: spreadIdx < (pairCount - 1) * 2 ? "pointer" : "default", fontSize: 14, padding: "0 4px" }}
+        >
+          ›
+        </button>
+
+        <span style={{ marginLeft: 4 }}>{leftIdx + 1}–{Math.min(rightIdx + 1, totalPages)} / {totalPages}</span>
+      </div>
+    </div>
+  )
+}
+
 // ─── Component ───────────────────────────────────────────
 
 const SlateScreenplayEditor = forwardRef<
@@ -339,12 +596,36 @@ const SlateScreenplayEditor = forwardRef<
   const blocks = useScriptStore((s) => s.blocks)
   const setBlocks = useScriptStore((s) => s.setBlocks)
   const setScenario = useScriptStore((s) => s.setScenario)
+  const appTheme = useThemeStore((s) => s.theme)
   const isDark = theme === "sepia"
   const scenes = useScenesStore((s) => s.scenes)
   const scrollToBlockId = useNavigationStore((s) => s.scrollToBlockId)
   const clearScrollRequest = useNavigationStore((s) => s.clearScrollRequest)
   const highlightBlockId = useNavigationStore((s) => s.highlightBlockId)
   const blockLockMap = useBlockLockStatus()
+  const timelineShots = useTimelineStore((s) => s.shots)
+
+  // Duration map: blockId → ms (from placement engine)
+  const durationMap = useMemo(() => {
+    if (blocks.length === 0 || scenes.length === 0) return new Map<string, number>()
+    const maps = buildFullTimingMap(blocks, scenes)
+    const result = new Map<string, number>()
+    for (const m of maps) {
+      for (const b of m.blocks) result.set(b.blockId, b.durationMs)
+    }
+    return result
+  }, [blocks, scenes])
+
+  // Shot status map: blockId → "empty" | "prompt" | "image"
+  const shotStatusMap = useMemo(() => {
+    const result = new Map<string, "empty" | "prompt" | "image">()
+    for (const shot of timelineShots) {
+      if (!shot.blockRange) continue
+      const status = shot.thumbnailUrl ? "image" : shot.imagePrompt ? "prompt" : "empty"
+      for (const bid of shot.blockRange) result.set(bid, status)
+    }
+    return result
+  }, [timelineShots])
 
   const lastPushedRef = useRef(scenario)
   const embeddedInitialFocusDoneRef = useRef(false)
@@ -375,10 +656,24 @@ const SlateScreenplayEditor = forwardRef<
     selectedText: "",
   })
   const [toolbarCollapsed, setToolbarCollapsed] = useState(focusMode)
-  const [zoomPercent, setZoomPercent] = useState(100)
+  const viewMode = useScreenplaySettings((s) => s.viewMode)
+  const zoomPercent = useScreenplaySettings((s) => s.zoom)
+  const setZoomPercent = useScreenplaySettings((s) => s.setZoom)
   const [typewriterSound, setTypewriterSound] = useState(false)
   const [slugGhost, setSlugGhost] = useState<{ ghost: string; full: string } | null>(null)
   const [autocomplete, setAutocomplete] = useState<AutocompleteState | null>(null)
+
+  // Bible data for enriched autocomplete
+  const bibleCharacters = useBibleStore((s) => s.characters)
+  const bibleLocations = useBibleStore((s) => s.locations)
+  const screenplaySettings = useScreenplaySettings()
+  const showBibleMarkers = screenplaySettings.bibleMarkers
+  const paperTheme = PAPER_THEMES[screenplaySettings.paperTheme]
+  const idleFade = screenplaySettings.idleFade
+  const bibleAutocomplete = useMemo(() => ({
+    characterNames: bibleCharacters.map((c) => c.name),
+    locationNames: bibleLocations.map((l) => l.name),
+  }), [bibleCharacters, bibleLocations])
   const standaloneScrollRef = useRef<HTMLDivElement | null>(null)
   const embeddedRootRef = useRef<HTMLDivElement | null>(null)
   const hasAnimatedSecondPageRef = useRef(false)
@@ -434,13 +729,23 @@ const SlateScreenplayEditor = forwardRef<
   // ── Colors ──
 
   const colors = useMemo<ScreenplayColors>(() => {
+    if (appTheme === "architect") {
+      let nextColors: ScreenplayColors = { ...palette.architect }
+      if (focusMode) nextColors = { ...nextColors, ...focusPalette.architect }
+      return nextColors
+    }
+    if (appTheme === "synthwave") {
+      let nextColors: ScreenplayColors = { ...palette.synthwave }
+      if (focusMode) nextColors = { ...nextColors, ...focusPalette.synthwave }
+      return nextColors
+    }
     let nextColors: ScreenplayColors = isDark ? { ...palette.sepia } : { ...palette.light }
     if (focusMode) {
       const fp = isDark ? focusPalette.sepia : focusPalette.light
       nextColors = { ...nextColors, ...fp }
     }
     return nextColors
-  }, [focusMode, isDark])
+  }, [focusMode, isDark, appTheme])
 
   // ── Stats ──
 
@@ -486,78 +791,14 @@ const SlateScreenplayEditor = forwardRef<
     return Math.max(1, Math.ceil((estimatedLines || 1) / SCREENPLAY_LINES_PER_PAGE))
   }, [editor.children])
 
-  // ── Page break calculation for paginated layout ──
+  // ── Page break calculation (industry-standard rules) ──
 
-  const { pageBreakMargins, visualPageCount } = useMemo(() => {
-    const PAGE_H = SCREENPLAY_PAGE_HEIGHT_PX
-    const GAP = SCREENPLAY_PAGE_GAP_PX
-    const PAD_TOP = SCREENPLAY_PAGE_PADDING_TOP_PX
-    const CONTENT_H = SCREENPLAY_TEXT_AREA_HEIGHT_PX
-    const LINE_H = SCREENPLAY_LINE_HEIGHT_PX
-    const FONT_SZ = SCREENPLAY_FONT_SIZE_PX
-
-    const contentWidth =
-      SCREENPLAY_PAGE_WIDTH_PX - SCREENPLAY_PAGE_PADDING_LEFT_PX - SCREENPLAY_PAGE_PADDING_RIGHT_PX
-    const charsPerLine = Math.max(20, Math.floor(contentWidth / (FONT_SZ * 0.6)))
-
-    const pageContentStart = (n: number) => n * (PAGE_H + GAP) + PAD_TOP
-    const pageContentEnd = (n: number) => pageContentStart(n) + CONTENT_H
-
-    const margins = new Map<number, number>()
-    let pageIdx = 0
-    let visualY = PAD_TOP
-
-    for (let i = 0; i < editor.children.length; i++) {
-      const node = editor.children[i]
-      if (!SlateElement.isElement(node)) continue
-      const el = node as ScreenplayElement
-
-      // Normal margin
-      let normalMargin = 0
-      if (i > 0) {
-        if (el.type === "scene_heading") normalMargin = SCREENPLAY_SCENE_HEADING_MARGIN_TOP_PX
-        else if (el.type === "character") normalMargin = SCREENPLAY_CHARACTER_MARGIN_TOP_PX
-        else if (el.type === "transition") normalMargin = SCREENPLAY_TRANSITION_MARGIN_TOP_PX
-        else if (el.type === "action") {
-          const prev = editor.children[i - 1]
-          if (SlateElement.isElement(prev)) {
-            const pt = (prev as ScreenplayElement).type
-            if (pt === "scene_heading") normalMargin = SCREENPLAY_ACTION_AFTER_SCENE_HEADING_MARGIN_TOP_PX
-            else if (pt === "action") normalMargin = SCREENPLAY_ACTION_AFTER_ACTION_MARGIN_TOP_PX
-          }
-        }
-      }
-
-      // Estimate element height in pixels
-      const text = Node.string(el).trim()
-      let avail = charsPerLine
-      if (el.type === "character") avail -= SCREENPLAY_CHARACTER_INDENT_CH
-      else if (el.type === "dialogue")
-        avail -= SCREENPLAY_DIALOGUE_INDENT_LEFT_CH + SCREENPLAY_DIALOGUE_INDENT_RIGHT_CH
-      else if (el.type === "parenthetical") avail -= SCREENPLAY_PARENTHETICAL_INDENT_CH
-      avail = Math.max(8, avail)
-      const lines = !text ? 1 : Math.max(1, Math.ceil(text.length / avail))
-      const elemH = lines * LINE_H
-
-      const elemTop = visualY + normalMargin
-      const elemBottom = elemTop + elemH
-      const curPageEnd = pageContentEnd(pageIdx)
-
-      if (elemBottom > curPageEnd && visualY > pageContentStart(pageIdx)) {
-        // Element crosses page boundary; push to next page
-        pageIdx++
-        const newTop = pageContentStart(pageIdx)
-        margins.set(i, newTop - visualY)
-        visualY = newTop + elemH
-      } else {
-        visualY = elemBottom
-      }
-
-      while (visualY > pageContentEnd(pageIdx)) pageIdx++
-    }
-
-    return { pageBreakMargins: margins, visualPageCount: pageIdx + 1 }
-  }, [editor.children])
+  const pageBreakInfo = useMemo(
+    () => calculatePageBreaks(editor.children),
+    [editor.children],
+  )
+  const pageBreakMargins = pageBreakInfo.margins
+  const visualPageCount = pageBreakInfo.pageCount
 
   // ── Typewriter sound ──
 
@@ -716,7 +957,7 @@ const SlateScreenplayEditor = forwardRef<
       }
 
       try {
-        const model = computeAutocompleteModel(editor)
+        const model = computeAutocompleteModel(editor, bibleAutocomplete)
         if (!model || model.items.length === 0) {
           setAutocomplete(null)
         } else {
@@ -822,8 +1063,9 @@ const SlateScreenplayEditor = forwardRef<
       const isMod = e.metaKey || e.ctrlKey
 
       if (e.key === "Enter" && e.shiftKey) {
-        // Trigger grammar assist, but keep native Enter screenplay flow intact.
+        e.preventDefault()
         applyGrammarToPreviousBlock()
+        return
       }
 
       // Typewriter sound for normal keys
@@ -951,8 +1193,8 @@ const SlateScreenplayEditor = forwardRef<
   // ── Render element (with industry-standard indents) ──
 
   const renderElement = useMemo(
-    () => createRenderElement({ editor, colors, editorFontSize, editorLineHeightPx, pageBreakMargins: scaledPageBreakMargins, sceneMap, highlightBlockId, lockedBlockIds }),
-    [editor, colors, editorFontSize, editorLineHeightPx, scaledPageBreakMargins, sceneMap, highlightBlockId, lockedBlockIds]
+    () => createRenderElement({ editor, colors, editorFontSize, editorLineHeightPx, pageBreakMargins: scaledPageBreakMargins, moreAfter: pageBreakInfo.moreAfter, contdBefore: pageBreakInfo.contdBefore, sceneMap, highlightBlockId, lockedBlockIds, durationMap, shotStatusMap }),
+    [editor, colors, editorFontSize, editorLineHeightPx, scaledPageBreakMargins, pageBreakInfo.moreAfter, pageBreakInfo.contdBefore, sceneMap, highlightBlockId, lockedBlockIds, durationMap, shotStatusMap]
   )
 
   useEffect(() => {
@@ -1026,44 +1268,125 @@ const SlateScreenplayEditor = forwardRef<
     }
   }, [embedded, visualPageCount, zoomScale])
 
-  const decorate = useCallback((entry: [Node, number[]]) => {
-    if (!aiRippleRange) return []
+  // Bible name patterns for inline highlighting in action/dialogue blocks
+  const bibleNamePatterns = useMemo(() => {
+    const names: { pattern: RegExp; kind: "character" | "location" | "prop" }[] = []
+    // Use Unicode-aware lookbehind/lookahead for word boundaries (works with Cyrillic)
+    const wb = (escaped: string) => `(?<![\\p{L}\\p{N}])${escaped}(?![\\p{L}\\p{N}])`
+    for (const c of bibleCharacters) {
+      if (c.name.length > 1) {
+        try {
+          const esc = c.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+          names.push({ pattern: new RegExp(wb(esc), "giu"), kind: "character" })
+        } catch { /* skip */ }
+      }
+    }
+    for (const l of bibleLocations) {
+      if (l.name.length > 1) {
+        try {
+          const esc = l.name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+          names.push({ pattern: new RegExp(wb(esc), "giu"), kind: "location" })
+        } catch { /* skip */ }
+      }
+    }
+    return names
+  }, [bibleCharacters, bibleLocations])
 
+  const decorate = useCallback((entry: [Node, number[]]) => {
     const [node, path] = entry
     if (!Text.isText(node)) return []
 
-    const startOffset = Math.max(0, aiRippleRange.start)
-    const endOffset = Math.max(startOffset + 1, aiRippleRange.end)
+    const ranges: Range[] = []
 
-    const anchor = getPointFromAbsoluteOffset(editor, startOffset)
-    const focus = getPointFromAbsoluteOffset(editor, endOffset)
-    if (!anchor || !focus) return []
+    // AI ripple highlighting
+    if (aiRippleRange) {
+      const startOffset = Math.max(0, aiRippleRange.start)
+      const endOffset = Math.max(startOffset + 1, aiRippleRange.end)
 
-    const globalRange: Range = { anchor, focus }
-    const nodeRange = Editor.range(editor, path)
-    const intersection = Range.intersection(globalRange, nodeRange)
-    if (!intersection) return []
+      const anchor = getPointFromAbsoluteOffset(editor, startOffset)
+      const focus = getPointFromAbsoluteOffset(editor, endOffset)
+      if (anchor && focus) {
+        const globalRange: Range = { anchor, focus }
+        const nodeRange = Editor.range(editor, path)
+        const intersection = Range.intersection(globalRange, nodeRange)
+        if (intersection) {
+          const intersectionStart = getAbsoluteOffsetFromPoint(editor, Range.start(intersection))
+          const intersectionEnd = getAbsoluteOffsetFromPoint(editor, Range.end(intersection))
+          if (intersectionStart !== null && intersectionEnd !== null) {
+            ranges.push({
+              anchor: intersection.anchor,
+              focus: intersection.focus,
+              aiRipple: true,
+              aiRippleToken: aiRippleRange.token,
+              aiRippleRangeLength: Math.max(1, endOffset - startOffset),
+              aiRippleSegmentStart: Math.max(0, intersectionStart - startOffset),
+              aiRippleSegmentLength: Math.max(1, intersectionEnd - intersectionStart),
+            } as Range)
+          }
+        }
+      }
+    }
 
-    const intersectionStart = getAbsoluteOffsetFromPoint(editor, Range.start(intersection))
-    const intersectionEnd = getAbsoluteOffsetFromPoint(editor, Range.end(intersection))
-    if (intersectionStart === null || intersectionEnd === null) return []
+    // Bible entity icons — in action, dialogue, scene_heading, character blocks
+    if (showBibleMarkers && path.length >= 2) {
+      const parentPath = path.slice(0, -1)
+      try {
+        const parentNode = Node.get(editor, parentPath)
+        if (SlateElement.isElement(parentNode)) {
+          const elType = (parentNode as ScreenplayElement).type
+          const text = node.text
 
-    const rippleRangeLength = Math.max(1, endOffset - startOffset)
-    const rippleSegmentStart = Math.max(0, intersectionStart - startOffset)
-    const rippleSegmentLength = Math.max(1, intersectionEnd - intersectionStart)
+          // Character block → single character icon at end of name
+          if (elType === "character" && text.trim().length > 1) {
+            const charName = text.trim().replace(/\s*\(.*\)\s*$/, "").trim()
+            const upperName = charName.toUpperCase()
+            if (bibleCharacters.some((c) => c.name.toUpperCase() === upperName)) {
+              const end = text.length
+              const start = Math.max(0, end - 1)
+              ranges.push({
+                anchor: { path, offset: start },
+                focus: { path, offset: end },
+                bibleHighlight: "character",
+              } as Range)
+            }
+          }
 
-    return [
-      {
-        anchor: intersection.anchor,
-        focus: intersection.focus,
-        aiRipple: true,
-        aiRippleToken: aiRippleRange.token,
-        aiRippleRangeLength: rippleRangeLength,
-        aiRippleSegmentStart: rippleSegmentStart,
-        aiRippleSegmentLength: rippleSegmentLength,
-      },
-    ]
-  }, [aiRippleRange, editor])
+          // Scene heading → single location icon at the end of heading
+          if (elType === "scene_heading" && text.trim().length > 1) {
+            const upper = text.toUpperCase()
+            const hasMatch = bibleLocations.some((loc) => loc.name.length >= 2 && upper.includes(loc.name.toUpperCase()))
+            if (hasMatch) {
+              // Mark only the last character so a single icon appears at end
+              const end = text.length
+              const start = Math.max(0, end - 1)
+              ranges.push({
+                anchor: { path, offset: start },
+                focus: { path, offset: end },
+                bibleHighlight: "location",
+              } as Range)
+            }
+          }
+
+          // Action & dialogue → character/location/prop names
+          if (elType === "action" || elType === "dialogue") {
+            for (const { pattern, kind } of bibleNamePatterns) {
+              pattern.lastIndex = 0
+              let match: RegExpExecArray | null
+              while ((match = pattern.exec(text)) !== null) {
+                ranges.push({
+                  anchor: { path, offset: match.index },
+                  focus: { path, offset: match.index + match[0].length },
+                  bibleHighlight: kind,
+                } as Range)
+              }
+            }
+          }
+        }
+      } catch { /* ignore */ }
+    }
+
+    return ranges
+  }, [aiRippleRange, editor, bibleNamePatterns, showBibleMarkers, bibleCharacters, bibleLocations])
 
   // ── Render leaf ──
 
@@ -1079,6 +1402,33 @@ const SlateScreenplayEditor = forwardRef<
   // ─── Embedded mode (inside ScriptWriterOverlay) ───
 
   if (embedded) {
+    const isScrollMode = viewMode === "scroll"
+    const isSpreadMode = viewMode === "spread"
+
+    // Spread mode — read-only two-page preview
+    if (isSpreadMode) {
+      return (
+        <div
+          ref={embeddedRootRef}
+          className="w-full"
+          style={{ opacity: focusMode && idleFade ? 0.04 : 1, transition: idleFade ? "opacity 3s ease-in-out" : "opacity 0.4s ease-out" }}
+        >
+          <SpreadPreview
+            blocks={blocks}
+            colors={colors}
+            isDark={isDark}
+            appTheme={appTheme}
+            focusMode={focusMode}
+            paperBg={paperTheme.bg}
+            paperText={paperTheme.text}
+          />
+        </div>
+      )
+    }
+
+    // Single / Scroll — editable
+    const isLight = paperTheme.bg === "#FFFFFF" || paperTheme.bg === "#FFF8F0" || paperTheme.bg === "#F5F0E8"
+
     return (
       <div
         ref={embeddedRootRef}
@@ -1086,11 +1436,15 @@ const SlateScreenplayEditor = forwardRef<
         style={{
           position: "relative",
           width: SCREENPLAY_PAGE_WIDTH_PX,
-          minHeight: visualPageCount * SCREENPLAY_PAGE_HEIGHT_PX + (visualPageCount - 1) * SCREENPLAY_PAGE_GAP_PX,
+          minHeight: isScrollMode
+            ? undefined
+            : visualPageCount * SCREENPLAY_PAGE_HEIGHT_PX + (visualPageCount - 1) * SCREENPLAY_PAGE_GAP_PX,
+          opacity: focusMode && idleFade ? 0.04 : 1,
+          transition: idleFade ? "opacity 3s ease-in-out" : "opacity 0.4s ease-out",
         }}
       >
-        {/* Page paper backgrounds */}
-        {Array.from({ length: visualPageCount }).map((_, i) => (
+        {/* Page paper backgrounds (hidden in scroll mode) */}
+        {!isScrollMode && Array.from({ length: visualPageCount }).map((_, i) => (
           <div
             key={`emb-page-${i}`}
             style={{
@@ -1099,17 +1453,19 @@ const SlateScreenplayEditor = forwardRef<
               left: 0,
               width: "100%",
               height: SCREENPLAY_PAGE_HEIGHT_PX,
-              backgroundColor: "#FFFFFF",
-              borderRadius: 3,
-              border: "1px solid #E5E0DB",
-              boxShadow: "0 8px 60px rgba(0,0,0,0.4)",
+              backgroundColor: focusMode ? "rgba(0,0,0,0.35)" : appTheme === "architect" ? colors.surfaceBg : paperTheme.bg,
+              borderRadius: focusMode ? 8 : 3,
+              border: focusMode ? "none" : appTheme === "architect" ? `1px solid ${colors.border}` : `1px solid ${paperTheme.bg === "#FFFFFF" ? "#E5E0DB" : "transparent"}`,
+              boxShadow: focusMode ? "0 0 60px rgba(0,0,0,0.4)" : appTheme === "architect" ? colors.shadow : "0 8px 60px rgba(0,0,0,0.4)",
+              backdropFilter: focusMode ? "blur(6px) saturate(0.95)" : undefined,
+              WebkitBackdropFilter: focusMode ? "blur(6px) saturate(0.95)" : undefined,
               pointerEvents: "none",
             }}
           />
         ))}
 
-        {/* Page numbers */}
-        {visualPageCount > 1 && Array.from({ length: visualPageCount }).map((_, i) => (
+        {/* Page numbers (hidden in focus mode and scroll mode) */}
+        {!focusMode && !isScrollMode && visualPageCount > 1 && Array.from({ length: visualPageCount }).map((_, i) => (
           <div
             key={`emb-pgnum-${i}`}
             style={{
@@ -1117,7 +1473,7 @@ const SlateScreenplayEditor = forwardRef<
               top: i * (SCREENPLAY_PAGE_HEIGHT_PX + SCREENPLAY_PAGE_GAP_PX) + SCREENPLAY_PAGE_PADDING_TOP_PX * 0.35,
               right: SCREENPLAY_PAGE_PADDING_RIGHT_PX * 0.5,
               fontSize: 11,
-              color: "rgba(0,0,0,0.3)",
+              color: paperTheme.bg === "#FFFFFF" ? "rgba(0,0,0,0.3)" : "rgba(255,255,255,0.2)",
               pointerEvents: "none",
               zIndex: 2,
               fontFamily: "'Courier Prime', monospace",
@@ -1141,12 +1497,25 @@ const SlateScreenplayEditor = forwardRef<
             style={{
               position: "relative",
               zIndex: 1,
-              padding: `${SCREENPLAY_PAGE_PADDING_TOP_PX}px ${SCREENPLAY_PAGE_PADDING_RIGHT_PX}px ${SCREENPLAY_PAGE_PADDING_BOTTOM_PX}px ${SCREENPLAY_PAGE_PADDING_LEFT_PX}px`,
+              padding: isScrollMode
+                ? `${SCREENPLAY_PAGE_PADDING_TOP_PX}px ${SCREENPLAY_PAGE_PADDING_RIGHT_PX}px ${SCREENPLAY_PAGE_PADDING_TOP_PX}px ${SCREENPLAY_PAGE_PADDING_LEFT_PX}px`
+                : `${SCREENPLAY_PAGE_PADDING_TOP_PX}px ${SCREENPLAY_PAGE_PADDING_RIGHT_PX}px ${SCREENPLAY_PAGE_PADDING_BOTTOM_PX}px ${SCREENPLAY_PAGE_PADDING_LEFT_PX}px`,
               outline: "none",
-              color: "#1a1a1a",
-              caretColor: "#333",
-              background: "transparent",
-              minHeight: visualPageCount * SCREENPLAY_PAGE_HEIGHT_PX + (visualPageCount - 1) * SCREENPLAY_PAGE_GAP_PX,
+              color: focusMode ? "rgba(255,255,255,0.85)" : appTheme === "architect" ? colors.text : paperTheme.text,
+              caretColor: focusMode ? "#D4A853" : appTheme === "architect" ? colors.muted : paperTheme.text,
+              background: isScrollMode
+                ? focusMode ? "rgba(0,0,0,0.35)" : appTheme === "architect" ? colors.surfaceBg : paperTheme.bg
+                : "transparent",
+              borderRadius: isScrollMode ? 4 : undefined,
+              border: isScrollMode && !focusMode
+                ? isLight ? "1px solid rgba(0,0,0,0.08)" : "1px solid rgba(255,255,255,0.06)"
+                : undefined,
+              boxShadow: isScrollMode
+                ? focusMode ? "0 0 60px rgba(0,0,0,0.4)" : isLight ? "0 2px 16px rgba(0,0,0,0.1)" : "0 4px 24px rgba(0,0,0,0.3)"
+                : undefined,
+              minHeight: isScrollMode
+                ? "100vh"
+                : visualPageCount * SCREENPLAY_PAGE_HEIGHT_PX + (visualPageCount - 1) * SCREENPLAY_PAGE_GAP_PX,
               fontFamily: "'Courier Prime', 'Courier New', monospace",
             }}
           />
@@ -1226,7 +1595,11 @@ const SlateScreenplayEditor = forwardRef<
 
   return (
     <div className="flex h-full flex-col" style={{ backgroundColor: focusMode ? "transparent" : colors.bg }}>
-      <div className="relative mx-auto flex w-full flex-1 overflow-hidden" style={focusMode ? undefined : { maxWidth: Math.max(720, SCREENPLAY_PAGE_WIDTH_PX * zoomScale + 120) }}>
+      <div className="relative mx-auto flex w-full flex-1 overflow-hidden" style={focusMode ? undefined : {
+        maxWidth: viewMode === "spread"
+          ? Math.max(1440, SCREENPLAY_PAGE_WIDTH_PX * 2 * zoomScale + 200)
+          : Math.max(720, SCREENPLAY_PAGE_WIDTH_PX * zoomScale + 120),
+      }}>
         <ScreenplayToolbar
           colors={colors}
           focusMode={focusMode}
@@ -1257,18 +1630,32 @@ const SlateScreenplayEditor = forwardRef<
           typewriterSound={typewriterSound}
         />
 
+        {/* SPREAD PREVIEW — read-only two-page book view */}
+        {viewMode === "spread" && (
+          <SpreadPreview
+            blocks={blocks}
+            colors={colors}
+            isDark={isDark}
+            appTheme={appTheme}
+            focusMode={focusMode}
+            paperBg={paperTheme.bg}
+            paperText={paperTheme.text}
+          />
+        )}
+
         {/* EDITOR AREA */}
-        <div className="relative flex-1 overflow-hidden" style={{ backgroundColor: focusMode ? "transparent" : (isDark ? "#201E1B" : "#EDEDED"), padding: focusMode ? "40px 0" : "0 0 0 72px" }}>
-          {/* Top shadow — page slides under */}
-          <div className="pointer-events-none absolute inset-x-0 top-0 z-50 h-28" style={{ background: `linear-gradient(to bottom, ${isDark ? '#201E1B' : '#EDEDED'} 0%, ${isDark ? '#201E1Bcc' : '#EDEDEDcc'} 40%, transparent 100%)` }} />
+        {viewMode !== "spread" && <>
+        <div className="relative flex-1 overflow-hidden" style={{ backgroundColor: focusMode ? "transparent" : (appTheme === "architect" ? "#080808" : isDark ? "#201E1B" : "#EDEDED"), padding: focusMode ? "0" : "0 0 0 72px" }}>
+          {/* Top shadow — page slides under (hidden in focus mode) */}
+          {!focusMode && <div className="pointer-events-none absolute inset-x-0 top-0 z-50 h-28" style={{ background: `linear-gradient(to bottom, ${appTheme === "architect" ? '#080808' : isDark ? '#201E1B' : '#EDEDED'} 0%, ${appTheme === "architect" ? '#080808cc' : isDark ? '#201E1Bcc' : '#EDEDEDcc'} 40%, transparent 100%)` }} />}
           <div
             ref={standaloneScrollRef}
             className="relative h-full w-full overflow-auto"
             style={{
-              backgroundColor: focusMode ? "rgba(10,11,16,0.75)" : "transparent",
-              borderRadius: focusMode ? "3px" : undefined,
-              border: focusMode ? `1px solid ${colors.border}` : undefined,
-              width: focusMode ? 660 : undefined,
+              backgroundColor: focusMode ? "rgba(10,11,16,0.65)" : "transparent",
+              borderRadius: undefined,
+              border: undefined,
+              width: focusMode ? 700 : undefined,
               maxWidth: focusMode ? "calc(100vw - 48px)" : undefined,
               margin: focusMode ? "0 auto" : undefined,
               backdropFilter: focusMode ? "blur(12px)" : undefined,
@@ -1281,39 +1668,49 @@ const SlateScreenplayEditor = forwardRef<
               pageCount={pageCount}
               zoomPercent={zoomPercent}
               setZoomPercent={setZoomPercent}
+              blocks={blocks}
             />
 
-            {/* Pages container */}
+            {/* Pages container — adapts to viewMode */}
             <div
               style={{
                 position: "relative",
-                width: SCREENPLAY_PAGE_WIDTH_PX * zoomScale,
-                margin: `${SCREENPLAY_PAGE_GAP_PX * zoomScale}px auto`,
-                minHeight: visualPageCount * SCREENPLAY_PAGE_HEIGHT_PX * zoomScale + (visualPageCount - 1) * SCREENPLAY_PAGE_GAP_PX * zoomScale,
+                width: viewMode === "scroll"
+                  ? "100%"
+                  : SCREENPLAY_PAGE_WIDTH_PX * zoomScale,
+                margin: viewMode === "scroll"
+                  ? "0 auto"
+                  : `${SCREENPLAY_PAGE_GAP_PX * zoomScale}px auto`,
+                minHeight: viewMode === "scroll"
+                  ? undefined
+                  : visualPageCount * SCREENPLAY_PAGE_HEIGHT_PX * zoomScale + (visualPageCount - 1) * SCREENPLAY_PAGE_GAP_PX * zoomScale,
               }}
             >
-              {/* Page paper backgrounds */}
-              {Array.from({ length: visualPageCount }).map((_, i) => (
-                <div
-                  key={`page-${i}`}
-                  style={{
-                    position: "absolute",
-                    top: i * (SCREENPLAY_PAGE_HEIGHT_PX + SCREENPLAY_PAGE_GAP_PX) * zoomScale,
-                    left: 0,
-                    width: "100%",
-                    height: SCREENPLAY_PAGE_HEIGHT_PX * zoomScale,
-                    backgroundColor: focusMode ? colors.surfaceBg : colors.surfaceBg,
-                    boxShadow: isDark
-                      ? "0 1px 3px rgba(0,0,0,0.24), 0 1px 2px rgba(0,0,0,0.16)"
-                      : "0 1px 3px rgba(0,0,0,0.1), 0 1px 2px rgba(0,0,0,0.06)",
-                    borderRadius: 2,
-                    pointerEvents: "none",
-                  }}
-                />
-              ))}
+              {/* Page paper backgrounds (hidden in scroll mode) */}
+              {viewMode !== "scroll" && Array.from({ length: visualPageCount }).map((_, i) => {
+                const pageH = SCREENPLAY_PAGE_HEIGHT_PX * zoomScale
+                const gapH = SCREENPLAY_PAGE_GAP_PX * zoomScale
 
-              {/* Page numbers */}
-              {visualPageCount > 1 && Array.from({ length: visualPageCount }).map((_, i) => (
+                return (
+                  <div
+                    key={`page-${i}`}
+                    style={{
+                      position: "absolute",
+                      top: i * (pageH + gapH),
+                      left: 0,
+                      width: "100%",
+                      height: pageH,
+                      backgroundColor: colors.surfaceBg,
+                      boxShadow: isDark ? "none" : "0 2px 8px rgba(0,0,0,0.12)",
+                      borderRadius: 0,
+                      pointerEvents: "none",
+                    }}
+                  />
+                )
+              })}
+
+              {/* Page numbers (hidden in scroll mode) */}
+              {viewMode !== "scroll" && visualPageCount > 1 && Array.from({ length: visualPageCount }).map((_, i) => (
                 <div
                   key={`pgnum-${i}`}
                   style={{
@@ -1346,12 +1743,16 @@ const SlateScreenplayEditor = forwardRef<
                   style={{
                     position: "relative",
                     zIndex: 1,
-                    padding: editorPadding,
+                    padding: viewMode === "scroll"
+                      ? `${SCREENPLAY_PAGE_PADDING_TOP_PX * zoomScale}px ${SCREENPLAY_PAGE_PADDING_RIGHT_PX * zoomScale}px`
+                      : editorPadding,
                     outline: "none",
                     color: colors.text,
                     caretColor: colors.accent,
-                    background: "transparent",
-                    minHeight: visualPageCount * SCREENPLAY_PAGE_HEIGHT_PX * zoomScale + (visualPageCount - 1) * SCREENPLAY_PAGE_GAP_PX * zoomScale,
+                    background: viewMode === "scroll" ? colors.surfaceBg : "transparent",
+                    minHeight: viewMode === "scroll"
+                      ? "100vh"
+                      : visualPageCount * SCREENPLAY_PAGE_HEIGHT_PX * zoomScale + (visualPageCount - 1) * SCREENPLAY_PAGE_GAP_PX * zoomScale,
                   }}
                 />
               </Slate>
@@ -1410,6 +1811,7 @@ const SlateScreenplayEditor = forwardRef<
           applyAIAction={applyAIAction}
           setFloatingToolbar={setFloatingToolbar}
         />
+      </>}
       </div>
 
       <ScreenplayFooter

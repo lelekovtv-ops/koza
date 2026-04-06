@@ -190,18 +190,11 @@ export function buildShiftEnterGrammarAction(editor: Editor): ScreenplaySelectio
   const [currentEl, currentPath] = entry
   const currentBlockIndex = currentPath[0]
   const currentText = Node.string(currentEl)
-  const { selection } = editor
-  const currentBlockEnd = Editor.end(editor, currentPath)
 
-  const isCaretAtCurrentEnd =
-    !!selection &&
-    Range.isCollapsed(selection) &&
-    Point.equals(selection.anchor, currentBlockEnd)
-
-  const target =
-    isCaretAtCurrentEnd && currentText.trim()
-      ? { blockIndex: currentBlockIndex, text: currentText }
-      : findPreviousNonEmptyBlock(editor, currentBlockIndex)
+  // Target: current block if it has text, otherwise look back for previous non-empty block.
+  const target = currentText.trim()
+    ? { blockIndex: currentBlockIndex, text: currentText }
+    : findPreviousNonEmptyBlock(editor, currentBlockIndex)
 
   if (!target) return null
 

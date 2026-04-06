@@ -7,9 +7,10 @@ import { useBreakdownConfigStore } from "@/store/breakdownConfig"
 import { useStoryboardStore } from "@/store/storyboard"
 import { ALL_MODELS } from "@/lib/models"
 import { STYLE_PRESETS, getProjectStylePresetId } from "@/lib/projectStyle"
-import type { BreakdownEngineConfig } from "@/lib/cinematic/config"
-import { DEFAULT_BREAKDOWN_ENGINE_CONFIG } from "@/lib/cinematic/config"
+// Old cinematic config types removed — using breakdownConfig store directly
 import { useReEditConfigStore } from "@/store/reEditConfig"
+import { useThemeStore, type AppTheme } from "@/store/theme"
+import { useScriptStore, DEMO_SCRIPT_LIST } from "@/store/script"
 
 /* ─── Tiny reusable pieces ─── */
 
@@ -159,10 +160,7 @@ export default function DevSettingsPage() {
   const projectStyle = useBoardStore((s) => s.projectStyle)
   const setProjectStyle = useBoardStore((s) => s.setProjectStyle)
 
-  // Breakdown config store
-  const bdGlobal = useBreakdownConfigStore((s) => s.global)
-  const setBdGlobal = useBreakdownConfigStore((s) => s.setGlobal)
-  const resetBdGlobal = useBreakdownConfigStore((s) => s.resetGlobal)
+  // Breakdown config store (simplified)
   const autoPromptBuild = useBreakdownConfigStore((s) => s.autoPromptBuild)
   const setAutoPromptBuild = useBreakdownConfigStore((s) => s.setAutoPromptBuild)
   const breakdownSpeed = useBreakdownConfigStore((s) => s.breakdownSpeed)
@@ -201,8 +199,10 @@ export default function DevSettingsPage() {
     }
   }
 
-  const updateBd = (key: keyof BreakdownEngineConfig, value: string) => {
-    setBdGlobal({ [key]: value })
+  const bdGlobal = {} as Record<string, string>
+  const resetBdGlobal = () => {}
+  const updateBd = (key: string, value: string) => {
+    // Old breakdown config removed
   }
 
   return (
@@ -441,7 +441,17 @@ export default function DevSettingsPage() {
         {/* ─── UI / Display ─── */}
         <Section title="Interface">
           <ButtonGroupRow
-            label="Theme"
+            label="App Theme"
+            value={useThemeStore.getState().theme}
+            onChange={(v) => useThemeStore.getState().setTheme(v as AppTheme)}
+            options={[
+              { value: "cinematic", label: "🎬 Cinematic" },
+              { value: "synthwave", label: "🌆 Synthwave" },
+              { value: "architect", label: "📐 Architect" },
+            ]}
+          />
+          <ButtonGroupRow
+            label="Editor Theme"
             value={theme}
             onChange={setTheme as (v: string) => void}
             options={[
@@ -483,6 +493,24 @@ export default function DevSettingsPage() {
               Reset All
             </button>
           </div>
+        </Section>
+
+        {/* ─── Reset All Data ─── */}
+        <Section title="Reset All Data">
+          <p className="text-[11px] text-white/30 mb-3">Clear all projects, scripts, Bible, timeline, voice data from localStorage. Start completely fresh.</p>
+          <button
+            type="button"
+            onClick={() => {
+              if (confirm("Are you sure? This will delete ALL data including projects, scripts, Bible, timeline, and voice clips. This cannot be undone.")) {
+                const keys = Object.keys(localStorage).filter((k) => k.startsWith("koza-") || k.startsWith("piece-"))
+                for (const k of keys) localStorage.removeItem(k)
+                window.location.reload()
+              }
+            }}
+            className="rounded-lg border border-red-500/30 bg-red-500/8 px-4 py-2.5 text-[12px] uppercase tracking-[0.12em] text-red-400 transition-colors hover:bg-red-500/15 hover:text-red-300"
+          >
+            Clear All Data & Reload
+          </button>
         </Section>
 
       </main>

@@ -21,11 +21,16 @@ import LibraryPanel from './LibraryPanel'
 import ScriptDocNode from './nodes/ScriptDocNode'
 import StyleNode from './nodes/StyleNode'
 import PromptNode from './nodes/PromptNode'
+import StickyNoteNode from './nodes/StickyNoteNode'
+import TextBlockNode from './nodes/TextBlockNode'
+import ImageCardNode from './nodes/ImageCardNode'
+import BoardToolbar, { type BoardTool } from './BoardToolbar'
 import ScriptWriterOverlay from '@/components/editor/ScriptWriterOverlay'
 import { KozaLogo } from "@/components/ui/KozaLogo";
 import { useProjectsStore } from '@/store/projects'
 import { useScriptStore } from '@/store/script'
 import { useTimelineStore } from '@/store/timeline'
+import { useThemeStore } from '@/store/theme'
 
 type NodeScreenRect = {
   x: number
@@ -42,6 +47,14 @@ const nodeTypes: NodeTypes = {
   scriptDoc: ScriptDocNode,
   style: StyleNode,
   prompt: PromptNode,
+  sticky: StickyNoteNode,
+  textBlock: TextBlockNode,
+  imageCard: ImageCardNode,
+}
+
+let _nodeIdCounter = 0
+function makeNodeId(prefix: string) {
+  return `${prefix}-${Date.now()}-${++_nodeIdCounter}`
 }
 
 const nodes: Node[] = [
@@ -62,6 +75,9 @@ export default function Canvas({ onBack }: CanvasProps) {
   const scriptAuthor = useScriptStore((state) => state.author)
   const scriptDate = useScriptStore((state) => state.date)
   const scriptDraft = useScriptStore((state) => state.draft)
+  const appTheme = useThemeStore((s) => s.theme)
+  const canvasBg = appTheme === "architect" ? "#080808" : appTheme === "synthwave" ? "#0a0614" : "#FAF6F1"
+  const [activeTool, setActiveTool] = useState<BoardTool>("select")
   const [nodesState, setNodesState, onNodesChangeBase] = useNodesState(nodes)
   const [edgesState, , onEdgesChange] = useEdgesState(edges)
   const customNodePositionsRef = useRef<Record<string, { x: number; y: number }>>({})
@@ -70,13 +86,61 @@ export default function Canvas({ onBack }: CanvasProps) {
     nodeId: string | null
     type: 'new' | 'upload' | null
     initialRect: NodeScreenRect | null
-  }>(() => {
-    const blocks = useScriptStore.getState().blocks
-    const title = useScriptStore.getState().title
-    const hasContent = (title.trim().length > 0 && title !== "UNTITLED") || blocks.length > 1
-    if (hasContent) return { active: true, nodeId: 'doc-1', type: 'new', initialRect: null }
-    return { active: false, nodeId: null, type: null, initialRect: null }
-  })
+  }>({ active: false, nodeId: null, type: null, initialRect: null })
+
+  // ── Board node operations ──
+  const handleNodeUpdate = useCallback((nodeId: string, newData: Record<string, unknown>) => {
+    setNodesState((nds) =>
+      nds.map((n) => (n.id === nodeId ? { ...n, data: { ...n.data, ...newData } } : n))
+    )
+  }, [setNodesState])
+
+  const handleNodeDelete = useCallback((nodeId: string) => {
+    setNodesState((nds) => nds.filter((n) => n.id !== nodeId))
+  }, [setNodesState])
+
+  const handleCanvasClick = useCallback(
+    (event: React.MouseEvent) => {
+      if (activeTool === "select" || activeTool === "pan" || activeTool === "connector") return
+      if (editorMode.active) return
+
+      const rf = reactFlowRef.current
+      if (!rf) return
+
+      const position = rf.screenToFlowPosition({ x: event.clientX, y: event.clientY })
+
+      let newNode: Node | null = null
+
+      if (activeTool === "sticky") {
+        newNode = {
+          id: makeNodeId("sticky"),
+          type: "sticky",
+          position,
+          data: { text: "", colorIndex: Math.floor(Math.random() * 6) },
+        }
+      } else if (activeTool === "text") {
+        newNode = {
+          id: makeNodeId("text"),
+          type: "textBlock",
+          position,
+          data: { text: "", fontSize: 16 },
+        }
+      } else if (activeTool === "image") {
+        newNode = {
+          id: makeNodeId("img"),
+          type: "imageCard",
+          position,
+          data: { src: "", caption: "" },
+        }
+      }
+
+      if (newNode) {
+        setNodesState((nds) => [...nds, newNode!])
+        setActiveTool("select")
+      }
+    },
+    [activeTool, editorMode.active, setNodesState],
+  )
 
   const handleInit = (rf: ReactFlowInstance<Node, Edge>) => {
     reactFlowRef.current = rf
@@ -85,9 +149,11 @@ export default function Canvas({ onBack }: CanvasProps) {
     }, 40)
   }
 
+  const router = useRouter()
   const enterEditor = useCallback((nodeId: string, type: 'new' | 'upload', initialRect: NodeScreenRect) => {
     setEditorMode({ active: true, nodeId, type, initialRect })
-  }, [])
+    router.push("/")
+  }, [router])
 
   const handleCloseStart = useCallback(() => {
     reactFlowRef.current?.zoomOut({ duration: 400 })
@@ -156,13 +222,24 @@ export default function Canvas({ onBack }: CanvasProps) {
           }
         }
 
+        if (node.type === 'sticky' || node.type === 'textBlock' || node.type === 'imageCard') {
+          return {
+            ...node,
+            data: {
+              ...node.data,
+              onUpdate: handleNodeUpdate,
+              onDelete: handleNodeDelete,
+            },
+          }
+        }
+
         return node
       }),
-    [nodesState, enterEditor, scriptTitle, scriptAuthor, scriptDate, scriptDraft]
+    [nodesState, enterEditor, scriptTitle, scriptAuthor, scriptDate, scriptDraft, handleNodeUpdate, handleNodeDelete]
   )
 
   return (
-    <div className="relative h-screen w-screen" style={{ backgroundColor: '#FAF6F1' }}>
+    <div className="relative h-screen w-screen" style={{ backgroundColor: canvasBg }}>
       <div className="h-full w-full" style={{ pointerEvents: editorMode.active ? 'none' : 'auto' }}>
         <ReactFlow
           nodes={viewNodes}
@@ -171,14 +248,20 @@ export default function Canvas({ onBack }: CanvasProps) {
           onEdgesChange={onEdgesChange}
           nodeTypes={nodeTypes}
           onInit={handleInit}
+          onPaneClick={handleCanvasClick}
           fitView
-          minZoom={0.2}
+          minZoom={0.05}
           maxZoom={2}
           zoomOnScroll
           zoomOnPinch
           panOnScroll
-          panOnDrag={[1]}
-          style={{ backgroundColor: '#FAF6F1' }}
+          panOnDrag={activeTool === "pan" ? [0, 1] : [1]}
+          style={{
+            backgroundColor: canvasBg,
+            cursor: activeTool === "sticky" || activeTool === "text" || activeTool === "image"
+              ? "crosshair"
+              : activeTool === "pan" ? "grab" : "default",
+          }}
           proOptions={{ hideAttribution: true }}
         >
           <Background
@@ -195,6 +278,9 @@ export default function Canvas({ onBack }: CanvasProps) {
       {!editorMode.active && <LibraryButton />}
       <LibraryPanel projectId={activeProjectId} hidden={editorMode.active} />
       <BoardAssistant />
+      {!editorMode.active && (
+        <BoardToolbar activeTool={activeTool} onToolChange={setActiveTool} />
+      )}
       <ScriptWriterOverlay
         active={editorMode.active}
         type={editorMode.type}

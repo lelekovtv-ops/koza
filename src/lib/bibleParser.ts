@@ -7,6 +7,21 @@ export interface BibleReferenceImage {
   blobKey: string
 }
 
+export type VoiceProvider = "elevenlabs" | "fish" | "bark" | "custom"
+
+export interface VoiceConfig {
+  provider: VoiceProvider
+  voiceId: string
+  voiceName: string
+  previewUrl?: string
+  settings?: {
+    speed?: number   // 0.5–2.0, default 1.0
+    pitch?: number   // -12–12 semitones, default 0
+    stability?: number // 0–1, default 0.5 (ElevenLabs)
+    emotion?: string   // e.g. "calm", "angry", "whisper"
+  }
+}
+
 export interface CharacterEntry {
   id: string
   name: string
@@ -18,6 +33,7 @@ export interface CharacterEntry {
   appearancePrompt: string
   sceneIds: string[]
   dialogueCount: number
+  voice?: VoiceConfig
 }
 
 export interface LocationEntry {
@@ -115,6 +131,11 @@ export function parseCharacters(blocks: Block[]): CharacterEntry[] {
 
     const name = normalizeCharacterName(block.text)
     if (!name) continue
+
+    // Filter out obvious non-characters (transitions, shots misclassified as character)
+    const upper = name.toUpperCase()
+    if (/^(FADE|CUT|DISSOLVE|WIPE|IRIS|SMASH|MATCH|JUMP|FREEZE|ЗАТЕМНЕНИЕ|ПЕРЕХОД|НАПЛЫВ|ВЫТЕСНЕНИЕ|СТОП)\b/.test(upper)) continue
+    if (/\b(TO:|IN:|OUT[.:]?)$/.test(upper)) continue
 
     const id = slugify(name)
     const existing = characters.get(id)

@@ -17,9 +17,18 @@ export function withScreenplay(editor: Editor): Editor {
     const [node, path] = entry
     if (SlateElement.isElement(node) && path.length === 1) {
       const el = node as ScreenplayElement
+      const text = Node.string(el)
+      const trimmed = text.trim()
+
+      // Helper: get previous block's type
+      const getPrevType = (): ScreenplayElementType | null => {
+        const prev = path[0] > 0 ? editor.children[path[0] - 1] : null
+        return prev && SlateElement.isElement(prev)
+          ? ((prev as ScreenplayElement).type ?? null)
+          : null
+      }
+
       if (el.type === "action" || el.type === "character") {
-        const text = Node.string(el)
-        const trimmed = text.trim()
         if (trimmed.length >= 2) {
           let targetType: ScreenplayElementType | null = null
 
@@ -32,13 +41,7 @@ export function withScreenplay(editor: Editor): Editor {
           }
 
           if (!targetType && el.type === "action" && isLikelyCharacterCue(trimmed)) {
-            const prev = path[0] > 0 ? editor.children[path[0] - 1] : null
-            const prevType =
-              prev && SlateElement.isElement(prev)
-                ? ((prev as ScreenplayElement).type ?? null)
-                : null
-
-            // Character cue is valid at scene/action boundaries, but not inside dialogue chains.
+            const prevType = getPrevType()
             if (
               prevType === null ||
               prevType === "action" ||
@@ -61,14 +64,11 @@ export function withScreenplay(editor: Editor): Editor {
           }
 
           if (targetType && el.type !== targetType) {
-            Transforms.setNodes(
-              editor,
-              { type: targetType },
-              { at: path }
-            )
+            Transforms.setNodes(editor, { type: targetType }, { at: path })
             return
           }
         }
+
       }
     }
     normalizeNode(entry)
@@ -193,7 +193,17 @@ export function withScreenplay(editor: Editor): Editor {
         .replace(/\r\n/g, "\n")
         .replace(/[\u200B\uFEFF]/g, "")
         .replace(/\n{3,}/g, "\n\n")
-      const fragments = deserializeFromText(normalized)
+
+      // Pass the current block's type as context so the parser knows
+      // what comes before the pasted text (e.g. character → dialogue).
+      let prevType: import("@/lib/screenplayFormat").BlockType | null = null
+      const currentEntry = getCurrentElementEntry(editor)
+      if (currentEntry) {
+        const [el] = currentEntry
+        prevType = el.type as import("@/lib/screenplayFormat").BlockType
+      }
+
+      const fragments = deserializeFromText(normalized, prevType)
       Transforms.insertFragment(editor, fragments)
       return
     }
