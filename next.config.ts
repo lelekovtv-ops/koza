@@ -5,7 +5,7 @@ const nextConfig: NextConfig = {
     // Disable Turbopack FS cache to prevent SST panics on unclean shutdowns
     turbopackFileSystemCacheForDev: false,
   },
-  serverExternalPackages: ["pg", "bcryptjs"],
+  serverExternalPackages: ["pg", "bcryptjs", "@aws-sdk/client-s3", "@aws-sdk/s3-request-presigner"],
 };
 
 export default nextConfig;

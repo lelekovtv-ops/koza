@@ -19,6 +19,8 @@
     "@ai-sdk/anthropic": "^3.0.58",
     "@ai-sdk/google": "^3.0.43",
     "@ai-sdk/openai": "^3.0.41",
+    "@aws-sdk/client-s3": "^3.1024.0",
+    "@aws-sdk/s3-request-presigner": "^3.1024.0",
     "@google/genai": "^1.46.0",
     "@infinite-canvas-tutorial/sam": "^0.0.8",
     "@mediapipe/tasks-vision": "^0.10.34",
