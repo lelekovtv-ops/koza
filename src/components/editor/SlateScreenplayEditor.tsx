@@ -401,15 +401,13 @@ function SpreadPreview({ blocks, visualPageCount: externalPageCount, colors, isD
 
   const textColor = focusMode ? "rgba(255,255,255,0.85)" : appTheme === "architect" ? colors.text : paperText
 
+  // Render blocks identically to screenplayRenderers.tsx:
+  // Container provides page padding (left/right), blocks add ch-based indents
   const renderBlock = useCallback((block: Block, bi: number) => {
-    // Match screenplayRenderers.tsx exactly: base padding from page margins,
-    // then character/dialogue/parenthetical add ch-based indents on top
     const base: React.CSSProperties = {
       fontFamily: "'Courier Prime', 'Courier New', monospace",
       fontSize: SCREENPLAY_FONT_SIZE_PX,
       lineHeight: `${SCREENPLAY_LINE_HEIGHT_PX}px`,
-      paddingLeft: SCREENPLAY_PAGE_PADDING_LEFT_PX,
-      paddingRight: SCREENPLAY_PAGE_PADDING_RIGHT_PX,
       color: textColor,
       whiteSpace: "pre-wrap",
       wordBreak: "break-word",
@@ -418,11 +416,11 @@ function SpreadPreview({ blocks, visualPageCount: externalPageCount, colors, isD
       case "scene_heading":
         return <div key={block.id} style={{ ...base, fontWeight: "bold", textTransform: "uppercase", color: colors.scene, marginTop: SCREENPLAY_SCENE_HEADING_MARGIN_TOP_PX }}>{block.text}</div>
       case "character":
-        return <div key={block.id} style={{ ...base, fontWeight: "bold", textTransform: "uppercase", paddingLeft: `calc(${SCREENPLAY_PAGE_PADDING_LEFT_PX}px + ${SCREENPLAY_CHARACTER_INDENT_CH}ch)`, marginTop: SCREENPLAY_CHARACTER_MARGIN_TOP_PX, color: colors.character }}>{block.text}</div>
+        return <div key={block.id} style={{ ...base, fontWeight: "bold", textTransform: "uppercase", paddingLeft: `${SCREENPLAY_CHARACTER_INDENT_CH}ch`, marginTop: SCREENPLAY_CHARACTER_MARGIN_TOP_PX, color: colors.character }}>{block.text}</div>
       case "dialogue":
-        return <div key={block.id} style={{ ...base, paddingLeft: `calc(${SCREENPLAY_PAGE_PADDING_LEFT_PX}px + ${SCREENPLAY_DIALOGUE_INDENT_LEFT_CH}ch)`, paddingRight: `calc(${SCREENPLAY_PAGE_PADDING_RIGHT_PX}px + ${SCREENPLAY_DIALOGUE_INDENT_RIGHT_CH}ch)` }}>{block.text}</div>
+        return <div key={block.id} style={{ ...base, paddingLeft: `${SCREENPLAY_DIALOGUE_INDENT_LEFT_CH}ch`, paddingRight: `${SCREENPLAY_DIALOGUE_INDENT_RIGHT_CH}ch` }}>{block.text}</div>
       case "parenthetical":
-        return <div key={block.id} style={{ ...base, fontStyle: "italic", paddingLeft: `calc(${SCREENPLAY_PAGE_PADDING_LEFT_PX}px + ${SCREENPLAY_PARENTHETICAL_INDENT_CH}ch)`, color: colors.parenthetical }}>{block.text}</div>
+        return <div key={block.id} style={{ ...base, fontStyle: "italic", paddingLeft: `${SCREENPLAY_PARENTHETICAL_INDENT_CH}ch`, color: colors.parenthetical }}>{block.text}</div>
       case "transition":
         return <div key={block.id} style={{ ...base, textAlign: "right", textTransform: "uppercase", marginTop: SCREENPLAY_TRANSITION_MARGIN_TOP_PX, color: colors.transition }}>{block.text}</div>
       default:
@@ -453,7 +451,14 @@ function SpreadPreview({ blocks, visualPageCount: externalPageCount, colors, isD
           {pageIdx + 1}.
         </div>
         <div style={{ transform: `scale(${previewScale})`, transformOrigin: "top left", width: SCREENPLAY_PAGE_WIDTH_PX, height: SCREENPLAY_PAGE_HEIGHT_PX, overflow: "hidden", pointerEvents: "none", position: "relative" }}>
-          <div style={{ position: "absolute", top: -sourceTop + SCREENPLAY_PAGE_PADDING_TOP_PX, left: 0, width: SCREENPLAY_PAGE_WIDTH_PX }}>
+          <div style={{
+            position: "absolute",
+            top: -sourceTop + SCREENPLAY_PAGE_PADDING_TOP_PX,
+            left: 0,
+            width: SCREENPLAY_PAGE_WIDTH_PX,
+            padding: `0 ${SCREENPLAY_PAGE_PADDING_RIGHT_PX}px 0 ${SCREENPLAY_PAGE_PADDING_LEFT_PX}px`,
+            boxSizing: "border-box",
+          }}>
             {blocks.map(renderBlock)}
           </div>
         </div>
