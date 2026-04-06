@@ -104,7 +104,7 @@ function SceneNavigatorPanel({ onClose, btnRef }: { onClose: () => void; btnRef:
       ref={panelRef}
       style={{
         position: "fixed",
-        left: 14,
+        left: 68,
         top: 222,
         zIndex: 500,
         pointerEvents: "auto",

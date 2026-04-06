@@ -851,7 +851,7 @@ function ViewModeButton() {
           ref={panelRef}
           style={{
             position: "fixed",
-            left: 14,
+            left: 68,
             top: 172,
             zIndex: 500,
             pointerEvents: "auto",
@@ -1040,7 +1040,7 @@ function KeyboardHints() {
           ref={hintsPanelRef}
           style={{
             position: "fixed",
-            left: 14,
+            left: 68,
             top: 134,
             zIndex: 200,
             userSelect: "none",
